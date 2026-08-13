@@ -3,7 +3,7 @@
 |
 | Description:
 |   Calibration data storage definitions.
-|   calROM initialiser is generated automatically from cal_params.def.
+|   calROM initialiser is generated automatically from CAL_PARAMS_TABLE.
 ----------------------------------------------------------------------------*/
 
 #include "app/cal_data.h"
@@ -11,14 +11,14 @@
 /* ============================================================
  * calROM — reference (golden) values placed in Flash
  *
- *   CAL_PARAM(type, name, ...)       →  .name = __VA_ARGS__,
- *   CAL_ARRAY(type, name, size, ...) →  .name = { __VA_ARGS__ },
+ *   CAL_PARAM(type, name, ...)       ->  .name = __VA_ARGS__,
+ *   CAL_ARRAY(type, name, size, ...) ->  .name = { __VA_ARGS__ },
  * ============================================================ */
 const CalData_t calROM CAL_ROM =
 {
 #define CAL_PARAM(type, name, ...)       .name = __VA_ARGS__,
 #define CAL_ARRAY(type, name, size, ...) .name = { __VA_ARGS__ },
-#include "app/cal_params.def"
+CAL_PARAMS_TABLE
 #undef CAL_PARAM
 #undef CAL_ARRAY
 };

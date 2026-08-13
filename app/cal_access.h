@@ -24,7 +24,7 @@
 |     - Compile to a single struct-field load — zero overhead
 |
 |   To add a new parameter:
-|     1. Add one line to cal_params.def
+|     1. Add one line to CAL_PARAMS_TABLE in cal_params.h
 |     2. Add one #define line here (mirror below)
 ----------------------------------------------------------------------------*/
 
@@ -46,7 +46,7 @@
 #define CAL(name)  (pCal->name)
 
 /* ============================================================
- * Bare-name macros — one per parameter in cal_params.def
+ * Bare-name macros — one per parameter in CAL_PARAMS_TABLE
  *
  * Scalars:   read like a plain variable      →  systemGain
  * Arrays:    index like a plain array        →  torqueMap[i]

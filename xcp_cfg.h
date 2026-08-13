@@ -13,7 +13,7 @@
 
 /* vuint8 / vuint16 / vuint32 / vsint* — must be visible before XcpBasic.h
  * expands its own type usages. */
-#include "xcp_types.h"
+#include "port/tricore_illd/xcp_types.h"
 
 /* ============================================================
  * CPU / Memory model
