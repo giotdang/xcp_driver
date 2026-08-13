@@ -11,6 +11,8 @@
 #include "xcpBasic.h"
 
 
-/* implement here parameters for customizing XcpBasic driver (e.g. kXcpStationId) */
+/* Station ID — must match the A2L filename (without .a2l extension).
+ * CANape displays this string in the device list after connecting. */
+const char kXcpStationId[] = "AURIX_XCP";
 
 

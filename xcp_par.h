@@ -12,7 +12,11 @@
 #else
 #define __XCP_PAR_H__
 
-/* declare here parameters for customizing XcpBasic driver (e.g. kXcpStationId) */
+/* Station ID returned by the GET_ID command (CANape uses this to identify the ECU).
+ * Must match the A2L filename without extension. */
+extern const char kXcpStationId[];
+
+#define kXcpStationIdLength  ((vuint8)sizeof(kXcpStationId) - 1U)
 
 
 #endif
