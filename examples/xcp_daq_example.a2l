@@ -4,8 +4,9 @@
 | Scope:
 |   Minimal ASAP2 fragment for the DAQ example in xcp_daq_example.c/.h --
 |   PROTOCOL_LAYER + DAQ (2 events) + XCP_ON_CAN transport, and the 4
-|   MEASUREMENT records for g_xcpEngineRpm / g_xcpVehicleSpeedKph /
-|   g_xcpCoolantTempC / g_xcpDaqHeartbeat.
+|   MEASUREMENT records for daqHeartbeat / engineRpm / vehicleSpeedKph /
+|   coolantTempC (app/meas_data.h -- all four are fields of the single
+|   struct instance measData, not separate globals).
 |
 |   Deliberately does NOT include calibration parameters (CHARACTERISTIC /
 |   RECORD_LAYOUT / PAG IF_DATA) -- per CLAUDE.md those are generated
@@ -13,10 +14,15 @@
 |   into that file (or vice versa); an ECU has exactly one MODULE per A2L.
 |
 |   PLACEHOLDERS TO FIX BEFORE USE:
-|     - Every ECU_ADDRESS below (0x9000_00xx) is a stand-in. After building,
-|       look up the real link-time address of each global symbol in the
-|       linker .map file and replace it -- ECU_ADDRESS must match exactly
-|       or CANape will read garbage / fault.
+|     - Every ECU_ADDRESS below (0x9000_00xx) is measData's placeholder base
+|       address (0x90000000) plus each field's offsetof(MeasData_t, field)
+|       -- 0x0/0x4/0x8/0xC, matching MEAS_PARAMS_TABLE order in
+|       meas_params.h with natural alignment (2 bytes of padding after
+|       engineRpm to align vehicleSpeedKph). After building, run
+|       tools/sync_a2l_addresses.py to replace 0x90000000 with measData's
+|       real link-time address and recompute all four ECU_ADDRESS values --
+|       only measData needs to be looked up in the .map/.elf, not each
+|       field individually.
 |     - ASAP2_VERSION and the XCP protocol/transport IF_DATA field order can
 |       be tool/version-sensitive; if CANape's A2L parser rejects a field,
 |       check its ASAP2 / ASAM XCP addendum version against this file's.
@@ -128,7 +134,7 @@ ASAP2_VERSION 1 71
 
     /end IF_DATA
 
-    /begin MEASUREMENT g_xcpDaqHeartbeat
+    /begin MEASUREMENT daqHeartbeat
       "Free-running DAQ heartbeat, increments every 10 ms -- sanity check signal"
       ULONG
       NO_COMPU_METHOD
@@ -136,7 +142,7 @@ ASAP2_VERSION 1 71
       0                              /* ACCURACY   */
       0                              /* LOWER_LIMIT */
       4294967295                     /* UPPER_LIMIT */
-      ECU_ADDRESS 0x90000000         /* PLACEHOLDER -- replace with .map address */
+      ECU_ADDRESS 0x90000000         /* PLACEHOLDER = measData + offsetof(..,daqHeartbeat)=0x0 */
       /begin IF_DATA XCP
         /begin DAQ_EVENT
           FIXED_EVENT_LIST
@@ -146,7 +152,7 @@ ASAP2_VERSION 1 71
       /end IF_DATA
     /end MEASUREMENT
 
-    /begin MEASUREMENT g_xcpEngineRpm
+    /begin MEASUREMENT engineRpm
       "Simulated engine speed, 10 ms raster"
       UWORD
       NO_COMPU_METHOD
@@ -154,7 +160,7 @@ ASAP2_VERSION 1 71
       0
       0                              /* LOWER_LIMIT */
       8000                           /* UPPER_LIMIT */
-      ECU_ADDRESS 0x90000004         /* PLACEHOLDER -- replace with .map address */
+      ECU_ADDRESS 0x90000004         /* PLACEHOLDER = measData + offsetof(..,engineRpm)=0x4 */
       FORMAT "%4.0"
       /begin IF_DATA XCP
         /begin DAQ_EVENT
@@ -165,7 +171,7 @@ ASAP2_VERSION 1 71
       /end IF_DATA
     /end MEASUREMENT
 
-    /begin MEASUREMENT g_xcpVehicleSpeedKph
+    /begin MEASUREMENT vehicleSpeedKph
       "Simulated vehicle speed, 10 ms raster"
       FLOAT32_IEEE
       NO_COMPU_METHOD
@@ -173,7 +179,7 @@ ASAP2_VERSION 1 71
       0
       0.0                            /* LOWER_LIMIT */
       250.0                          /* UPPER_LIMIT */
-      ECU_ADDRESS 0x90000008         /* PLACEHOLDER -- replace with .map address */
+      ECU_ADDRESS 0x90000008         /* PLACEHOLDER = measData + offsetof(..,vehicleSpeedKph)=0x8 (2 bytes padding after engineRpm) */
       FORMAT "%5.1"
       /begin IF_DATA XCP
         /begin DAQ_EVENT
@@ -184,7 +190,7 @@ ASAP2_VERSION 1 71
       /end IF_DATA
     /end MEASUREMENT
 
-    /begin MEASUREMENT g_xcpCoolantTempC
+    /begin MEASUREMENT coolantTempC
       "Simulated coolant temperature, 100 ms raster"
       FLOAT32_IEEE
       NO_COMPU_METHOD
@@ -192,7 +198,7 @@ ASAP2_VERSION 1 71
       0
       -40.0                          /* LOWER_LIMIT */
       150.0                          /* UPPER_LIMIT */
-      ECU_ADDRESS 0x9000000C         /* PLACEHOLDER -- replace with .map address */
+      ECU_ADDRESS 0x9000000C         /* PLACEHOLDER = measData + offsetof(..,coolantTempC)=0xC */
       FORMAT "%5.1"
       /begin IF_DATA XCP
         /begin DAQ_EVENT

@@ -43,13 +43,12 @@
 #define XCP_EVENT_10MS   0U
 #define XCP_EVENT_100MS  1U
 
-/* Measurement signals. Add each address to the A2L as a MEASUREMENT object,
- * then reference it from an ODT entry in a DAQ list bound to the matching
- * event above. */
-extern uint32  g_xcpDaqHeartbeat;     /* free-running counter, sanity check */
-extern uint16  g_xcpEngineRpm;        /* 800..5600 rpm, 10 ms raster        */
-extern float32 g_xcpVehicleSpeedKph;  /* 0..120 kph sawtooth, 10 ms raster  */
-extern float32 g_xcpCoolantTempC;     /* 20..90 degC sawtooth, 100 ms raster*/
+/* Measurement signals live in app/meas_data.h (measData.daqHeartbeat, ...),
+ * accessed here via app/meas_access.h bare names -- see meas_params.h for
+ * the full list and meas_data.c for storage. Their A2L ECU_ADDRESS is
+ * measData's base address (one symbol) plus each field's offsetof();
+ * tools/sync_a2l_addresses.py computes and patches that after every
+ * rebuild instead of tracking one address per signal. */
 
 /* Call once at startup, after the CAN node is initialised and before the
  * scheduler starts running the tasks below.
