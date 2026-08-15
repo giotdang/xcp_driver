@@ -33,6 +33,15 @@
 |     put it in the list's *second* ODT (PID-only header, 7 payload bytes
 |     free) or disable timestamping for that list. See the CANape DAQ list
 |     layout suggested in the .c file's header comment.
+|
+|   Calibration + complex types: XcpDaqExample_Task_10ms()/_100ms() also
+|   read app/cal_access.h parameters (idleSpeedRpm, systemGain, speedPid,
+|   torqueMap, tempOffsetDegC, featureEnabled) to drive the measurement
+|   signals, and demonstrate the two ways XCP DAQ handles data too big for
+|   one ODT entry: a struct (speedPidTelemetry, app/meas_types.h) split
+|   into N flat MEASUREMENT records, and an array (torqueSamples) described
+|   as one MEASUREMENT with MATRIX_DIM. See the .c file's header comment
+|   for the full ODT layout and why MATRIX_DIM doesn't reduce CAN traffic.
 ----------------------------------------------------------------------------*/
 
 #ifndef XCP_DAQ_EXAMPLE_H
