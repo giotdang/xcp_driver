@@ -44,15 +44,23 @@ What it does
       declaration order. This matches meas_data.h/.c as written -- if you
       ever add `#pragma pack` or a packed attribute there, update
       SIZE_ALIGN / the layout logic here too.
+    - For struct-typed fields (e.g. PidTelemetry_t), also lays out that
+      struct's own members via STRUCT_TYPES below, and targets one A2L
+      MEASUREMENT per member, named "<field>_<member>" -- matching how
+      xcp_daq_example.a2l represents speedPidTelemetry.error/.integral/
+      .output as 3 separate flat records (XCP has no wire-level concept
+      of a struct-shaped DTO, see meas_types.h / the DAQ conversation).
+      Array fields (MEAS_ARRAY) stay a single target -- they're described
+      in the A2L as one MEASUREMENT with MATRIX_DIM instead.
     - Reads `measData`'s base address from the symbol dump.
     - Rewrites the `ECU_ADDRESS 0x...` line inside each matching
-      `/begin MEASUREMENT <field> ... /end MEASUREMENT` block in the
+      `/begin MEASUREMENT <target> ... /end MEASUREMENT` block in the
       target A2L file, in place.
 
-Only fixed-width scalar types used in meas_params.h today are known to
-SIZE_ALIGN. Add an entry there (or extend the regex in
-`extract_fields()`) before using a new type -- the script refuses to
-guess a struct's layout for you.
+Only fixed-width scalar types (SIZE_ALIGN) and struct types registered in
+STRUCT_TYPES are known to this script. Add an entry to the relevant table
+(and keep it in sync with meas_types.h for structs) before using a new
+type -- the script refuses to guess a layout it wasn't told about.
 """
 
 import argparse
@@ -69,6 +77,18 @@ SIZE_ALIGN = {
     "float64": (8, 8),
 }
 
+# struct type name -> ordered [(member_name, member_c_type, member_count), ...]
+# Must be kept in sync with app/meas_types.h by hand -- this script does not
+# parse C struct definitions, only the flat MEAS_PARAMS_TABLE macro list.
+# member_c_type must be in SIZE_ALIGN (one level of nesting only).
+STRUCT_TYPES = {
+    "PidTelemetry_t": [
+        ("error", "float32", 1),
+        ("integral", "float32", 1),
+        ("output", "float32", 1),
+    ],
+}
+
 FIELD_RE = re.compile(
     r"""^\s*MEAS_(PARAM|ARRAY)\s*\(\s*
         (?P<type>\w+)\s*,\s*
@@ -79,6 +99,33 @@ FIELD_RE = re.compile(
 )
 
 
+def struct_layout(struct_type):
+    """(members_with_offset, total_size, align) for a STRUCT_TYPES entry,
+    laid out the same way layout_fields() lays out top-level fields."""
+    if struct_type not in STRUCT_TYPES:
+        sys.exit(
+            f"error: struct type '{struct_type}' is not in STRUCT_TYPES.\n"
+            f"       Add its member list to sync_a2l_addresses.py (matching "
+            f"app/meas_types.h) before syncing."
+        )
+    offset = 0
+    max_align = 1
+    laid_out = []
+    for member_name, member_type, member_count in STRUCT_TYPES[struct_type]:
+        if member_type not in SIZE_ALIGN:
+            sys.exit(
+                f"error: {struct_type}.{member_name} has type '{member_type}', "
+                f"not in SIZE_ALIGN (nested structs are not supported)."
+            )
+        elem_size, align = SIZE_ALIGN[member_type]
+        offset = (offset + align - 1) // align * align
+        laid_out.append((member_name, offset))
+        offset += elem_size * member_count
+        max_align = max(max_align, align)
+    total_size = (offset + max_align - 1) // max_align * max_align  # trailing pad
+    return laid_out, total_size, max_align
+
+
 class Field:
     def __init__(self, name, c_type, count):
         self.name = name
@@ -87,13 +134,34 @@ class Field:
         self.offset = None       # filled in by layout_fields()
 
     @property
+    def is_struct(self):
+        return self.c_type in STRUCT_TYPES
+
+    @property
     def total_size(self):
+        if self.is_struct:
+            _, size, _ = struct_layout(self.c_type)
+            return size * self.count
         elem_size, _ = SIZE_ALIGN[self.c_type]
         return elem_size * self.count
 
     @property
     def align(self):
+        if self.is_struct:
+            _, _, align = struct_layout(self.c_type)
+            return align
         return SIZE_ALIGN[self.c_type][1]
+
+    def leaf_targets(self):
+        """[(a2l_measurement_name, byte_offset_from_measData), ...] --
+        one entry for a scalar/array field, one per member for a struct
+        field (name joined with '_', matching the .a2l's MEASUREMENT
+        names, e.g. speedPidTelemetry_error)."""
+        if not self.is_struct:
+            return [(self.name, self.offset)]
+        members, _, _ = struct_layout(self.c_type)
+        return [(f"{self.name}_{member_name}", self.offset + member_offset)
+                for member_name, member_offset in members]
 
 
 def extract_fields(meas_params_h: Path):
@@ -116,10 +184,10 @@ def extract_fields(meas_params_h: Path):
                 break
             continue
         kind, c_type, name = m.group(1), m.group("type"), m.group("name")
-        if c_type not in SIZE_ALIGN:
+        if c_type not in SIZE_ALIGN and c_type not in STRUCT_TYPES:
             sys.exit(
-                f"error: type '{c_type}' (field '{name}') is not in SIZE_ALIGN.\n"
-                f"       Add its (size, alignment) to sync_a2l_addresses.py before "
+                f"error: type '{c_type}' (field '{name}') is not in SIZE_ALIGN "
+                f"or STRUCT_TYPES.\n       Add it to sync_a2l_addresses.py before "
                 f"syncing, or this script cannot compute a trustworthy offset."
             )
         count = int(m.group("size")) if kind == "ARRAY" else 1
@@ -166,22 +234,24 @@ MEASUREMENT_BLOCK_RE_TMPL = (
 )
 
 
-def patch_a2l(a2l_file: Path, fields, base_addr: int) -> int:
+def patch_a2l(a2l_file: Path, targets, base_addr: int) -> int:
+    """targets: [(a2l_measurement_name, byte_offset_from_measData), ...],
+    already flattened by Field.leaf_targets()."""
     text = a2l_file.read_text(encoding="utf-8")
     patched = 0
-    for f in fields:
-        addr = base_addr + f.offset
+    for name, offset in targets:
+        addr = base_addr + offset
         pattern = re.compile(
-            MEASUREMENT_BLOCK_RE_TMPL.format(name=re.escape(f.name)),
+            MEASUREMENT_BLOCK_RE_TMPL.format(name=re.escape(name)),
             re.DOTALL,
         )
         new_text, n = pattern.subn(lambda m: f"{m.group(1)}0x{addr:08X}", text, count=1)
         if n == 0:
-            print(f"warning: no MEASUREMENT '{f.name}' block found in {a2l_file}, skipped")
+            print(f"warning: no MEASUREMENT '{name}' block found in {a2l_file}, skipped")
             continue
         text = new_text
         patched += 1
-        print(f"  {f.name:<20} offset=+0x{f.offset:02X}  ECU_ADDRESS=0x{addr:08X}")
+        print(f"  {name:<28} offset=+0x{offset:02X}  ECU_ADDRESS=0x{addr:08X}")
     a2l_file.write_text(text, encoding="utf-8")
     return patched
 
@@ -203,12 +273,13 @@ def main():
             sys.exit(f"error: {p} not found")
 
     fields = layout_fields(extract_fields(args.meas_header))
+    targets = [t for f in fields for t in f.leaf_targets()]
     base_addr = find_symbol_address(args.symbols, args.base_symbol)
     print(f"{args.base_symbol} @ 0x{base_addr:08X} (from {args.symbols})")
 
-    patched = patch_a2l(args.a2l, fields, base_addr)
-    print(f"patched {patched}/{len(fields)} MEASUREMENT block(s) in {args.a2l}")
-    if patched != len(fields):
+    patched = patch_a2l(args.a2l, targets, base_addr)
+    print(f"patched {patched}/{len(targets)} MEASUREMENT block(s) in {args.a2l}")
+    if patched != len(targets):
         sys.exit(1)
 
 
