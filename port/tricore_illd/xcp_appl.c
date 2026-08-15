@@ -1,49 +1,52 @@
 /*----------------------------------------------------------------------------
-| File:   xcp_appl_tricore.c
+| File:   xcp_appl.c
 |
 | Description:
-|   XCP application callbacks for Infineon AURIX TriCore + iLLD.
-|   Implements the ApplXcp* hooks called by XcpBasic.c.
+|   XCP platform callbacks for Infineon AURIX TriCore + iLLD.
+|   Implements the function-pointer callbacks required by Xcp_ConfigType.
 |
-|   ApplXcpGetPointer   — logical address -> C pointer, with cal page remapping
-|   ApplXcpGetTimestamp — STM0 hardware timestamp for DAQ
-|   ApplXcpGetCalPage   — report current page to XCP master
-|   ApplXcpSetCalPage   — switch ECU and/or XCP page
-|   ApplXcpCopyCalPage  — copy reference (ROM) -> working (RAM)
-|   ApplXcpCalibrationWrite — write with ROM write-protection
-|   ApplXcpCalibrationRead  — read from active page
+|   These functions are platform-specific (TC2xx + iLLD) and should not
+|   need to change unless the hardware or calibration page model changes.
+|   The configuration object (Xcp_Config) that wires them together lives
+|   in xcp_cfg.c — that is the file the application developer edits.
 |
-|   Calibration page state and XcpCal_* functions live in xcp_cal_tricore.c.
-|   This file only contains the XcpBasic.c-facing callbacks.
+|   Xcp_GetPointer        — logical address -> C pointer, with cal page remapping
+|   Xcp_GetTimestamp      — STM0 hardware timestamp for DAQ
+|   Xcp_GetCalPage        — report current page to XCP master
+|   Xcp_SetCalPage        — switch ECU and/or XCP page
+|   Xcp_CopyCalPage       — copy reference (ROM) -> working (RAM)
+|   Xcp_CalibrationWrite  — write with ROM write-protection
+|   Xcp_CalibrationRead   — read from active page
+|   Xcp_EnterCritical     — disable interrupts, save ICR state
+|   Xcp_ExitCritical      — restore ICR state
+|
+|   Calibration page state and XcpCal_* functions live in xcp_cal.c.
 ----------------------------------------------------------------------------*/
 
-#include "XcpBasic.h"
+#include "Xcp_Handler.h"
 #include "port/tricore_illd/xcp_tricore.h"
-#include "port/tricore_illd/xcp_cal_tricore.h"
+#include "port/tricore_illd/xcp_cal.h"
 #include "app/cal_data.h"
 
 #include "IfxStm.h"
+#include "IfxCpu.h"
 #include <string.h>
 
-/* ============================================================
- * g_xcpIsrState
- * Saved ICR.IE between XcpInterruptDisable / XcpInterruptEnable.
- * Declared extern in xcp_tricore.h, defined here.
- * ============================================================ */
-boolean g_xcpIsrState = FALSE;
+/* ICR.IE value saved by Xcp_EnterCritical, restored by Xcp_ExitCritical. */
+static boolean g_xcpIsrState = FALSE;
 
 /* ============================================================
- * ApplXcpGetPointer
+ * Xcp_GetPointer
  *
  * Converts an XCP logical address to a C pointer.
- * When XCP master is on the WORKING page and the address falls
+ * When the XCP master is on the WORKING page and the address falls
  * in the calibration ROM region, redirect to the mirrored RAM:
  *
  *   RAM addr = addr - XCP_CAL_ROM_BASE + XCP_CAL_RAM_BASE
  *
  * All other addresses pass through unchanged (flat 32-bit space).
  * ============================================================ */
-uint8 *ApplXcpGetPointer(uint8 addr_ext, uint32 addr)
+uint8 *Xcp_GetPointer(uint8 addr_ext, uint32 addr)
 {
     (void)addr_ext;
 
@@ -60,13 +63,13 @@ uint8 *ApplXcpGetPointer(uint8 addr_ext, uint32 addr)
 }
 
 /* ============================================================
- * ApplXcpGetTimestamp
+ * Xcp_GetTimestamp
  * STM0 lower 32-bit counter at fSPB (~100 MHz on TC2xx -> 10 ns/tick).
  * ============================================================ */
 #if defined(XCP_ENABLE_DAQ_TIMESTAMP)
-XcpDaqTimestampType ApplXcpGetTimestamp(void)
+uint32 Xcp_GetTimestamp(void)
 {
-    return (XcpDaqTimestampType)IfxStm_getLower(&MODULE_STM0);
+    return (uint32)IfxStm_getLower(&MODULE_STM0);
 }
 #endif
 
@@ -75,14 +78,14 @@ XcpDaqTimestampType ApplXcpGetTimestamp(void)
  * ============================================================ */
 #if defined(XCP_ENABLE_CALIBRATION_PAGE)
 
-uint8 ApplXcpGetCalPage(uint8 segment, uint8 mode)
+uint8 Xcp_GetCalPage(uint8 segment, uint8 mode)
 {
     (void)segment;
     return (mode & 0x01U) ? (uint8)XcpCal_GetEcuPage()
                           : (uint8)XcpCal_GetXcpPage();
 }
 
-uint8 ApplXcpSetCalPage(uint8 segment, uint8 page, uint8 mode)
+uint8 Xcp_SetCalPage(uint8 segment, uint8 page, uint8 mode)
 {
     if (segment != XCP_SEGMENT_ID) return (uint8)CRC_OUT_OF_RANGE;
     if (page >= XCP_NUM_PAGES)     return (uint8)CRC_PAGE_NOT_VALID;
@@ -94,8 +97,8 @@ uint8 ApplXcpSetCalPage(uint8 segment, uint8 page, uint8 mode)
 }
 
 #if defined(XCP_ENABLE_PAGE_COPY)
-uint8 ApplXcpCopyCalPage(uint8 srcSeg,  uint8 srcPage,
-                         uint8 destSeg, uint8 destPage)
+uint8 Xcp_CopyCalPage(uint8 srcSeg,  uint8 srcPage,
+                      uint8 destSeg, uint8 destPage)
 {
     if ((srcSeg != XCP_SEGMENT_ID) || (destSeg != XCP_SEGMENT_ID))
         return (uint8)CRC_OUT_OF_RANGE;
@@ -117,12 +120,12 @@ uint8 ApplXcpCopyCalPage(uint8 srcSeg,  uint8 srcPage,
  * ============================================================ */
 #if defined(XCP_ENABLE_CALIBRATION_MEM_ACCESS_BY_APPL)
 
-uint8 ApplXcpCalibrationWrite(uint8 *addr, uint8 size, const uint8 *data)
+uint8 Xcp_CalibrationWrite(uint8 *addr, uint8 size, const uint8 *data)
 {
     const uint32 physAddr = (uint32)(Ifx_AddressValue)addr;
 
     /* Reject writes to ROM — catches reference-page access where
-     * ApplXcpGetPointer returned the ROM address unchanged. */
+     * Xcp_GetPointer returned the ROM address unchanged. */
     if ((physAddr >= XCP_CAL_ROM_BASE) &&
         (physAddr <  XCP_CAL_ROM_BASE + XCP_CAL_SIZE))
     {
@@ -133,10 +136,23 @@ uint8 ApplXcpCalibrationWrite(uint8 *addr, uint8 size, const uint8 *data)
     return (uint8)XCP_CMD_OK;
 }
 
-uint8 ApplXcpCalibrationRead(uint8 *addr, uint8 size, uint8 *data)
+uint8 Xcp_CalibrationRead(uint8 *addr, uint8 size, uint8 *data)
 {
     memcpy(data, addr, (uint32)size);
     return (uint8)XCP_CMD_OK;
 }
 
 #endif /* XCP_ENABLE_CALIBRATION_MEM_ACCESS_BY_APPL */
+
+/* ============================================================
+ * Critical section — disable/restore global interrupt enable
+ * ============================================================ */
+void Xcp_EnterCritical(void)
+{
+    g_xcpIsrState = IfxCpu_disableInterrupts();
+}
+
+void Xcp_ExitCritical(void)
+{
+    IfxCpu_restoreInterrupts(g_xcpIsrState);
+}

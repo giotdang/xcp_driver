@@ -89,33 +89,4 @@
  * ============================================================ */
 #define XCP_ENABLE_CALIBRATION_MEM_ACCESS_BY_APPL
 
-/* ============================================================
- * Transport layer binding — CAN via iLLD MultiCAN
- * Functions implemented in port/tricore_illd/xcp_can_tricore.c
- * ============================================================ */
-#define ApplXcpSend(len, msg)   XcpCan_Send(len, msg)
-#define ApplXcpInit()           XcpCan_Init()
-#define ApplXcpBackground()     XcpCan_Background()
-
-/* ============================================================
- * Interrupt critical section
- *
- * XcpInterruptDisable / XcpInterruptEnable guard the DTO send-queue
- * against preemption by the CAN TX ISR (XcpSendCallBack).
- *
- * IfxCpu_disableInterrupts() saves and clears ICR.IE, returning the
- * previous state so that IfxCpu_restoreInterrupts() can reinstate it
- * exactly — safe even if XCP is called from within an ISR context.
- *
- * g_xcpIsrState is defined in xcp_appl_tricore.c.
- * ============================================================ */
-#include "port/tricore_illd/xcp_tricore.h"      /* hardware config, g_xcpIsrState */
-#include "port/tricore_illd/xcp_can_tricore.h"  /* XcpCan_Init/Send/Background    */
-
-#define XcpInterruptDisable() \
-    do { g_xcpIsrState = IfxCpu_disableInterrupts(); } while (0)
-
-#define XcpInterruptEnable() \
-    do { IfxCpu_restoreInterrupts(g_xcpIsrState); } while (0)
-
 #endif /* __XCP_CFG_H__ */

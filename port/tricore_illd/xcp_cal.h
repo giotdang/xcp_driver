@@ -1,14 +1,13 @@
 /*----------------------------------------------------------------------------
-| File:   xcp_cal_tricore.h
+| File:   xcp_cal.h
 |
 | Description:
-|   Calibration page configuration and ECU-side access API for
-|   XCP on AURIX TriCore.
+|   Calibration page configuration and ECU-side access API for XCP.
 |
 |   Concept — ROM-shadow in RAM:
 |     The A2L file (used by CANape/INCA) contains the FLASH addresses of
 |     calibration parameters.  A RAM region of identical layout is reserved
-|     as the "working page".  ApplXcpGetPointer transparently redirects
+|     as the "working page".  Xcp_GetPointer transparently redirects
 |     any XCP access to a ROM address into the mirrored RAM region, so the
 |     calibration tool needs no knowledge of the RAM layout.
 |
@@ -43,17 +42,17 @@
 |     const CalData_t *pCal = &calROM;  // starts on reference page
 |
 |   Switching the ECU page:
-|     Call XcpCal_SetEcuPage(XCP_PAGE_WORKING) to point pCal → calRAM.
+|     Call XcpCal_SetEcuPage(XCP_PAGE_WORKING) to point pCal -> calRAM.
 |     The XCP page (what CANape reads/writes) is tracked separately.
 ----------------------------------------------------------------------------*/
 
-#ifndef XCP_CAL_TRICORE_H
-#define XCP_CAL_TRICORE_H
+#ifndef XCP_CAL_H
+#define XCP_CAL_H
 
 #include "Ifx_Types.h"
 
 /* ============================================================
- * Page identifiers (must match ApplXcpGetCalPage / SetCalPage)
+ * Page identifiers (must match Xcp_GetCalPage / Xcp_SetCalPage)
  * ============================================================ */
 #define XCP_PAGE_WORKING    0U   /* RAM  — writable, transient        */
 #define XCP_PAGE_REFERENCE  1U   /* Flash — read-only, persistent     */
@@ -84,10 +83,10 @@ extern uint8 _cal_ram_start[];   /* start of .cal_ram section in RAM   */
 #define XCP_CAL_RAM_BASE    ((uint32)(Ifx_AddressValue)_cal_ram_start)
 
 /* ============================================================
- * Public API — called from xcp_appl_tricore.c and application
+ * Public API — called from xcp_appl.c and application
  * ============================================================ */
 
-/* Copy reference page (ROM) → working page (RAM).
+/* Copy reference page (ROM) -> working page (RAM).
  * Must be called once before the working page is used.
  * Safe to call at any time; XCP master can trigger it via COPY_CAL_PAGE. */
 void XcpCal_InitWorkingPage(void);
@@ -104,7 +103,7 @@ uint8 XcpCal_GetEcuPage(void);
 uint8 XcpCal_GetXcpPage(void);
 
 /* Set the page the XCP master reads/writes.
- * Affects address remapping in ApplXcpGetPointer. */
+ * Affects address remapping in Xcp_GetPointer. */
 void XcpCal_SetXcpPage(uint8 page);
 
-#endif /* XCP_CAL_TRICORE_H */
+#endif /* XCP_CAL_H */

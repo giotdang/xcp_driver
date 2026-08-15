@@ -1,21 +1,21 @@
 /*----------------------------------------------------------------------------
-| File:   xcp_cal_tricore.c
+| File:   xcp_cal.c
 |
 | Description:
-|   Calibration page state management for XCP on AURIX TriCore.
-|   Implements the XcpCal_* API declared in xcp_cal_tricore.h.
+|   Calibration page state management for XCP.
+|   Implements the XcpCal_* API declared in xcp_cal.h.
 |
 |   Responsibilities:
 |     - Track which page ECU and XCP master are currently using
 |     - Initialise the working (RAM) page from the reference (Flash) page
 |     - Switch pCal so application code reads from the correct page
 |
-|   The ApplXcp* callbacks that use this state (ApplXcpGetCalPage,
-|   ApplXcpSetCalPage, ApplXcpGetPointer) live in xcp_appl_tricore.c
-|   and access page state through XcpCal_Get/Set functions.
+|   Callbacks that use this state (Xcp_GetCalPage, Xcp_SetCalPage,
+|   Xcp_GetPointer) live in xcp_appl.c and access page state through
+|   XcpCal_Get/Set functions.
 ----------------------------------------------------------------------------*/
 
-#include "port/tricore_illd/xcp_cal_tricore.h"
+#include "port/tricore_illd/xcp_cal.h"
 #include "app/cal_data.h"
 
 #include <string.h>   /* memcpy */

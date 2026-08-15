@@ -2,213 +2,170 @@
 | File:   xcp_can_tricore.c
 |
 | Description:
-|   XCP on CAN transport layer for Infineon AURIX TC2xx + iLLD MultiCAN.
+|   XCP on CAN transport layer for Infineon AURIX TC3xx + iLLD MCMCAN.
 |
 |   Responsibilities:
-|     1. XcpCan_Init      — configure CAN node, TX and RX message objects
-|     2. XcpCan_Send      — transmit one XCP packet (called by protocol layer)
-|     3. XcpCan_RxIsr     — receive ISR: read frame, call XcpCommand()
-|     4. XcpCan_TxIsr     — TX-done ISR: call XcpSendCallBack() to drain queue
+|     1. XcpCan_Init      — store XcpCan_ConfigType pointer (no hardware init)
+|     2. XcpCan_Send      — transmit one XCP packet via dedicated TX buffer 0
+|     3. XcpCan_RxIsr     — FIFO0 new-message ISR: read hardware FIFO and
+|                           enqueue frame into SW ring buffer
+|     4. XcpCan_TxIsr     — TX-complete ISR: clear flag, call Xcp_SendCallBack()
+|     5. XcpCan_Receive   — poll function: dequeue one frame for Xcp_Background()
 |
-|   ISR-driven design:
-|     No polling is required.  The TX ISR calls XcpSendCallBack(), which
-|     in turn calls XcpCan_Send() for the next queued DTO if one exists,
-|     chaining transmissions without CPU spin.
+|   CAN module/node initialisation is the responsibility of the application.
+|   XcpCan_Init() only stores a pointer to the pre-initialised node handle and
+|   the TX CAN ID.  The application must configure TX dedicated buffer 0,
+|   RX FIFO0, the standard ID filter, and the interrupt routing before calling
+|   XcpCan_Init().
 |
-| TC3xx (MCMCAN) migration guide — differences to address:
-|   - Module init:  IfxMultican_Can_initModule  → IfxMcmcan_Can_initModule
-|   - Node init:    IfxMultican_Can_Node_init   → IfxMcmcan_Can_Node_init
-|   - No message objects on MCMCAN; use TX buffer + RX FIFO instead:
-|       TX: IfxMcmcan_Can_Node_initTxBuffer / writeTxBuffer / setTxBufferAddRequest
-|       RX: Configure RX filter → FIFO0; read via IfxMcmcan_Can_Node_readRxFifo0
-|   - ISR: use IfxMcmcan_InterruptLine_* and route to SRC via iLLD init config
+|   Async RX design:
+|     RX ISR only enqueues frames into g_xcpRxQueue[].
+|     Xcp_Background() calls XcpCan_Receive() to dequeue and then passes the
+|     frame to Xcp_Command() — no protocol processing in ISR context.
+|
+|   Thread safety (single-producer / single-consumer ring buffer):
+|     g_xcpRxQueueWp is volatile and only written by RX ISR.
+|     g_xcpRxQueueRp is only read/written by Xcp_Background() (task context).
+|     Data is written to the slot before advancing g_xcpRxQueueWp, so the
+|     consumer sees a consistent frame whenever it observes the new pointer.
+|     If the SW queue is full the ISR silently drops the frame; the XCP master
+|     will retry on timeout.
 |
 | Dependencies:
-|   iLLD:   IfxMultican_Can.h, IfxMultican.h
-|   XCP:    XcpBasic.h, xcp_tricore.h, xcp_can_tricore.h
-|
-|   Types: all functions use uint8/uint8* from Ifx_Types.h (via xcp_types.h).
-|   XcpBasic.c call sites use the Vector aliases vuint8/BYTEPTR, which map to
-|   the same underlying type (unsigned char), so no conversion is needed.
+|   iLLD:   IfxCan_Can.h, IfxCan.h
+|   XCP:    Xcp_Handler.h, xcp_tricore.h (ISR priority macros), xcp_can_tricore.h
 ----------------------------------------------------------------------------*/
 
-#include "XcpBasic.h"
+#include "Xcp_Handler.h"
 #include "port/tricore_illd/xcp_tricore.h"
 #include "port/tricore_illd/xcp_can_tricore.h"
 
-/* iLLD MultiCAN */
-#include "IfxMultican_Can.h"
-#include "IfxMultican.h"
+#include "IfxCan_Can.h"
+#include "IfxCan.h"
 
-#include <string.h>   /* memcpy — safe byte-wise copy for unaligned msg ptr */
+#include <string.h>   /* memcpy */
 
 /* ============================================================
- * Module-level iLLD handles
- * Static — only accessible within this translation unit.
+ * Configuration pointer — stored by XcpCan_Init, used by all functions.
  * ============================================================ */
-static IfxMultican_Can         g_xcpCanModule;
-static IfxMultican_Can_Node    g_xcpCanNode;
-static IfxMultican_Can_MsgObj  g_xcpTxObj;
-static IfxMultican_Can_MsgObj  g_xcpRxObj;
+static const XcpCan_ConfigType *g_xcpCanCfg;
+
+/* ============================================================
+ * RX ring buffer — single-producer (ISR) / single-consumer (Background)
+ * ============================================================ */
+#define XCP_CAN_RX_QUEUE_SIZE  4U
+
+typedef struct {
+    uint32 data[2];   /* 8 bytes: data[0] = bytes 0-3, data[1] = bytes 4-7 */
+} XcpCan_RxFrame_t;
+
+static XcpCan_RxFrame_t  g_xcpRxQueue[XCP_CAN_RX_QUEUE_SIZE];
+static volatile uint8    g_xcpRxQueueWp;   /* written by ISR, read by Background */
+static uint8             g_xcpRxQueueRp;   /* read and written by Background only */
 
 /* ============================================================
  * XcpCan_Init
  *
- * Sequence:
- *   1. Enable and configure the MULTICAN module clock
- *   2. Initialise CAN node 0 at XCP_CAN_BAUDRATE
- *   3. Allocate TX message object (interrupt on TX confirmation)
- *   4. Allocate RX message object (interrupt on reception)
+ * Stores the configuration pointer.  No hardware access is performed.
+ * The application must fully initialise the CAN node (including TX
+ * dedicated buffer 0, RX FIFO0, standard ID filter, and interrupt
+ * routing) before calling this function.
  *
- * Call this once before XcpInit(), or let it be called automatically
- * by XcpInit() via the ApplXcpInit() macro in xcp_cfg.h.
+ * Call once, before Xcp_Init().
  * ============================================================ */
-void XcpCan_Init(void)
+void XcpCan_Init(const XcpCan_ConfigType *ConfigPtr)
 {
-    /* ---- CAN module ---- */
-    IfxMultican_Can_Config modCfg;
-    IfxMultican_Can_initModuleConfig(&modCfg, &XCP_CAN_MODULE);
-    IfxMultican_Can_initModule(&g_xcpCanModule, &modCfg);
-
-    /* ---- CAN node ---- */
-    IfxMultican_Can_Node_Config nodeCfg;
-    IfxMultican_Can_Node_initConfig(&nodeCfg, &g_xcpCanModule);
-
-    nodeCfg.nodeId   = XCP_CAN_NODE_ID;
-    nodeCfg.baudrate = XCP_CAN_BAUDRATE;
-
-    /* Pin mapping — update XCP_CAN_TX_PIN / XCP_CAN_RX_PIN in xcp_tricore.h */
-    const IfxMultican_Can_Pins pins = {
-        .txPin     = &XCP_CAN_TX_PIN,
-        .txPinMode = IfxPort_OutputMode_pushPull,
-        .rxPin     = &XCP_CAN_RX_PIN,
-        .rxPinMode = IfxPort_InputMode_pullUp,
-    };
-    nodeCfg.pins = &pins;
-
-    IfxMultican_Can_Node_init(&g_xcpCanNode, &nodeCfg);
-
-    /* ---- TX message object ---- */
-    IfxMultican_Can_MsgObj_Config txObjCfg;
-    IfxMultican_Can_MsgObj_initConfig(&txObjCfg, &g_xcpCanNode);
-
-    txObjCfg.msgObjId            = XCP_CAN_TX_MSG_OBJ_ID;
-    txObjCfg.messageId           = XCP_CAN_TX_ID;
-    txObjCfg.frame               = IfxMultican_Frame_transmit;
-    txObjCfg.txInterrupt.enabled = TRUE;
-    txObjCfg.txInterrupt.srcId   = XCP_CAN_TX_ISR_SRC_ID;
-
-    IfxMultican_Can_MsgObj_init(&g_xcpTxObj, &txObjCfg);
-
-    /* ---- RX message object ---- */
-    IfxMultican_Can_MsgObj_Config rxObjCfg;
-    IfxMultican_Can_MsgObj_initConfig(&rxObjCfg, &g_xcpCanNode);
-
-    rxObjCfg.msgObjId            = XCP_CAN_RX_MSG_OBJ_ID;
-    rxObjCfg.messageId           = XCP_CAN_RX_ID;
-    rxObjCfg.frame               = IfxMultican_Frame_receive;
-    rxObjCfg.rxInterrupt.enabled = TRUE;
-    rxObjCfg.rxInterrupt.srcId   = XCP_CAN_RX_ISR_SRC_ID;
-
-    IfxMultican_Can_MsgObj_init(&g_xcpRxObj, &rxObjCfg);
+    g_xcpCanCfg = ConfigPtr;
 }
 
 /* ============================================================
- * XcpCan_Send  (= ApplXcpSend via macro in xcp_cfg.h)
+ * XcpCan_Send  (bound to TransportLayer->Transmit callback)
  *
- * Called by XcpBasic.c whenever it needs to transmit:
- *   - A command response (CRM) after processing a host command
- *   - A DAQ/DTO packet when XcpSendCallBack drains the send queue
- *
- * The XCP protocol layer guarantees this is not called re-entrantly:
- *   - It disables interrupts (XcpInterruptDisable) around queue access
- *   - The TX mailbox is always free when called from the TX ISR context
- *     (because TX just completed, freeing the mailbox)
- *
- * memcpy is used instead of a direct word cast because the msg pointer
- * handed by the protocol layer may not be 32-bit aligned.
+ * Transmits msg (len bytes, max 8) using TX dedicated buffer 0.
+ * Spins until the buffer is free (non-blocking under normal conditions:
+ * the TX ISR fires quickly after the frame is put on the bus).
  * ============================================================ */
 void XcpCan_Send(uint8 len, const uint8 *msg)
 {
-    uint32 dataLow  = 0U;
-    uint32 dataHigh = 0U;
+    IfxCan_Message txMsg;
+    IfxCan_Message_init(&txMsg);
 
-    /* Copy bytes into two 32-bit words, zero-padding short frames */
-    const uint8 lowBytes  = (len >= 4U) ? 4U : len;
-    const uint8 highBytes = (len > 4U)  ? (uint8)(len - 4U) : 0U;
+    txMsg.messageId          = g_xcpCanCfg->txId;
+    txMsg.messageIdLength    = IfxCan_MessageIdLength_standard;
+    txMsg.dataLengthCode     = IfxCan_DataLengthCode_8;
+    txMsg.bufferNumber       = 0U;
+    txMsg.storeInTxFifoQueue = FALSE;
 
-    memcpy(&dataLow,  msg,     lowBytes);
-    memcpy(&dataHigh, msg + 4U, highBytes);
+    uint32 txData[2] = {0U, 0U};
+    memcpy(txData, msg, (len <= 8U) ? (uint32)len : 8U);
 
-    IfxMultican_Message txMsg;
-    IfxMultican_Message_init(&txMsg,
-                             XCP_CAN_TX_ID,
-                             dataLow,
-                             dataHigh,
-                             IfxMultican_DataLengthCode_8);  /* always 8-byte DLC on CAN */
+    while (IfxCan_Can_sendMessage(g_xcpCanCfg->node, &txMsg, txData)
+           == IfxCan_Status_notSentBusy) {}
+}
 
-    /* Wait until the TX mailbox is ready.
-     * Under normal operation this loop runs 0 iterations (mailbox is free).
-     * It may spin briefly if XcpCan_Send is called from a task context
-     * simultaneously with a background CAN transmission.            */
-    while (IfxMultican_Can_MsgObj_sendMessage(&g_xcpTxObj, &txMsg)
-           == IfxMultican_Status_notSentBusy) {}
+/* ============================================================
+ * XcpCan_Receive  (bound to TransportLayer->Receive callback)
+ *
+ * Called from Xcp_Background() to dequeue one RX frame.
+ * Returns 1 if a frame was dequeued, 0 if the queue is empty.
+ * *len is always set to 8 (fixed CAN DLC for XCP on CAN).
+ * ============================================================ */
+uint8 XcpCan_Receive(uint8 *len, uint8 *data)
+{
+    if (g_xcpRxQueueRp == g_xcpRxQueueWp)
+    {
+        return 0U;
+    }
+
+    memcpy(data, &g_xcpRxQueue[g_xcpRxQueueRp], 8U);
+    *len = 8U;
+
+    g_xcpRxQueueRp = (uint8)((g_xcpRxQueueRp + 1U) % XCP_CAN_RX_QUEUE_SIZE);
+    return 1U;
 }
 
 /* ============================================================
  * XcpCan_RxIsr
  *
- * Triggered by the MULTICAN hardware when a CAN frame arrives with
- * an ID matching XCP_CAN_RX_ID (set in the RX message object filter).
+ * Triggered by MCMCAN FIFO0 new-message interrupt.
+ * Reads the frame from the hardware FIFO (auto-acknowledged by iLLD)
+ * and enqueues it into the SW ring buffer.  Xcp_Background() dequeues
+ * and calls Xcp_Command().
  *
- * Reads the 8-byte frame and passes it to XcpCommand().
- * XcpCommand() processes the XCP protocol command and, if a response
- * is needed, calls back into XcpCan_Send() before returning.
- *
- * ISR priority: XCP_CAN_RX_ISR_PRIORITY (defined in xcp_tricore.h)
- * CPU affinity: core 0 (second arg of IFX_INTERRUPT)
+ * ISR priority: XCP_CAN_RX_ISR_PRIORITY (xcp_tricore.h)
+ * CPU affinity: core 0
  * ============================================================ */
 IFX_INTERRUPT(XcpCan_RxIsr, 0, XCP_CAN_RX_ISR_PRIORITY)
 {
-    IfxMultican_Message rxMsg;
+    IfxCan_Message rxMsg;
+    IfxCan_Message_init(&rxMsg);
+    rxMsg.readFromRxFifo0 = TRUE;
 
-    if (IfxMultican_Can_MsgObj_readMessage(&g_xcpRxObj, &rxMsg)
-        == IfxMultican_Status_ok)
+    uint32 rxData[2] = {0U, 0U};
+    IfxCan_Can_readMessage(g_xcpCanCfg->node, &rxMsg, rxData);
+
+    uint8 nextWp = (uint8)((g_xcpRxQueueWp + 1U) % XCP_CAN_RX_QUEUE_SIZE);
+    if (nextWp != g_xcpRxQueueRp)   /* drop silently if SW queue is full */
     {
-        /* rxMsg.data[0] = bytes 0–3 (little-endian word)
-         * rxMsg.data[1] = bytes 4–7
-         * Both are naturally 32-bit aligned — cast is safe.           */
-        XcpCommand((const uint32*)rxMsg.data);
+        g_xcpRxQueue[g_xcpRxQueueWp].data[0] = rxData[0];
+        g_xcpRxQueue[g_xcpRxQueueWp].data[1] = rxData[1];
+        g_xcpRxQueueWp = nextWp;    /* advance after data is written */
     }
 }
 
 /* ============================================================
  * XcpCan_TxIsr
  *
- * Triggered by the MULTICAN hardware when the TX mailbox has
- * successfully put the frame on the bus (arbitration won, frame sent).
+ * Triggered when dedicated TX buffer 0 has successfully sent a frame.
+ * Clears the hardware TX-complete interrupt flag, then calls
+ * Xcp_SendCallBack() to chain the next DTO from the XCP send queue.
  *
- * XcpSendCallBack() checks the DTO send-queue:
- *   - If empty  : returns 0, ISR exits.
- *   - If pending: calls XcpCan_Send() for the next DTO and returns 1.
- *
- * This creates a self-sustaining chain: each TX-done interrupt
- * dispatches the next queued frame, achieving maximum CAN bus
- * utilisation without any polling loop.
- *
- * ISR priority: XCP_CAN_TX_ISR_PRIORITY (defined in xcp_tricore.h)
+ * ISR priority: XCP_CAN_TX_ISR_PRIORITY (xcp_tricore.h)
  * CPU affinity: core 0
  * ============================================================ */
 IFX_INTERRUPT(XcpCan_TxIsr, 0, XCP_CAN_TX_ISR_PRIORITY)
 {
-    XcpSendCallBack();
+    IfxCan_Node_clearInterruptFlag(g_xcpCanCfg->node->node,
+                                   IfxCan_Interrupt_transmissionCompleted);
+    Xcp_SendCallBack();
 }
-
-/* ============================================================
- * XcpCan_Background  (= ApplXcpBackground via macro in xcp_cfg.h)
- *
- * Called from XcpBackground() in the periodic task.
- * The ISR-driven design requires no polling here.
- * Placeholder for future extensions: bus-off recovery, error frames.
- * ============================================================ */
-void XcpCan_Background(void) {}
