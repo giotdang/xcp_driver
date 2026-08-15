@@ -23,10 +23,10 @@
 |   Calibration page state and XcpCal_* functions live in xcp_cal.c.
 ----------------------------------------------------------------------------*/
 
-#include "Xcp_Handler.h"
-#include "port/tricore_illd/xcp_tricore.h"
-#include "port/tricore_illd/xcp_cal.h"
-#include "app/cal_data.h"
+#include "driver/Xcp_Handler.h"
+#include "driver/port/tricore_illd/xcp_tricore.h"
+#include "driver/port/tricore_illd/xcp_cal.h"
+#include "driver/app/cal_data.h"
 
 #include "IfxStm.h"
 #include "IfxCpu.h"

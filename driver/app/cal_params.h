@@ -26,7 +26,7 @@
 #define CAL_PARAMS_H
 
 #include "Ifx_Types.h"
-#include "app/cal_types.h"
+#include "driver/app/cal_types.h"
 
 /* clang-format off */
 

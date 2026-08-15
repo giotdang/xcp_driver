@@ -15,8 +15,8 @@
 |   XcpCal_Get/Set functions.
 ----------------------------------------------------------------------------*/
 
-#include "port/tricore_illd/xcp_cal.h"
-#include "app/cal_data.h"
+#include "driver/port/tricore_illd/xcp_cal.h"
+#include "driver/app/cal_data.h"
 
 #include <string.h>   /* memcpy */
 

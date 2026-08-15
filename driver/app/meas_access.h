@@ -24,7 +24,7 @@
 #ifndef MEAS_ACCESS_H
 #define MEAS_ACCESS_H
 
-#include "app/meas_data.h"
+#include "driver/app/meas_data.h"
 
 /* ============================================================
  * MEAS(name) — generic zero-maintenance accessor

@@ -8,9 +8,9 @@ rebuild (new globals added, linker script changes, toolchain updates, ...).
 Hand-editing ECU_ADDRESS in the A2L after each build does not scale.
 
 This project avoids per-signal address churn by putting every DAQ
-measurement signal into ONE struct instance (app/meas_data.h: `measData`,
-generated from app/meas_params.h -- mirrors the existing calibration
-pattern in app/cal_data.h / cal_params.h). Only `measData`'s own address
+measurement signal into ONE struct instance (driver/app/meas_data.h: `measData`,
+generated from driver/app/meas_params.h -- mirrors the existing calibration
+pattern in driver/app/cal_data.h / cal_params.h). Only `measData`'s own address
 needs to be re-read from the linker output after a rebuild; every field's
 address is `measData`'s base address + offsetof(MeasData_t, field), which
 this script computes itself by parsing meas_params.h -- it does not need
@@ -37,7 +37,7 @@ Usage
 
 What it does
 ------------
-    - Parses MEAS_PARAMS_TABLE from app/meas_params.h to reconstruct
+    - Parses MEAS_PARAMS_TABLE from driver/app/meas_params.h to reconstruct
       MeasData_t's field order, type, and (for MEAS_ARRAY) element count.
     - Computes each field's byte offset the same way the C compiler lays
       out a plain struct: natural alignment, no packing pragma, fields in
@@ -78,7 +78,7 @@ SIZE_ALIGN = {
 }
 
 # struct type name -> ordered [(member_name, member_c_type, member_count), ...]
-# Must be kept in sync with app/meas_types.h by hand -- this script does not
+# Must be kept in sync with driver/app/meas_types.h by hand -- this script does not
 # parse C struct definitions, only the flat MEAS_PARAMS_TABLE macro list.
 # member_c_type must be in SIZE_ALIGN (one level of nesting only).
 STRUCT_TYPES = {
@@ -106,7 +106,7 @@ def struct_layout(struct_type):
         sys.exit(
             f"error: struct type '{struct_type}' is not in STRUCT_TYPES.\n"
             f"       Add its member list to sync_a2l_addresses.py (matching "
-            f"app/meas_types.h) before syncing."
+            f"driver/app/meas_types.h) before syncing."
         )
     offset = 0
     max_align = 1
@@ -225,7 +225,7 @@ def find_symbol_address(symbols_file: Path, symbol: str) -> int:
     sys.exit(
         f"error: symbol '{symbol}' not found in {symbols_file}\n"
         f"       Make sure it was dumped with `nm` (or is present in a GNU ld "
-        f".map) and that the firmware actually defines it (app/meas_data.c)."
+        f".map) and that the firmware actually defines it (driver/app/meas_data.c)."
     )
 
 
@@ -258,7 +258,7 @@ def patch_a2l(a2l_file: Path, targets, base_addr: int) -> int:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--meas-header", default="app/meas_params.h", type=Path,
+    ap.add_argument("--meas-header", default="driver/app/meas_params.h", type=Path,
                      help="path to meas_params.h (default: %(default)s)")
     ap.add_argument("--symbols", default="symbols.txt", type=Path,
                      help="nm output or GNU ld .map file (default: %(default)s)")

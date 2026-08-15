@@ -8,22 +8,23 @@ XCP (Universal Measurement and Calibration Protocol) v1.0 slave implementation c
 
 ```
 xcp_driver/
-├── Xcp_Handler.c / Xcp_Handler.h        # Protocol layer (core XCP state machine)
-├── xcp_cfg.h                             # Cấu hình compile-time features
-├── xcp_def.h                             # XCP default settings — KHÔNG sửa trực tiếp
-│
-├── port/tricore_illd/                    # HAL port cho Infineon AURIX + iLLD
-│   ├── xcp_types.h                      # Type aliases (vuint8→uint8, v.v.)
-│   ├── xcp_tricore.h                    # Cấu hình phần cứng (CAN IDs, ISR, pins)
-│   ├── xcp_can_tricore.c/h              # Transport layer CAN: ring buffer, ISR, Receive()
-│   ├── xcp_appl_tricore.c/h             # Callbacks + Xcp_Config (PostBuild config object)
-│   └── xcp_cal_tricore.c/h              # Quản lý trang hiệu chỉnh ROM/RAM
-│
-└── app/                                  # Calibration framework tầng ứng dụng
-    ├── cal_types.h                       # Struct definitions (PidConfig_t, v.v.)
-    ├── cal_params.h                      # Bảng tham số hiệu chỉnh (macro-driven)
-    ├── cal_data.c / cal_data.h          # Lưu trữ calROM, calRAM, pCal
-    └── cal_access.h                      # Macro truy cập CAL(name)
+└── driver/                               # Toàn bộ driver core + HAL port + app framework
+    ├── Xcp_Handler.c / Xcp_Handler.h    # Core XCP state machine
+    ├── xcp_cfg.c / xcp_cfg.h            # Cấu hình compile-time features + Xcp_Config object
+    ├── xcp_def.h                         # XCP default settings — KHÔNG sửa trực tiếp
+    │
+    ├── port/tricore_illd/                # HAL port cho Infineon AURIX + iLLD
+    │   ├── xcp_types.h                  # Type aliases (vuint8→uint8, v.v.)
+    │   ├── xcp_tricore.h                # Cấu hình phần cứng (CAN IDs, ISR, pins)
+    │   ├── xcp_can_tricore.c/h          # Transport layer CAN: ring buffer, ISR, Receive()
+    │   ├── xcp_appl_tricore.c/h         # Callbacks + Xcp_Config (PostBuild config object)
+    │   └── xcp_cal_tricore.c/h          # Quản lý trang hiệu chỉnh ROM/RAM
+    │
+    └── app/                               # Calibration framework tầng ứng dụng
+        ├── cal_types.h                    # Struct definitions (PidConfig_t, v.v.)
+        ├── cal_params.h                   # Bảng tham số hiệu chỉnh (macro-driven)
+        ├── cal_data.c / cal_data.h       # Lưu trữ calROM, calRAM, pCal
+        └── cal_access.h                   # Macro truy cập CAL(name)
 ```
 
 ## Architecture (Phân lớp)
@@ -53,14 +54,14 @@ CAN TX ISR (prio 59)
 
 | File | Role |
 |------|------|
-| `Xcp_Handler.c` (~3400 lines) | Core protocol: connect/disconnect, DOWNLOAD, UPLOAD, DAQ, SET_CAL_PAGE, COPY_CAL_PAGE, checksum, send queue |
-| `Xcp_Handler.h` | Protocol constants (CC_*), packet structs (tXcpCto, tXcpDto), `Xcp_ConfigType`, `Xcp_TransportLayerType`, public API |
-| `xcp_cfg.h` | **Điểm cấu hình chính**: bật/tắt features, kích thước buffer, timestamp config |
-| `xcp_tricore.h` | CAN hardware: node ID, TX/RX message IDs (0x7E1/0x7E0), baudrate, ISR priority, GPIO pins |
-| `xcp_can_tricore.c` | Ring buffer RX, RxIsr enqueue, TxIsr → Xcp_SendCallBack(), XcpCan_Receive() poll |
-| `xcp_appl_tricore.c` | Callback implementations + định nghĩa `Xcp_Config` (PostBuild config object) |
-| `xcp_cal_tricore.c/h` | Page state: xcpCalPage_Ecu, xcpCalPage_Xcp, XcpCal_InitWorkingPage() |
-| `cal_params.h` | **Danh sách tham số hiệu chỉnh** — append-only, KHÔNG reorder |
+| `driver/Xcp_Handler.c` (~3400 lines) | Core protocol: connect/disconnect, DOWNLOAD, UPLOAD, DAQ, SET_CAL_PAGE, COPY_CAL_PAGE, checksum, send queue |
+| `driver/Xcp_Handler.h` | Protocol constants (CC_*), packet structs (tXcpCto, tXcpDto), `Xcp_ConfigType`, `Xcp_TransportLayerType`, public API |
+| `driver/xcp_cfg.h` | **Điểm cấu hình chính**: bật/tắt features, kích thước buffer, timestamp config |
+| `driver/port/tricore_illd/xcp_tricore.h` | CAN hardware: node ID, TX/RX message IDs (0x7E1/0x7E0), baudrate, ISR priority, GPIO pins |
+| `driver/port/tricore_illd/xcp_can_tricore.c` | Ring buffer RX, RxIsr enqueue, TxIsr → Xcp_SendCallBack(), XcpCan_Receive() poll |
+| `driver/port/tricore_illd/xcp_appl_tricore.c` | Callback implementations + định nghĩa `Xcp_Config` (PostBuild config object) |
+| `driver/port/tricore_illd/xcp_cal_tricore.c/h` | Page state: xcpCalPage_Ecu, xcpCalPage_Xcp, XcpCal_InitWorkingPage() |
+| `driver/app/cal_params.h` | **Danh sách tham số hiệu chỉnh** — append-only, KHÔNG reorder |
 | `cal_data.h/c` | calROM (Flash, const), calRAM (RAM, NOLOAD), pCal (active pointer) |
 | `cal_access.h` | Macro CAL(name) = pCal->name |
 
@@ -123,7 +124,7 @@ Page switch: Xcp_SetCalPage() → XcpCal_SetEcuPage() / XcpCal_SetXcpPage()
 | GPIO TX | P20.8 | `xcp_tricore.h` |
 | GPIO RX | P20.7 (pull-up) | `xcp_tricore.h` |
 
-## Enabled XCP Features (xcp_cfg.h)
+## Enabled XCP Features (driver/xcp_cfg.h)
 
 - **DAQ** — Data Acquisition (đọc tín hiệu theo event)
 - **DAQ Timestamps** — STM0 lower 32-bit @ 10 ns/tick (100 MHz)
@@ -177,8 +178,8 @@ vuint8 Xcp_GetActiveTl(void);
 
 ## Adding Calibration Parameters
 
-1. Thêm type mới vào `app/cal_types.h` nếu cần struct phức tạp
-2. Thêm entry vào bảng `CAL_PARAMS_TABLE` trong `app/cal_params.h`:
+1. Thêm type mới vào `driver/app/cal_types.h` nếu cần struct phức tạp
+2. Thêm entry vào bảng `CAL_PARAMS_TABLE` trong `driver/app/cal_params.h`:
    ```c
    CAL_PARAM(float32, newParam, 1.0f)          // scalar
    CAL_ARRAY(float32, newTable, 8, {0})         // array
@@ -200,7 +201,7 @@ vuint8 Xcp_GetActiveTl(void);
 
 Kiến trúc callback-based giúp porting đơn giản:
 
-1. **Tạo thư mục port mới** (e.g., `port/tc3xx/` hoặc `port/stm32/`)
+1. **Tạo thư mục port mới** (e.g., `driver/port/tc3xx/` hoặc `driver/port/stm32/`)
 2. **Implement `Xcp_ConfigType` callbacks:**
    - `Transmit(len, data)` — gửi CAN frame
    - `Receive(len, data)` — poll RX buffer, trả về 1 nếu có frame
@@ -209,8 +210,8 @@ Kiến trúc callback-based giúp porting đơn giản:
    - `GetPointer(addrExt, addr)` — address remapping
    - `CalibrationWrite/Read` — memory access với protection logic
    - `GetCalPage/SetCalPage/CopyCalPage` — page management
-3. **Định nghĩa `Xcp_Config` object** và include `Xcp_Handler.h`
-4. **Giữ nguyên** `Xcp_Handler.c/h`, `xcp_def.h`, `app/` — không cần sửa
+3. **Định nghĩa `Xcp_Config` object** và include `driver/Xcp_Handler.h`
+4. **Giữ nguyên** `driver/Xcp_Handler.c/h`, `driver/xcp_def.h`, `driver/app/` — không cần sửa
 
 ## Key Global State
 
@@ -221,7 +222,7 @@ CalData_t        calRAM;        // Working page — RAM (NOLOAD)
 const CalData_t *pCal;          // Active page pointer (starts at &calROM)
 ```
 
-## DAQ Buffer Sizing (xcp_cfg.h)
+## DAQ Buffer Sizing (driver/xcp_cfg.h)
 
 ```c
 #define kXcpMaxCTO      8     // Max Command Transfer Object size (= CAN DLC)
@@ -261,7 +262,7 @@ Gọi `Xcp_Event(eventId)` từ task/ISR. EventId do CANape assign khi config DA
 Sửa `XCP_CAN_TX_ID` và `XCP_CAN_RX_ID` trong `xcp_tricore.h`. Cập nhật A2L nếu thay đổi.
 
 ### Tăng số lượng DAQ signals
-Tăng `kXcpDaqMemSize` trong `xcp_cfg.h`. Rule of thumb: mỗi ODT entry cần ~5 bytes overhead.
+Tăng `kXcpDaqMemSize` trong `driver/xcp_cfg.h`. Rule of thumb: mỗi ODT entry cần ~5 bytes overhead.
 
 ## Persistent Memory — dùng agentmemory thay vì file .md
 

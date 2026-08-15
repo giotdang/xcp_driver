@@ -40,7 +40,7 @@
 #define MEAS_PARAMS_H
 
 #include "Ifx_Types.h"
-#include "app/meas_types.h"
+#include "driver/app/meas_types.h"
 
 /* clang-format off */
 

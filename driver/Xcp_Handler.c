@@ -276,8 +276,8 @@
 /* Include files                                                           */
 /***************************************************************************/
 
-#include "Xcp_Handler.h"
-#include "port/tricore_illd/xcp_cal.h"
+#include "driver/Xcp_Handler.h"
+#include "driver/port/tricore_illd/xcp_cal.h"
 
 #if defined ( XCP_ENABLE_SERV_TEXT_PRINTF ) && defined ( XCP_ENABLE_TESTMODE )
   #include <stdio.h>

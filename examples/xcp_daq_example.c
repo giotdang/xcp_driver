@@ -57,10 +57,10 @@
 ----------------------------------------------------------------------------*/
 
 #include "examples/xcp_daq_example.h"
-#include "Xcp_Handler.h"
-#include "port/tricore_illd/xcp_appl.h"
-#include "app/meas_access.h"
-#include "app/cal_access.h"
+#include "driver/Xcp_Handler.h"
+#include "driver/port/tricore_illd/xcp_appl.h"
+#include "driver/app/meas_access.h"
+#include "driver/app/cal_access.h"
 
 void XcpDaqExample_Init(void)
 {

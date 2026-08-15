@@ -11,7 +11,7 @@
 #ifndef CAL_DATA_H
 #define CAL_DATA_H
 
-#include "app/cal_params.h"   /* CAL_PARAMS_TABLE, cal_types.h, Ifx_Types.h */
+#include "driver/app/cal_params.h"   /* CAL_PARAMS_TABLE, cal_types.h, Ifx_Types.h */
 
 /* ============================================================
  * Section placement attributes

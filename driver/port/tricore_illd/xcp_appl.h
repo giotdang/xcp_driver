@@ -12,7 +12,7 @@
 #ifndef XCP_APPL_H
 #define XCP_APPL_H
 
-#include "Xcp_Handler.h"
+#include "driver/Xcp_Handler.h"
 
 /* ---- Address / memory callbacks ---- */
 uint8 *Xcp_GetPointer(uint8 addr_ext, uint32 addr);

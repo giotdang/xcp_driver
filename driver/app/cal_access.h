@@ -31,7 +31,7 @@
 #ifndef CAL_ACCESS_H
 #define CAL_ACCESS_H
 
-#include "app/cal_data.h"
+#include "driver/app/cal_data.h"
 
 /* ============================================================
  * CAL(name) — generic zero-maintenance accessor

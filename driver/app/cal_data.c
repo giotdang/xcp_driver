@@ -6,7 +6,7 @@
 |   calROM initialiser is generated automatically from CAL_PARAMS_TABLE.
 ----------------------------------------------------------------------------*/
 
-#include "app/cal_data.h"
+#include "driver/app/cal_data.h"
 
 /* ============================================================
  * calROM — reference (golden) values placed in Flash

@@ -25,7 +25,7 @@
 #ifndef MEAS_DATA_H
 #define MEAS_DATA_H
 
-#include "app/meas_params.h"
+#include "driver/app/meas_params.h"
 
 /* ============================================================
  * MeasData_t — generated from MEAS_PARAMS_TABLE

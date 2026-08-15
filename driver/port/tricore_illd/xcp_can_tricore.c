@@ -36,9 +36,9 @@
 |   XCP:    Xcp_Handler.h, xcp_tricore.h (ISR priority macros), xcp_can_tricore.h
 ----------------------------------------------------------------------------*/
 
-#include "Xcp_Handler.h"
-#include "port/tricore_illd/xcp_tricore.h"
-#include "port/tricore_illd/xcp_can_tricore.h"
+#include "driver/Xcp_Handler.h"
+#include "driver/port/tricore_illd/xcp_tricore.h"
+#include "driver/port/tricore_illd/xcp_can_tricore.h"
 
 #include "IfxCan_Can.h"
 #include "IfxCan.h"

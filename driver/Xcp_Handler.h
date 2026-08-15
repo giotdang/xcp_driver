@@ -16,8 +16,8 @@
 #ifndef XCP_HANDLER_H
 #define XCP_HANDLER_H
 
-#include "xcp_cfg.h"
-#include "xcp_def.h"
+#include "driver/xcp_cfg.h"
+#include "driver/xcp_def.h"
 
 /*--------------------------------------------------------------------------*/
 /* Version                                                                  */
@@ -945,7 +945,7 @@ typedef struct {
 /* AUTOSAR-style Config Types                                               */
 /*--------------------------------------------------------------------------*/
 
-#include "port/tricore_illd/xcp_can_tricore.h"
+#include "driver/port/tricore_illd/xcp_can_tricore.h"
 
 typedef struct {
     const XcpCan_ConfigType *CanConfig;

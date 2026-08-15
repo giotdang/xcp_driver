@@ -16,10 +16,10 @@
 |   port/tricore_illd/xcp_can_tricore.c.
 ----------------------------------------------------------------------------*/
 
-#include "Xcp_Handler.h"
-#include "port/tricore_illd/xcp_appl.h"
-#include "port/tricore_illd/xcp_can_tricore.h"
-#include "port/tricore_illd/xcp_tricore.h"    /* XCP_CAN_TX_ID              */
+#include "driver/Xcp_Handler.h"
+#include "driver/port/tricore_illd/xcp_appl.h"
+#include "driver/port/tricore_illd/xcp_can_tricore.h"
+#include "driver/port/tricore_illd/xcp_tricore.h"    /* XCP_CAN_TX_ID              */
 
 /* ============================================================
  * CAN transport configuration.

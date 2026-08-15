@@ -6,7 +6,7 @@
 |   generated-initialiser pattern, applied to MEAS_PARAMS_TABLE.
 ----------------------------------------------------------------------------*/
 
-#include "app/meas_data.h"
+#include "driver/app/meas_data.h"
 
 /* ============================================================
  * measData — single RAM instance, all-zero / neutral defaults.
