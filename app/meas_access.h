@@ -47,6 +47,12 @@
 /* --- 100 ms raster --- */
 #define coolantTempC     MEAS(coolantTempC)
 
+/* --- 10 ms raster — complex-type scenarios ---
+ * speedPidTelemetry.error / .integral / .output  (struct, meas_types.h)
+ * torqueSamples[i]                               (array, 4 elements)   */
+#define speedPidTelemetry MEAS(speedPidTelemetry)
+#define torqueSamples     MEAS(torqueSamples)
+
 /* ---- Add new parameter macros above this line ---- */
 
 #endif /* MEAS_ACCESS_H */

@@ -3,10 +3,13 @@
 |
 | Scope:
 |   Minimal ASAP2 fragment for the DAQ example in xcp_daq_example.c/.h --
-|   PROTOCOL_LAYER + DAQ (2 events) + XCP_ON_CAN transport, and the 4
-|   MEASUREMENT records for daqHeartbeat / engineRpm / vehicleSpeedKph /
-|   coolantTempC (app/meas_data.h -- all four are fields of the single
-|   struct instance measData, not separate globals).
+|   PROTOCOL_LAYER + DAQ (2 events) + XCP_ON_CAN transport, and MEASUREMENT
+|   records for the fields of app/meas_data.h's single struct instance
+|   measData: daqHeartbeat / engineRpm / vehicleSpeedKph / coolantTempC
+|   (scalars), speedPidTelemetry_error/_integral/_output (a struct, split
+|   into 3 flat records -- XCP has no "whole struct in one DTO" concept,
+|   see meas_types.h), and torqueSamples (an array, described as ONE
+|   record with MATRIX_DIM instead of 4 separate ones).
 |
 |   Deliberately does NOT include calibration parameters (CHARACTERISTIC /
 |   RECORD_LAYOUT / PAG IF_DATA) -- per CLAUDE.md those are generated
@@ -16,13 +19,14 @@
 |   PLACEHOLDERS TO FIX BEFORE USE:
 |     - Every ECU_ADDRESS below (0x9000_00xx) is measData's placeholder base
 |       address (0x90000000) plus each field's offsetof(MeasData_t, field)
-|       -- 0x0/0x4/0x8/0xC, matching MEAS_PARAMS_TABLE order in
-|       meas_params.h with natural alignment (2 bytes of padding after
-|       engineRpm to align vehicleSpeedKph). After building, run
-|       tools/sync_a2l_addresses.py to replace 0x90000000 with measData's
-|       real link-time address and recompute all four ECU_ADDRESS values --
-|       only measData needs to be looked up in the .map/.elf, not each
-|       field individually.
+|       -- struct members additionally add offsetof() into that member's
+|       own type (e.g. speedPidTelemetry_integral = base + offsetof(...,
+|       speedPidTelemetry) + offsetof(PidTelemetry_t, integral)). All of
+|       this matches MEAS_PARAMS_TABLE order in meas_params.h with natural
+|       alignment. After building, run tools/sync_a2l_addresses.py to
+|       replace 0x90000000 with measData's real link-time address and
+|       recompute every ECU_ADDRESS below -- only measData needs to be
+|       looked up in the .map/.elf, not each field/member individually.
 |     - ASAP2_VERSION and the XCP protocol/transport IF_DATA field order can
 |       be tool/version-sensitive; if CANape's A2L parser rejects a field,
 |       check its ASAP2 / ASAM XCP addendum version against this file's.
@@ -204,6 +208,101 @@ ASAP2_VERSION 1 71
         /begin DAQ_EVENT
           FIXED_EVENT_LIST
             EVENT 0x01                /* bound to "100 ms raster" */
+          /end FIXED_EVENT_LIST
+        /end DAQ_EVENT
+      /end IF_DATA
+    /end MEASUREMENT
+
+    /* ============================================================
+     * Struct scenario: PidTelemetry_t (meas_types.h) is 12 bytes --
+     * bigger than XCP_MAX_ODT_ENTRY_SIZE (7) -- so it is measured as 3
+     * flat records instead of 1. Each ECU_ADDRESS is measData's base +
+     * offsetof(MeasData_t, speedPidTelemetry) [0x10] + the member's own
+     * offsetof(PidTelemetry_t, member).
+     * ============================================================ */
+
+    /begin MEASUREMENT speedPidTelemetry_error
+      "PID loop error this cycle (struct member 1/3, see meas_types.h)"
+      FLOAT32_IEEE
+      NO_COMPU_METHOD
+      0
+      0
+      -250.0                          /* LOWER_LIMIT */
+      250.0                           /* UPPER_LIMIT */
+      ECU_ADDRESS 0x90000010          /* PLACEHOLDER = measData + 0x10 + offsetof(PidTelemetry_t,error)=0x0 */
+      FORMAT "%6.2"
+      /begin IF_DATA XCP
+        /begin DAQ_EVENT
+          FIXED_EVENT_LIST
+            EVENT 0x00                /* bound to "10 ms raster" */
+          /end FIXED_EVENT_LIST
+        /end DAQ_EVENT
+      /end IF_DATA
+    /end MEASUREMENT
+
+    /begin MEASUREMENT speedPidTelemetry_integral
+      "PID loop accumulated integral term (struct member 2/3)"
+      FLOAT32_IEEE
+      NO_COMPU_METHOD
+      0
+      0
+      -100.0                          /* LOWER_LIMIT (matches speedPid.outMin default) */
+      100.0                           /* UPPER_LIMIT (matches speedPid.outMax default) */
+      ECU_ADDRESS 0x90000014          /* PLACEHOLDER = measData + 0x10 + offsetof(PidTelemetry_t,integral)=0x4 */
+      FORMAT "%6.2"
+      /begin IF_DATA XCP
+        /begin DAQ_EVENT
+          FIXED_EVENT_LIST
+            EVENT 0x00                /* bound to "10 ms raster" */
+          /end FIXED_EVENT_LIST
+        /end DAQ_EVENT
+      /end IF_DATA
+    /end MEASUREMENT
+
+    /begin MEASUREMENT speedPidTelemetry_output
+      "PID loop output, clamped to speedPid.outMin/outMax (struct member 3/3)"
+      FLOAT32_IEEE
+      NO_COMPU_METHOD
+      0
+      0
+      -100.0                          /* LOWER_LIMIT */
+      100.0                           /* UPPER_LIMIT */
+      ECU_ADDRESS 0x90000018          /* PLACEHOLDER = measData + 0x10 + offsetof(PidTelemetry_t,output)=0x8 */
+      FORMAT "%6.2"
+      /begin IF_DATA XCP
+        /begin DAQ_EVENT
+          FIXED_EVENT_LIST
+            EVENT 0x00                /* bound to "10 ms raster" */
+          /end FIXED_EVENT_LIST
+        /end DAQ_EVENT
+      /end IF_DATA
+    /end MEASUREMENT
+
+    /* ============================================================
+     * Array scenario: torqueSamples[4] (float32) described as ONE
+     * MEASUREMENT with MATRIX_DIM -- CANape shows/records it as a
+     * single array signal, but still needs 4 separate ODT entries on
+     * the wire (one float32 per entry: 2 elements = 8 bytes > the
+     * 7-byte PID-only ODT budget, so no two elements can share an
+     * entry here). MATRIX_DIM saves A2L authoring effort, not CAN
+     * frames -- see the ODT budget note in xcp_daq_example.c.
+     * ============================================================ */
+
+    /begin MEASUREMENT torqueSamples
+      "Last 4 torqueMap samples (CAL array -> MEAS array history), 10 ms raster"
+      FLOAT32_IEEE
+      NO_COMPU_METHOD
+      0
+      0
+      0.0                              /* LOWER_LIMIT */
+      100.0                            /* UPPER_LIMIT */
+      ECU_ADDRESS 0x9000001C           /* PLACEHOLDER = measData + offsetof(..,torqueSamples)=0x1C */
+      FORMAT "%5.1"
+      MATRIX_DIM 4
+      /begin IF_DATA XCP
+        /begin DAQ_EVENT
+          FIXED_EVENT_LIST
+            EVENT 0x00                /* bound to "10 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT
       /end IF_DATA
