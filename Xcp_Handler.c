@@ -2894,6 +2894,9 @@ void Xcp_Command( const vuint32* pCommand )
           case CC_GET_DAQ_LIST_MODE:
             {
               vuint8 daq = (vuint8)CRO_GET_DAQ_LIST_MODE_DAQ;
+  #if defined ( kXcpMaxEvent )
+              vuint8 evCh;
+  #endif
 
   #if defined ( XCP_ENABLE_TESTMODE )
               if ( gDebugLevel != 0)
@@ -2908,7 +2911,7 @@ void Xcp_Command( const vuint32* pCommand )
                 error(CRC_OUT_OF_RANGE) /* PRQA S 2001 */ /* MD_Xcp_2001 */
               }
   #endif
-          
+
               xcp.CrmLen = CRM_GET_DAQ_LIST_MODE_LEN;
               CRM_GET_DAQ_LIST_MODE_MODE = DaqListFlags(daq);
   #if defined ( XCP_ENABLE_DAQ_PRESCALER )
@@ -2917,7 +2920,23 @@ void Xcp_Command( const vuint32* pCommand )
               CRM_GET_DAQ_LIST_MODE_PRESCALER = 1;
   #endif
   #if defined ( kXcpMaxEvent )
-              CRM_GET_DAQ_LIST_MODE_EVENTCHANNEL_WRITE(0); /* #### Lookup in EventDaq[] */ /* PRQA S 3109 */ /* MD_MSR_14.3 */
+              /* No reverse map daq->event is stored (eventChannel is dropped
+               * from tXcpDaqList when kXcpMaxEvent is defined, see
+               * Xcp_Handler.h), so recover it by scanning the forward map
+               * used by Xcp_Event(). Mirrors XcpPrintDaqList's lookup. */
+              evCh = 0U;
+              {
+                vuint8 ev;
+                for (ev = 0U; ev < (vuint8)kXcpMaxEvent; ev++)
+                {
+                  if (xcp.Daq.EventDaq[ev] == daq)
+                  {
+                    evCh = ev;
+                    break;
+                  }
+                }
+              }
+              CRM_GET_DAQ_LIST_MODE_EVENTCHANNEL_WRITE(evCh); /* PRQA S 3109 */ /* MD_MSR_14.3 */
   #else
               CRM_GET_DAQ_LIST_MODE_EVENTCHANNEL_WRITE(DaqListEventChannel(daq));
   #endif
