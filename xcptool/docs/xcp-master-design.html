@@ -1,0 +1,989 @@
+<title>XCP Master cho AURIX</title>
+<style>
+  :root{
+    --ground:#FAFBFB;
+    --surface:#F0F3F4;
+    --surface-2:#E5EAEC;
+    --line:#D2DADD;
+    --line-soft:#E3E9EB;
+    --ink:#101619;
+    --ink-2:#4C5A61;
+    --ink-3:#77878E;
+    --accent:#0B6E75;
+    --accent-soft:#DBEDEE;
+    --warn:#8A5300;
+    --warn-soft:#FAEEDB;
+    --danger:#A32E1C;
+    --danger-soft:#FAE7E3;
+    --ok:#2C6E3F;
+    --ok-soft:#E0EFE4;
+
+    --sans:"Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,sans-serif;
+    --mono:"Cascadia Code","Cascadia Mono",Consolas,ui-monospace,"SF Mono",monospace;
+
+    --measure:68ch;
+    --wide:1080px;
+  }
+
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#0E1417;
+      --surface:#161F23;
+      --surface-2:#1E292E;
+      --line:#2C393F;
+      --line-soft:#212C31;
+      --ink:#E6ECEE;
+      --ink-2:#A4B3B9;
+      --ink-3:#7B8C93;
+      --accent:#45C8D0;
+      --accent-soft:#102F33;
+      --warn:#E8B067;
+      --warn-soft:#2C2213;
+      --danger:#F2836E;
+      --danger-soft:#301813;
+      --ok:#6FC98A;
+      --ok-soft:#14251A;
+    }
+  }
+
+  :root[data-theme="dark"]{
+    --ground:#0E1417;
+    --surface:#161F23;
+    --surface-2:#1E292E;
+    --line:#2C393F;
+    --line-soft:#212C31;
+    --ink:#E6ECEE;
+    --ink-2:#A4B3B9;
+    --ink-3:#7B8C93;
+    --accent:#45C8D0;
+    --accent-soft:#102F33;
+    --warn:#E8B067;
+    --warn-soft:#2C2213;
+    --danger:#F2836E;
+    --danger-soft:#301813;
+    --ok:#6FC98A;
+    --ok-soft:#14251A;
+  }
+
+  *{box-sizing:border-box;}
+
+  body{
+    background:var(--ground);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:16.5px;
+    line-height:1.65;
+    margin:0;
+    padding:0 24px 120px;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .wrap{max-width:var(--wide);margin:0 auto;}
+  .col{max-width:var(--measure);}
+
+  /* ---------- masthead ---------- */
+
+  header.masthead{
+    padding:72px 0 40px;
+    border-bottom:1px solid var(--line);
+    margin-bottom:8px;
+  }
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin:0 0 20px;
+  }
+  h1{
+    font-size:clamp(34px,5.2vw,52px);
+    line-height:1.08;
+    letter-spacing:-.028em;
+    font-weight:700;
+    margin:0 0 22px;
+    text-wrap:balance;
+    max-width:16ch;
+  }
+  .standfirst{
+    font-size:19px;
+    line-height:1.6;
+    color:var(--ink-2);
+    max-width:var(--measure);
+    margin:0;
+  }
+  .standfirst strong{color:var(--ink);font-weight:600;}
+
+  /* ---------- sections ---------- */
+
+  section{padding:52px 0 8px;}
+  section + section{border-top:1px solid var(--line-soft);}
+
+  h2{
+    font-size:27px;
+    letter-spacing:-.02em;
+    font-weight:680;
+    line-height:1.2;
+    margin:0 0 8px;
+    text-wrap:balance;
+  }
+  h2 .num{
+    font-family:var(--mono);
+    font-size:13px;
+    font-weight:400;
+    letter-spacing:.1em;
+    color:var(--ink-3);
+    display:block;
+    margin-bottom:10px;
+  }
+  h3{
+    font-size:18px;
+    font-weight:640;
+    letter-spacing:-.012em;
+    margin:34px 0 6px;
+    line-height:1.3;
+  }
+  h4{
+    font-family:var(--mono);
+    font-size:12.5px;
+    font-weight:600;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink-3);
+    margin:28px 0 8px;
+  }
+
+  p{margin:0 0 16px;max-width:var(--measure);}
+  .lede{color:var(--ink-2);font-size:17px;margin-bottom:26px;}
+
+  ul,ol{max-width:var(--measure);padding-left:20px;margin:0 0 18px;}
+  li{margin-bottom:9px;}
+  li::marker{color:var(--ink-3);}
+
+  code{
+    font-family:var(--mono);
+    font-size:.875em;
+    background:var(--surface-2);
+    padding:1px 5px;
+    border-radius:3px;
+  }
+  a{color:var(--accent);}
+
+  strong{font-weight:640;}
+
+  /* ---------- tables ---------- */
+
+  .scroll{overflow-x:auto;margin:0 0 24px;}
+  table{
+    border-collapse:collapse;
+    width:100%;
+    min-width:560px;
+    font-size:14.5px;
+    font-variant-numeric:tabular-nums;
+  }
+  th{
+    text-align:left;
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.09em;
+    text-transform:uppercase;
+    font-weight:600;
+    color:var(--ink-3);
+    padding:0 16px 9px 0;
+    border-bottom:1px solid var(--line);
+    vertical-align:bottom;
+  }
+  td{
+    padding:11px 16px 11px 0;
+    border-bottom:1px solid var(--line-soft);
+    vertical-align:top;
+    color:var(--ink-2);
+  }
+  td:first-child{color:var(--ink);font-weight:550;}
+  td.m,th.m{font-family:var(--mono);font-size:13px;}
+  tr:last-child td{border-bottom:none;}
+
+  .tag{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.05em;
+    padding:2px 7px;
+    border-radius:3px;
+    white-space:nowrap;
+    display:inline-block;
+  }
+  .tag.on{background:var(--ok-soft);color:var(--ok);}
+  .tag.off{background:var(--surface-2);color:var(--ink-3);}
+
+  /* ---------- architecture stack ---------- */
+
+  .stack{
+    display:flex;
+    flex-direction:column;
+    gap:7px;
+    margin:8px 0 28px;
+    max-width:760px;
+  }
+  .layer{
+    display:grid;
+    grid-template-columns:132px 1fr;
+    gap:18px;
+    align-items:baseline;
+    background:var(--surface);
+    border:1px solid var(--line-soft);
+    border-left:3px solid var(--accent);
+    border-radius:4px;
+    padding:13px 16px;
+  }
+  .layer .lname{
+    font-family:var(--mono);
+    font-size:12.5px;
+    font-weight:600;
+    letter-spacing:.03em;
+    color:var(--accent);
+  }
+  .layer .ldesc{font-size:14.5px;color:var(--ink-2);line-height:1.5;}
+  .layer .ldesc b{color:var(--ink);font-weight:600;}
+  .stack .wire{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink-3);
+    padding:2px 0 2px 6px;
+  }
+
+  /* ---------- byte diagram ---------- */
+
+  .bytefig{margin:0 0 10px;}
+  .bytefig .cap{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.07em;
+    text-transform:uppercase;
+    color:var(--ink-3);
+    margin-bottom:9px;
+  }
+  .bytes{
+    display:grid;
+    grid-template-columns:repeat(8,minmax(46px,72px));
+    gap:4px;
+    margin-bottom:8px;
+  }
+  .byte{
+    border-radius:4px;
+    padding:9px 4px 8px;
+    text-align:center;
+    font-family:var(--mono);
+    font-size:12px;
+    line-height:1.35;
+    border:1px solid transparent;
+  }
+  .byte .idx{
+    display:block;
+    font-size:10px;
+    color:var(--ink-3);
+    letter-spacing:.06em;
+    margin-bottom:3px;
+  }
+  .byte.pid{background:var(--accent-soft);color:var(--accent);border-color:var(--accent);}
+  .byte.ts{background:var(--warn-soft);color:var(--warn);border-color:var(--warn);}
+  .byte.data{background:var(--surface-2);color:var(--ink-2);border-color:var(--line);}
+  .budget{
+    font-family:var(--mono);
+    font-size:12.5px;
+    color:var(--ink-2);
+  }
+  .budget b{color:var(--ink);}
+
+  .figpair{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+    gap:28px;
+    margin:22px 0 26px;
+  }
+
+  /* ---------- callouts ---------- */
+
+  .note{
+    border-radius:5px;
+    padding:18px 20px;
+    margin:24px 0;
+    max-width:var(--measure);
+    font-size:15px;
+    line-height:1.6;
+  }
+  .note p{margin:0 0 10px;max-width:none;}
+  .note p:last-child{margin-bottom:0;}
+  .note .label{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    font-weight:600;
+    display:block;
+    margin-bottom:8px;
+  }
+  .note.danger{background:var(--danger-soft);border:1px solid var(--danger);}
+  .note.danger .label{color:var(--danger);}
+  .note.pick{background:var(--accent-soft);border:1px solid var(--accent);}
+  .note.pick .label{color:var(--accent);}
+
+  /* ---------- decision blocks ---------- */
+
+  .decision{
+    border-top:1px solid var(--line);
+    padding-top:20px;
+    margin-top:30px;
+    max-width:var(--measure);
+  }
+  .decision .q{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.09em;
+    text-transform:uppercase;
+    color:var(--ink-3);
+    margin:0 0 6px;
+  }
+  .decision h3{margin-top:0;}
+  .verdict{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:.04em;
+    background:var(--accent);
+    color:var(--ground);
+    padding:3px 9px;
+    border-radius:3px;
+    margin-bottom:12px;
+  }
+
+  /* ---------- code ---------- */
+
+  pre{
+    background:var(--surface);
+    border:1px solid var(--line-soft);
+    border-radius:5px;
+    padding:16px 18px;
+    overflow-x:auto;
+    margin:0 0 24px;
+    font-size:13px;
+    line-height:1.62;
+  }
+  pre code{background:none;padding:0;font-size:inherit;}
+  .cmt{color:var(--ink-3);}
+  .kw{color:var(--accent);}
+
+  /* ---------- roadmap ---------- */
+
+  .phase{
+    display:grid;
+    grid-template-columns:56px 1fr;
+    gap:20px;
+    padding:20px 0;
+    border-bottom:1px solid var(--line-soft);
+    max-width:820px;
+  }
+  .phase:last-child{border-bottom:none;}
+  .phase .pnum{
+    font-family:var(--mono);
+    font-size:13px;
+    font-weight:600;
+    color:var(--accent);
+    letter-spacing:.04em;
+    padding-top:2px;
+  }
+  .phase h3{margin:0 0 4px;font-size:16.5px;}
+  .phase .meta{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    color:var(--ink-3);
+    margin:0 0 8px;
+  }
+  .phase p{font-size:14.5px;color:var(--ink-2);margin:0;max-width:60ch;}
+  .phase .gate{
+    font-size:14px;
+    color:var(--ink);
+    margin-top:8px;
+    max-width:60ch;
+  }
+  .phase .gate b{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.07em;
+    text-transform:uppercase;
+    color:var(--ink-3);
+    font-weight:600;
+    margin-right:6px;
+  }
+
+  /* ---------- traps ---------- */
+
+  .traps{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+    gap:2px;
+    margin-top:14px;
+  }
+  .trap{
+    background:var(--surface);
+    border-radius:4px;
+    padding:16px 18px;
+  }
+  .trap .t{
+    font-weight:620;
+    font-size:15px;
+    margin-bottom:5px;
+    line-height:1.35;
+  }
+  .trap .d{font-size:14px;color:var(--ink-2);line-height:1.55;}
+
+  footer{
+    margin-top:56px;
+    padding-top:22px;
+    border-top:1px solid var(--line);
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:.05em;
+    color:var(--ink-3);
+  }
+
+  @media (max-width:640px){
+    body{padding:0 18px 80px;}
+    .layer{grid-template-columns:1fr;gap:5px;}
+    .bytes{grid-template-columns:repeat(8,minmax(34px,1fr));}
+    .byte{font-size:10px;padding:7px 2px;}
+  }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Design &amp; Implementation Plan</p>
+  <h1>XCP Master cho AURIX</h1>
+  <p class="standfirst">
+    Một công cụ PC thay thế CANape/INCA, viết riêng cho XCP slave đang chạy trên TC2xx của bạn.
+    Tài liệu này bắt đầu từ <strong>những gì slave đã chốt sẵn trong code</strong> — vì đó là hợp đồng
+    mà master buộc phải tuân theo — rồi mới đi tới kiến trúc, các quyết định công nghệ, và lộ trình 6 giai đoạn.
+  </p>
+</header>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">01 — Ràng buộc</span>Slave đã quyết định hộ bạn phần lớn thiết kế</h2>
+
+  <p class="lede">
+    Trước khi chọn ngôn ngữ hay vẽ GUI, cần chốt bảng này. Mọi dòng ở đây đều trích từ
+    <code>xcp_cfg.h</code>, <code>Xcp_Handler.c</code> và <code>xcp_daq_example.a2l</code> —
+    không phải giả định.
+  </p>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Đặc tính</th><th class="m">Giá trị</th><th>Hệ quả cho master</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Transport</td>
+        <td class="m">CAN 11-bit, 500 kbps<br>CRO → 0x7E0, DTO/CRM ← 0x7E1</td>
+        <td>Response và DAQ data <em>dùng chung một CAN ID</em>. Master phải demux theo byte 0.</td>
+      </tr>
+      <tr>
+        <td>MAX_CTO / MAX_DTO</td>
+        <td class="m">8 / 8</td>
+        <td>Không block mode. Mọi lệnh gói trong 1 frame; UPLOAD tối đa 7 byte/lần.</td>
+      </tr>
+      <tr>
+        <td>DLC</td>
+        <td class="m">luôn = 8</td>
+        <td><code>MAX_DLC_REQUIRED</code>: pad frame đủ 8 byte, kể cả lệnh 2 byte.</td>
+      </tr>
+      <tr>
+        <td>Byte order</td>
+        <td class="m">little-endian</td>
+        <td>Giải mã tất cả bằng <code>&lt;</code> trong <code>struct.unpack</code>.</td>
+      </tr>
+      <tr>
+        <td>DAQ config</td>
+        <td class="m">DYNAMIC</td>
+        <td>Master tự cấp phát list/ODT/entry qua chuỗi <code>FREE_DAQ → ALLOC_*</code>.</td>
+      </tr>
+      <tr>
+        <td>DAQ identification</td>
+        <td class="m">ABSOLUTE (PID 1 byte)</td>
+        <td>PID = ODT tuyệt đối. <code>PID = firstPid(list) + odt_index</code>.</td>
+      </tr>
+      <tr>
+        <td>Timestamp</td>
+        <td class="m">DWORD, 10 ns/tick</td>
+        <td>4 byte, <strong>chỉ có trong ODT đầu tiên</strong> của mỗi DAQ list. Xem §04.</td>
+      </tr>
+      <tr>
+        <td>Overrun indication</td>
+        <td class="m">bit 7 của PID</td>
+        <td>Mask <code>PID &amp; 0x7F</code> khi tra bảng; bit 7 = ECU vừa mất frame.</td>
+      </tr>
+      <tr>
+        <td>Calibration page</td>
+        <td class="m">0 = RAM (working)<br>1 = ROM (reference)</td>
+        <td>Địa chỉ trong A2L luôn là ROM; slave tự remap sang RAM.</td>
+      </tr>
+      <tr><td colspan="3" style="padding-top:20px;border-bottom:none;"></td></tr>
+      <tr>
+        <td>Resource</td>
+        <td class="m"><span class="tag on">CAL/PAG</span> <span class="tag on">DAQ</span> <span class="tag off">STIM</span> <span class="tag off">PGM</span></td>
+        <td>Master chỉ cần implement 2 resource đầu.</td>
+      </tr>
+      <tr>
+        <td>Seed &amp; Key</td>
+        <td class="m"><span class="tag off">tắt</span></td>
+        <td>Bỏ qua <code>GET_SEED</code>/<code>UNLOCK</code> — connect là dùng được ngay.</td>
+      </tr>
+      <tr>
+        <td>BUILD_CHECKSUM</td>
+        <td class="m"><span class="tag off">tắt</span></td>
+        <td>Không verify được vùng nhớ bằng checksum. Muốn so sánh phải UPLOAD rồi so trên PC.</td>
+      </tr>
+      <tr>
+        <td>GET_DAQ_EVENT_INFO</td>
+        <td class="m"><span class="tag off">tắt</span></td>
+        <td><strong>Không dò được event lúc runtime.</strong> Tên/chu kỳ event phải đọc từ A2L.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note pick">
+    <span class="label">Điểm mấu chốt</span>
+    <p>
+      Vì <code>GET_DAQ_EVENT_INFO</code> tắt, A2L không còn là "tuỳ chọn cho tiện" mà là
+      <strong>nguồn sự thật bắt buộc</strong>: nó là nơi duy nhất master biết được event 0 là
+      "10 ms raster" và event 1 là "100 ms raster". Vì vậy A2L parser không thể để tới phase cuối —
+      nó nằm ngay trên đường tới hạn.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">02 — Kiến trúc</span>Năm lớp, cắt theo đúng chỗ dễ thay thế</h2>
+
+  <p class="lede">
+    Nguyên tắc: <strong>protocol core không biết gì về GUI, và cũng không biết gì về CAN</strong>.
+    Nhờ vậy toàn bộ phần khó nhất chạy và test được headless, còn việc đổi từ CAN sang Ethernet
+    sau này chỉ đụng lớp dưới cùng.
+  </p>
+
+  <div class="stack">
+    <div class="layer">
+      <span class="lname">ui/</span>
+      <span class="ldesc"><b>Scope, bảng calibration, cây signal, trace log.</b> Chỉ đọc/ghi qua API của <code>master</code> — không tự đóng gói byte nào.</span>
+    </div>
+    <div class="wire">▲ signal callbacks / command API</div>
+    <div class="layer">
+      <span class="lname">session/</span>
+      <span class="ldesc"><b>Kết dính A2L với slave.</b> "Đo <code>engineRpm</code>" → tra symbol → tính ODT layout → gọi DAQ engine. Nơi chứa nghiệp vụ, không chứa byte.</span>
+    </div>
+    <div class="wire">▲ symbol table + measurement request</div>
+    <div class="layer">
+      <span class="lname">a2l/</span>
+      <span class="ldesc"><b>Parser + symbol database.</b> MEASUREMENT, CHARACTERISTIC, COMPU_METHOD, RECORD_LAYOUT, IF_DATA XCP. Ra một dict tra cứu theo tên.</span>
+    </div>
+    <div class="wire">▲ ─────────── (độc lập hoàn toàn) ───────────</div>
+    <div class="layer">
+      <span class="lname">master/</span>
+      <span class="ldesc"><b>Protocol core.</b> CONNECT/UPLOAD/DOWNLOAD, DAQ allocation, DTO decoder, timeout T1, retry qua SYNC. Không import GUI, không import python-can.</span>
+    </div>
+    <div class="wire">▲ send(bytes) / on_frame(bytes)</div>
+    <div class="layer">
+      <span class="lname">transport/</span>
+      <span class="ldesc"><b>Backend có thể hoán đổi.</b> <code>pcan</code>, <code>vector</code>, <code>slcan</code>, <code>udp</code> (cho sim), và <code>replay</code> (đọc lại file log để debug offline).</span>
+    </div>
+  </div>
+
+  <h3>Ba luồng chạy song song</h3>
+  <p>
+    Đây là chỗ dễ sai nhất về kiến trúc. DAQ có thể bắn 100 frame/giây liên tục trong khi
+    người dùng đang bấm nút ghi calibration — nếu gộp chung một luồng thì GUI sẽ đứng hình.
+  </p>
+  <ul>
+    <li><b>RX thread</b> — vòng lặp <code>bus.recv()</code>, phân loại frame, đẩy DTO vào ring buffer, đẩy CRM vào một <code>queue.Queue</code> có kích thước 1.</li>
+    <li><b>Command (luồng gọi)</b> — gửi CRO rồi <code>get(timeout=T1)</code> trên queue kia. Đồng bộ, dễ đọc, dễ test.</li>
+    <li><b>UI thread</b> — mỗi 30–50 ms rút hết ring buffer và vẽ. <em>Không</em> vẽ theo từng frame: 100 Hz repaint sẽ giết GUI.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">03 — Quyết định</span>Bốn lựa chọn định hình cả dự án</h2>
+
+  <div class="decision">
+    <p class="q">Quyết định 1 — Ngôn ngữ &amp; stack</p>
+    <h3>Python + PySide6</h3>
+    <p><span class="verdict">Khuyến nghị</span></p>
+    <p>
+      Toàn bộ hệ sinh thái bạn cần đã có sẵn và đã trưởng thành: <code>python-can</code> (hỗ trợ PEAK,
+      Vector XL, Kvaser, SocketCAN, slcan trên cùng một API), <code>pyqtgraph</code> cho scope thời gian
+      thực, <code>asammdf</code> để ghi ra MDF4 — đúng định dạng CANape xuất ra, nên file log của bạn
+      mở được bằng công cụ khác.
+    </p>
+    <p>
+      C#/WPF là lựa chọn hợp lý thứ hai nếu bạn muốn một file .exe duy nhất, nhưng phải tự viết wrapper
+      cho từng driver CAN. C++/Qt chỉ đáng cân nhắc nếu sau này cần tần số DAQ rất cao (&gt;10 kHz) —
+      với CAN 500 kbps thì trần vật lý chỉ khoảng 4000 frame/s, Python thừa sức.
+    </p>
+  </div>
+
+  <div class="decision">
+    <p class="q">Quyết định 2 — Protocol core: tự viết hay dùng thư viện?</p>
+    <h3>Tự viết core, tham khảo <code>pyxcp</code></h3>
+    <p><span class="verdict">Khuyến nghị</span></p>
+    <p>
+      Có thư viện mã nguồn mở <code>pyxcp</code> đã implement XCP master. Nhưng slave của bạn chỉ dùng
+      một tập lệnh hẹp và <em>bạn kiểm soát cả hai đầu</em> — phần protocol core chỉ khoảng 600–800 dòng.
+      Tự viết đổi lại việc debug được tận byte khi có sự cố, và không phải uốn theo cách cấu hình của
+      thư viện. Giá trị thật của dự án nằm ở DAQ packing, A2L và GUI, chứ không ở việc lặp lại
+      khung lệnh.
+    </p>
+    <p>
+      Vẫn nên đọc <code>pyxcp</code> như tài liệu tham chiếu khi gặp chỗ mơ hồ trong spec.
+    </p>
+  </div>
+
+  <div class="decision">
+    <p class="q">Quyết định 3 — Phần cứng CAN</p>
+    <h3>Đa nền tảng, người dùng chọn lúc setup</h3>
+    <p><span class="verdict">Đã chốt · 16/08/2026</span></p>
+    <p>
+      Không khoá vào một hãng. PEAK, Vector và ETAS đều nằm sau cùng một API của
+      <code>python-can</code>, nên đây là việc <strong>cấu hình chứ không phải viết ba driver</strong>.
+    </p>
+
+    <div class="scroll">
+    <table>
+      <thead><tr><th>Backend</th><th class="m">interface=</th><th>Nền tảng</th><th>Cần cài trước</th></tr></thead>
+      <tbody>
+        <tr><td>PEAK PCAN-USB</td><td class="m">pcan</td><td>Win / Linux</td><td>PCAN-Basic driver</td></tr>
+        <tr><td>Vector VN16xx</td><td class="m">vector</td><td>Windows</td><td>XL Driver Library</td></tr>
+        <tr><td>ETAS ES58x / ES5xx</td><td class="m">etas</td><td><strong>Windows only</strong></td><td>ETAS Distribution Package (BOA)</td></tr>
+        <tr><td>CANable / slcan</td><td class="m">slcan</td><td>Win / Linux</td><td>driver COM ảo</td></tr>
+        <tr><td>Sim nội bộ</td><td class="m">udp</td><td>mọi nơi</td><td>—</td></tr>
+        <tr><td>Phát lại trace</td><td class="m">replay</td><td>mọi nơi</td><td>—</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      <code>transport/registry.py</code> giữ bảng đăng ký; <code>can.detect_available_configs()</code>
+      dò thiết bị đang cắm; <code>~/.xcptool/config.toml</code> nhớ lựa chọn. Thêm hãng mới =
+      thêm một entry, không đụng <code>master/</code>.
+    </p>
+  </div>
+
+  <div class="decision">
+    <p class="q">Quyết định 4 — Làm sao phát triển khi chưa có board?</p>
+    <h3>Biên dịch chính slave này thành slave giả lập trên PC</h3>
+    <p><span class="verdict">Khuyến nghị mạnh</span></p>
+    <p>
+      Đừng viết một slave giả lập bằng Python — nó sẽ mô phỏng lại <em>ý bạn hiểu</em> về giao thức,
+      nên sẽ đồng ý với mọi lỗi mà master mắc phải.
+    </p>
+    <p>
+      Thay vào đó: <code>Xcp_Handler.c</code> vốn đã tách sạch phần cứng qua <code>Xcp_ConfigType</code>.
+      Viết thêm một port <code>driver/port/pc_sim/</code> trong đó <code>Transmit</code>/<code>Receive</code>
+      gửi datagram UDP về localhost thay vì đụng MultiCAN, <code>GetTimestamp</code> đọc đồng hồ hệ thống,
+      <code>EnterCritical</code> để rỗng. Biên dịch bằng MinGW ra <code>xcp_sim.exe</code>.
+    </p>
+    <p>
+      Kết quả: master của bạn nói chuyện với <strong>đúng protocol core sẽ chạy trên xe</strong>, chạy
+      trong CI, không cần board, không cần dây. Đây cũng chính là bài tập mà skill
+      <code>xcp-porting-guide</code> trong repo đã mô tả sẵn quy trình.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">04 — Phần khó nhất</span>DAQ engine và cái bẫy 3 byte</h2>
+
+  <p class="lede">
+    Đây là phần mà mọi master tự viết đều mắc lỗi, và là lý do chính khiến tài liệu này tồn tại.
+  </p>
+
+  <h3>Ngân sách byte không đồng đều giữa các ODT</h3>
+  <p>
+    DTO chỉ có 8 byte. Byte 0 luôn là PID. Nhưng timestamp 4 byte
+    <strong>chỉ được chèn vào ODT đầu tiên</strong> của mỗi DAQ list. Kết quả là ODT số 0 nghèo hơn hẳn
+    các ODT còn lại:
+  </p>
+
+  <div class="figpair">
+    <div class="bytefig">
+      <p class="cap">ODT 0 — có timestamp</p>
+      <div class="bytes">
+        <div class="byte pid"><span class="idx">0</span>PID</div>
+        <div class="byte ts"><span class="idx">1</span>TS</div>
+        <div class="byte ts"><span class="idx">2</span>TS</div>
+        <div class="byte ts"><span class="idx">3</span>TS</div>
+        <div class="byte ts"><span class="idx">4</span>TS</div>
+        <div class="byte data"><span class="idx">5</span>data</div>
+        <div class="byte data"><span class="idx">6</span>data</div>
+        <div class="byte data"><span class="idx">7</span>data</div>
+      </div>
+      <p class="budget">Ngân sách: <b>3 byte</b></p>
+    </div>
+
+    <div class="bytefig">
+      <p class="cap">ODT 1, 2, 3… — không timestamp</p>
+      <div class="bytes">
+        <div class="byte pid"><span class="idx">0</span>PID</div>
+        <div class="byte data"><span class="idx">1</span>data</div>
+        <div class="byte data"><span class="idx">2</span>data</div>
+        <div class="byte data"><span class="idx">3</span>data</div>
+        <div class="byte data"><span class="idx">4</span>data</div>
+        <div class="byte data"><span class="idx">5</span>data</div>
+        <div class="byte data"><span class="idx">6</span>data</div>
+        <div class="byte data"><span class="idx">7</span>data</div>
+      </div>
+      <p class="budget">Ngân sách: <b>7 byte</b></p>
+    </div>
+  </div>
+
+  <div class="note danger">
+    <span class="label">Cảnh báo — slave không tự bảo vệ</span>
+    <p>
+      Mình đã kiểm tra <code>Xcp_Handler.c:3064</code>: khi xử lý <code>WRITE_DAQ</code>, slave
+      <strong>chỉ kiểm tra kích thước của từng entry ≤ 7</strong>. Không có chỗ nào cộng dồn các entry
+      trong một ODT rồi đối chiếu với 8 byte DTO.
+    </p>
+    <p>
+      Nghĩa là nếu master nhồi 7 byte dữ liệu vào ODT 0 khi timestamp đang bật, slave sẽ trả lời
+      <code>0xFF</code> (OK) một cách vui vẻ — rồi tới lúc DAQ chạy, vòng lặp sampling ghi
+      1 + 4 + 7 = <strong>12 byte vào một buffer 8 byte</strong>, tràn sang phần tử kế tiếp trong send queue.
+      Triệu chứng sẽ là dữ liệu đo sai lệch ngẫu nhiên hoặc ECU treo, và bạn sẽ đi tìm bug ở nhầm chỗ.
+    </p>
+    <p>
+      Đây là hành vi tiêu chuẩn của XcpBasic (spec giả định master đáng tin cậy), không phải lỗi mới.
+      Nhưng nó biến việc packing đúng thành <em>trách nhiệm tuyệt đối của master</em>. Hãy viết
+      unit test cho hàm packing trước khi viết bất cứ dòng GUI nào.
+    </p>
+  </div>
+
+  <h3>Thuật toán packing</h3>
+  <p>
+    Gom các signal theo event channel, sắp xếp giảm dần theo kích thước (first-fit decreasing),
+    rồi đổ vào các ODT với ngân sách khác nhau cho ODT đầu:
+  </p>
+
+<pre><code><span class="cmt"># Một signal KHÔNG được cắt đôi qua hai ODT.</span>
+<span class="kw">def</span> pack_odts(signals, timestamp_on, max_dto=8):
+    first_budget = max_dto - 1 - (4 <span class="kw">if</span> timestamp_on <span class="kw">else</span> 0)   <span class="cmt"># 3</span>
+    rest_budget  = max_dto - 1                                 <span class="cmt"># 7</span>
+
+    odts, cur, used = [], [], 0
+    budget = first_budget
+    <span class="kw">for</span> s <span class="kw">in</span> sorted(signals, key=<span class="kw">lambda</span> x: -x.size):
+        <span class="kw">if</span> s.size > rest_budget:
+            <span class="kw">raise</span> ValueError(f"{s.name}: {s.size}B > {rest_budget}B, phải tách nhỏ")
+        <span class="kw">if</span> used + s.size > budget:
+            odts.append(cur)
+            cur, used, budget = [], 0, rest_budget
+        cur.append(s); used += s.size
+    <span class="kw">if</span> cur: odts.append(cur)
+    <span class="kw">return</span> odts</code></pre>
+
+  <p>
+    Lưu ý hệ quả thực tế với ví dụ trong repo: <code>speedPidTelemetry</code> là struct 12 byte —
+    lớn hơn 7 — nên bắt buộc phải tách thành 3 entry float32 riêng, đúng như A2L mẫu đã làm.
+    <code>torqueSamples[4]</code> khai báo <code>MATRIX_DIM 4</code> gọn trong A2L, nhưng trên đường
+    truyền vẫn là 4 entry 4-byte tách biệt.
+  </p>
+
+  <h3>Trình tự cấu hình — sai thứ tự là nhận CRC_SEQUENCE</h3>
+  <p>
+    Slave kiểm tra thứ tự rất chặt (<code>XcpAllocDaq</code> từ chối nếu <code>OdtCount != 0</code>).
+    Phải đi đúng bậc thang này:
+  </p>
+
+<pre><code>FREE_DAQ                              <span class="cmt"># xoá sạch, bắt buộc trước tiên</span>
+ALLOC_DAQ(n_lists)
+<span class="kw">for</span> daq <span class="kw">in</span> lists:  ALLOC_ODT(daq, n_odts)          <span class="cmt"># hết mọi list rồi mới sang bước sau</span>
+<span class="kw">for</span> daq, odt:   ALLOC_ODT_ENTRY(daq, odt, n_entries)
+
+<span class="kw">for</span> daq, odt:
+    SET_DAQ_PTR(daq, odt, 0)
+    <span class="kw">for</span> e <span class="kw">in</span> entries:  WRITE_DAQ(bit_offset=0xFF, size, ext=0, addr)
+
+<span class="kw">for</span> daq:
+    SET_DAQ_LIST_MODE(mode=0x10, daq, event, prescaler=1, prio=0)   <span class="cmt"># 0x10 = bật timestamp</span>
+    first_pid[daq] = START_STOP_DAQ_LIST(mode=2, daq)               <span class="cmt"># 2 = select, trả về firstPid</span>
+
+START_STOP_SYNCH(mode=1)                                            <span class="cmt"># khởi động đồng loạt</span></code></pre>
+
+  <p>
+    <code>first_pid</code> trả về từ bước select chính là chìa khoá giải mã. Sau đó master dựng một bảng
+    phẳng <code>pid → (danh sách signal, offset trong frame)</code>, và vòng lặp RX chỉ còn là tra bảng —
+    không tính toán gì, đủ nhanh cho mọi tải CAN.
+  </p>
+
+  <h3>Đo bằng polling trước khi đo bằng DAQ</h3>
+  <p>
+    Một mẹo giúp dự án có kết quả nhìn thấy được rất sớm: <code>SHORT_UPLOAD</code> đọc tối đa 7 byte
+    tại một địa chỉ bất kỳ chỉ bằng một lệnh. Gọi lặp 10 lần/giây là bạn đã có một "scope" chạy được,
+    trong khi DAQ engine còn chưa viết xong. Chậm và không có timestamp chuẩn, nhưng đủ để kiểm chứng
+    rằng A2L, địa chỉ và kết nối đều đúng — tách bạch được lỗi địa chỉ khỏi lỗi DAQ.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">05 — Calibration</span>Mô hình hai trang trên phía PC</h2>
+
+  <p class="lede">
+    Phần này đơn giản hơn DAQ nhiều, nhưng dễ gây hiểu nhầm cho người dùng nếu master không hiển thị
+    rõ ràng trạng thái trang.
+  </p>
+
+  <p>
+    Slave phân biệt <em>trang mà ECU đang đọc</em> và <em>trang mà XCP đang nhìn</em> — hai thứ độc lập.
+    Với địa chỉ trong A2L luôn trỏ vào ROM, <code>Xcp_GetPointer()</code> sẽ tự chuyển hướng sang RAM
+    khi XCP đang ở working page. Hệ quả cho master:
+  </p>
+
+  <ul>
+    <li><b>Ghi tham số</b> — <code>SHORT_DOWNLOAD(addr, size, data)</code> với địa chỉ ROM lấy thẳng từ A2L. Không tự tính lại địa chỉ RAM; đó là việc của slave.</li>
+    <li><b>Nếu nhận <code>0xFE</code> kèm <code>CRC_WRITE_PROTECTED</code></b> — không phải bug, mà là XCP đang trỏ reference page. Thông báo cho người dùng đúng nguyên nhân đó, kèm nút chuyển về working page.</li>
+    <li><b>So sánh working vs reference</b> — thay vì checksum (đã tắt), chuyển XCP page qua lại và UPLOAD cả hai vùng rồi diff trên PC. Đây là tính năng "so với giá trị gốc" mà kỹ sư hiệu chỉnh dùng liên tục.</li>
+    <li><b>Xuất/nhập bộ tham số</b> — lưu ra file JSON hoặc DCM. Có được cái này thì mới chia sẻ được kết quả hiệu chỉnh giữa các lần chạy.</li>
+  </ul>
+
+  <div class="note pick">
+    <span class="label">Chi tiết dễ bỏ sót</span>
+    <p>
+      Với struct và mảng như <code>speedPid</code> hay <code>torqueMap[8]</code>, master nên đọc/ghi
+      <em>trọn khối</em> bằng nhiều lệnh liên tiếp qua <code>SET_MTA</code> + <code>DOWNLOAD</code>,
+      thay vì mỗi field một <code>SHORT_DOWNLOAD</code>. Nếu ghi từng field rời rạc, ECU sẽ chạy qua
+      một trạng thái trung gian nửa cũ nửa mới — với hệ số PID thì điều đó có thể làm vòng điều khiển
+      giật một nhịp.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">06 — Lộ trình</span>Sáu giai đoạn, mỗi giai đoạn có một mốc chứng minh</h2>
+
+  <p class="lede">
+    Thứ tự này được sắp để rủi ro lớn nhất bị đẩy lên sớm nhất. GUI để cuối — không phải vì nó
+    không quan trọng, mà vì nó là phần duy nhất có thể xây trên nền đã chắc chắn.
+  </p>
+
+  <div class="phase">
+    <div class="pnum">01</div>
+    <div>
+      <h3>Nối dây và nhìn thấy byte</h3>
+      <p class="meta">~0.5 ngày</p>
+      <p>Khung repo, lớp transport, một CLI in ra mọi frame trên 0x7E0/0x7E1. Chưa có giao thức gì cả.</p>
+      <p class="gate"><b>Mốc</b> Gửi <code>FF 00</code>, thấy slave trả về frame bắt đầu bằng <code>FF</code>.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pnum">02</div>
+    <div>
+      <h3>Protocol core + slave giả lập</h3>
+      <p class="meta">~2 ngày · rủi ro cao nhất nằm ở đây</p>
+      <p>CONNECT/DISCONNECT/GET_STATUS/SYNC, SET_MTA/UPLOAD/SHORT_UPLOAD, DOWNLOAD/SHORT_DOWNLOAD, timeout T1 và retry. Song song: port <code>pc_sim</code> cho slave.</p>
+      <p class="gate"><b>Mốc</b> Ghi một giá trị vào <code>systemGain</code> rồi đọc lại đúng — qua UDP, không cần board.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pnum">03</div>
+    <div>
+      <h3>A2L parser</h3>
+      <p class="meta">~2 ngày</p>
+      <p>Đọc MEASUREMENT, CHARACTERISTIC, COMPU_METHOD, RECORD_LAYOUT, MATRIX_DIM và IF_DATA XCP. Ra một symbol table tra theo tên, kèm kiểu, địa chỉ, hệ số quy đổi, event mặc định.</p>
+      <p class="gate"><b>Mốc</b> Nạp <code>xcp_daq_example.a2l</code>, in ra 8 measurement với đúng địa chỉ và kiểu.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pnum">04</div>
+    <div>
+      <h3>DAQ engine</h3>
+      <p class="meta">~3 ngày · phần kỹ thuật nặng nhất</p>
+      <p>Packing (có unit test cho ngân sách 3 byte), chuỗi ALLOC, bảng giải mã theo PID, phát hiện overrun qua bit 7, ring buffer.</p>
+      <p class="gate"><b>Mốc</b> Ghi 60 giây <code>engineRpm</code> ra CSV, timestamp đều đặn 10 ms, không mất frame.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pnum">05</div>
+    <div>
+      <h3>Giao diện</h3>
+      <p class="meta">~4 ngày</p>
+      <p>Cây signal từ A2L, scope <code>pyqtgraph</code>, bảng calibration sửa trực tiếp, chỉ báo trang ROM/RAM, cửa sổ trace hex cho lúc gỡ lỗi.</p>
+      <p class="gate"><b>Mốc</b> Kéo một signal vào scope và sửa một tham số mà không cần chạm tới dòng lệnh.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pnum">06</div>
+    <div>
+      <h3>Mở rộng</h3>
+      <p class="meta">tuỳ nhu cầu</p>
+      <p>Ghi MDF4 qua <code>asammdf</code>, scripting bằng Python cho kịch bản test tự động, nhập/xuất bộ tham số, và XCP-on-Ethernet nếu sau này cần băng thông cao hơn CAN.</p>
+      <p class="gate"><b>Mốc</b> Một script chạy được kịch bản đo–hiệu chỉnh–ghi log không cần người ngồi trực.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">07 — Danh sách bẫy</span>Những chỗ sẽ mất buổi chiều nếu không biết trước</h2>
+
+  <div class="traps">
+    <div class="trap">
+      <div class="t">Demux nhầm DTO thành response</div>
+      <div class="d">CRM và DTO dùng chung ID 0x7E1. Phân loại theo byte 0: <code>0xFF/0xFE/0xFD/0xFC</code> là CTO, còn lại là DAQ. Với 2 list nhỏ thì PID không bao giờ chạm vùng đó.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Quên mask bit 7 của PID</div>
+      <div class="d">Khi ECU quá tải, PID được OR thêm <code>0x80</code>. Tra bảng mà không mask sẽ ra KeyError đúng vào lúc hệ thống đang căng nhất — tức là lúc bạn cần dữ liệu nhất.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Timestamp tràn số sau ~43 giây</div>
+      <div class="d">Bộ đếm 32-bit ở 10 ns quay vòng sau 42,9 s. Master phải tự cộng dồn số lần tràn, nếu không đồ thị sẽ nhảy về gốc giữa phiên đo.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Không gửi FREE_DAQ khi bắt đầu</div>
+      <div class="d">Nếu phiên trước thoát bất thường, cấu hình DAQ cũ vẫn còn trong ECU. Luôn <code>FREE_DAQ</code> ngay sau CONNECT.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Bỏ qua DISCONNECT khi thoát</div>
+      <div class="d">Slave sẽ tiếp tục bắn DAQ lên bus sau khi master đóng. Bắt cả trường hợp thoát do lỗi, đừng chỉ xử lý nút đóng.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Frame ngắn hơn 8 byte</div>
+      <div class="d">A2L khai <code>MAX_DLC_REQUIRED</code>. Luôn pad CRO đủ 8 byte, kể cả <code>DISCONNECT</code> chỉ dài 1 byte.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Địa chỉ A2L lệch sau khi build lại</div>
+      <div class="d">Repo đã có <code>tools/sync_a2l_addresses.py</code>. Đưa nó vào build script — địa chỉ lệch sẽ biểu hiện thành "số đo vô nghĩa", rất dễ đổ oan cho master.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Vẽ đồ thị theo từng frame nhận được</div>
+      <div class="d">Gom vào buffer rồi repaint theo timer 30–50 ms. Repaint 100 Hz sẽ làm GUI đứng và bạn sẽ tưởng do CAN chậm.</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Cơ sở đối chiếu — xcp_cfg.h · Xcp_Handler.c · xcp_can_tricore.c · examples/xcp_daq_example.a2l · commit f48153d
+</footer>
+
+</div>

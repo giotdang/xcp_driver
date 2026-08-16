@@ -1,0 +1,683 @@
+<title>Bảy Ngày Tới Bản Chạy</title>
+<style>
+  :root{
+    --ground:#FAFBFB;
+    --surface:#F0F3F4;
+    --surface-2:#E5EAEC;
+    --line:#D2DADD;
+    --line-soft:#E3E9EB;
+    --ink:#101619;
+    --ink-2:#4C5A61;
+    --ink-3:#77878E;
+    --accent:#0B6E75;
+    --accent-soft:#DBEDEE;
+    --warn:#8A5300;
+    --warn-soft:#FAEEDB;
+    --danger:#A32E1C;
+    --danger-soft:#FAE7E3;
+    --ok:#2C6E3F;
+    --ok-soft:#E0EFE4;
+
+    --sans:"Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,sans-serif;
+    --mono:"Cascadia Code","Cascadia Mono",Consolas,ui-monospace,"SF Mono",monospace;
+
+    --measure:68ch;
+    --wide:1080px;
+  }
+
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#0E1417; --surface:#161F23; --surface-2:#1E292E;
+      --line:#2C393F; --line-soft:#212C31;
+      --ink:#E6ECEE; --ink-2:#A4B3B9; --ink-3:#7B8C93;
+      --accent:#45C8D0; --accent-soft:#102F33;
+      --warn:#E8B067; --warn-soft:#2C2213;
+      --danger:#F2836E; --danger-soft:#301813;
+      --ok:#6FC98A; --ok-soft:#14251A;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0E1417; --surface:#161F23; --surface-2:#1E292E;
+    --line:#2C393F; --line-soft:#212C31;
+    --ink:#E6ECEE; --ink-2:#A4B3B9; --ink-3:#7B8C93;
+    --accent:#45C8D0; --accent-soft:#102F33;
+    --warn:#E8B067; --warn-soft:#2C2213;
+    --danger:#F2836E; --danger-soft:#301813;
+    --ok:#6FC98A; --ok-soft:#14251A;
+  }
+
+  *{box-sizing:border-box;}
+
+  body{
+    background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:16.5px; line-height:1.65;
+    margin:0; padding:0 24px 120px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--wide);margin:0 auto;}
+
+  header.masthead{padding:72px 0 40px;border-bottom:1px solid var(--line);}
+  .eyebrow{
+    font-family:var(--mono);font-size:12px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 20px;
+  }
+  h1{
+    font-size:clamp(34px,5.2vw,52px);line-height:1.08;letter-spacing:-.028em;
+    font-weight:700;margin:0 0 22px;text-wrap:balance;max-width:15ch;
+  }
+  .standfirst{
+    font-size:19px;line-height:1.6;color:var(--ink-2);
+    max-width:var(--measure);margin:0 0 26px;
+  }
+  .standfirst strong{color:var(--ink);font-weight:600;}
+
+  .headline-stats{
+    display:flex;flex-wrap:wrap;gap:36px;margin-top:30px;
+  }
+  .hstat .v{
+    font-family:var(--mono);font-size:30px;font-weight:600;
+    letter-spacing:-.02em;color:var(--accent);line-height:1;
+    font-variant-numeric:tabular-nums;
+  }
+  .hstat .k{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--ink-3);margin-top:8px;
+  }
+
+  section{padding:52px 0 8px;}
+  section + section{border-top:1px solid var(--line-soft);}
+
+  h2{
+    font-size:27px;letter-spacing:-.02em;font-weight:680;line-height:1.2;
+    margin:0 0 8px;text-wrap:balance;
+  }
+  h2 .num{
+    font-family:var(--mono);font-size:13px;font-weight:400;letter-spacing:.1em;
+    color:var(--ink-3);display:block;margin-bottom:10px;
+  }
+  h3{font-size:18px;font-weight:640;letter-spacing:-.012em;margin:32px 0 6px;line-height:1.3;}
+
+  p{margin:0 0 16px;max-width:var(--measure);}
+  .lede{color:var(--ink-2);font-size:17px;margin-bottom:26px;}
+  ul,ol{max-width:var(--measure);padding-left:20px;margin:0 0 18px;}
+  li{margin-bottom:9px;}
+  li::marker{color:var(--ink-3);}
+
+  code{font-family:var(--mono);font-size:.875em;background:var(--surface-2);padding:1px 5px;border-radius:3px;}
+  strong{font-weight:640;}
+
+  pre{
+    background:var(--surface);border:1px solid var(--line-soft);border-radius:5px;
+    padding:16px 18px;overflow-x:auto;margin:0 0 22px;font-size:13px;line-height:1.62;
+  }
+  pre code{background:none;padding:0;font-size:inherit;}
+  .cmt{color:var(--ink-3);}
+  .del{color:var(--danger);}
+  .add{color:var(--ok);}
+
+  /* ---------- unlock block ---------- */
+  .unlock{
+    background:var(--accent-soft);border:1px solid var(--accent);
+    border-radius:6px;padding:24px 26px;margin:8px 0 30px;
+  }
+  .unlock .label{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;
+    font-weight:600;color:var(--accent);display:block;margin-bottom:10px;
+  }
+  .unlock h3{margin:0 0 12px;font-size:20px;}
+  .unlock p{max-width:64ch;}
+  .unlock p:last-child{margin-bottom:0;}
+  .unlock pre{background:var(--ground);margin-bottom:16px;}
+
+  /* ---------- shift table ---------- */
+  .scroll{overflow-x:auto;margin:0 0 24px;}
+  table{border-collapse:collapse;width:100%;min-width:620px;font-size:14.5px;font-variant-numeric:tabular-nums;}
+  th{
+    text-align:left;font-family:var(--mono);font-size:11.5px;letter-spacing:.09em;
+    text-transform:uppercase;font-weight:600;color:var(--ink-3);
+    padding:0 16px 9px 0;border-bottom:1px solid var(--line);vertical-align:bottom;
+  }
+  td{padding:12px 16px 12px 0;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--ink-2);}
+  td:first-child{color:var(--ink);font-weight:550;}
+  td.win{color:var(--ok);font-family:var(--mono);font-size:13px;white-space:nowrap;}
+  tr:last-child td{border-bottom:none;}
+
+  /* ---------- timeline ---------- */
+  .timeline{margin:10px 0 8px;}
+  .day{
+    display:grid;grid-template-columns:88px 1fr;gap:24px;
+    padding:26px 0;border-bottom:1px solid var(--line-soft);
+  }
+  .day:last-child{border-bottom:none;}
+  .daymark{padding-top:3px;}
+  .daymark .dnum{
+    font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--accent);display:block;
+  }
+  .daymark .dlen{
+    font-family:var(--mono);font-size:11px;color:var(--ink-3);
+    display:block;margin-top:5px;letter-spacing:.04em;
+  }
+  .day h3{margin:0 0 10px;font-size:18px;}
+  .day .body{max-width:64ch;}
+  .day ul{margin-bottom:14px;max-width:none;}
+  .day li{margin-bottom:6px;font-size:14.5px;color:var(--ink-2);}
+
+  .gate{
+    background:var(--surface);border-left:3px solid var(--ok);
+    border-radius:0 4px 4px 0;padding:12px 16px;font-size:14.5px;color:var(--ink);
+    max-width:64ch;
+  }
+  .gate .glabel{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ok);font-weight:600;display:block;margin-bottom:4px;
+  }
+  .gate code{background:var(--surface-2);}
+
+  .hw{
+    display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;
+    background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn);
+    padding:2px 7px;border-radius:3px;margin-left:8px;vertical-align:2px;
+  }
+
+  /* ---------- parallel tracks ---------- */
+  .tracks{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+    gap:2px;margin:20px 0 8px;
+  }
+  .track{background:var(--surface);border-radius:5px;padding:18px 20px;}
+  .track .who{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;margin-bottom:10px;
+  }
+  .track ul{margin:0;padding-left:18px;max-width:none;}
+  .track li{font-size:14px;color:var(--ink-2);margin-bottom:7px;}
+
+  /* ---------- quality cards ---------- */
+  .qgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2px;margin-top:14px;}
+  .q{background:var(--surface);border-radius:4px;padding:17px 19px;}
+  .q .t{font-weight:620;font-size:15px;margin-bottom:5px;line-height:1.35;}
+  .q .d{font-size:14px;color:var(--ink-2);line-height:1.55;}
+  .q .pay{
+    font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--ok);
+    margin-top:9px;display:block;
+  }
+
+  /* ---------- defer ---------- */
+  .defer{
+    display:grid;grid-template-columns:1fr;gap:0;margin-top:12px;max-width:760px;
+  }
+  .defer .row{
+    display:grid;grid-template-columns:1fr auto;gap:20px;align-items:baseline;
+    padding:11px 0;border-bottom:1px solid var(--line-soft);
+  }
+  .defer .row:last-child{border-bottom:none;}
+  .defer .what{font-size:15px;}
+  .defer .why{font-size:13.5px;color:var(--ink-3);text-align:right;max-width:34ch;line-height:1.45;}
+
+  .note{
+    border-radius:5px;padding:18px 20px;margin:24px 0;max-width:var(--measure);
+    font-size:15px;line-height:1.6;
+  }
+  .note p{margin:0 0 10px;max-width:none;}
+  .note p:last-child{margin-bottom:0;}
+  .note .label{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;
+    font-weight:600;display:block;margin-bottom:8px;
+  }
+  .note.warn{background:var(--warn-soft);border:1px solid var(--warn);}
+  .note.warn .label{color:var(--warn);}
+  .note.pick{background:var(--accent-soft);border:1px solid var(--accent);}
+  .note.pick .label{color:var(--accent);}
+
+  footer{
+    margin-top:56px;padding-top:22px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:12px;letter-spacing:.05em;color:var(--ink-3);
+  }
+
+  @media (max-width:640px){
+    body{padding:0 18px 80px;}
+    .day{grid-template-columns:1fr;gap:12px;}
+    .daymark{display:flex;gap:12px;align-items:baseline;}
+    .daymark .dlen{margin-top:0;}
+    .defer .row{grid-template-columns:1fr;gap:3px;}
+    .defer .why{text-align:left;max-width:none;}
+  }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Development Plan · companion cho DESIGN.md</p>
+  <h1>Bảy Ngày Tới Bản Chạy</h1>
+  <p class="standfirst">
+    Lộ trình gốc là 11,5 ngày tuần tự. Bản này rút xuống <strong>7 ngày</strong> mà chất lượng
+    <em>cao hơn</em>, nhờ ba thay đổi chiến lược — và một cách biên dịch protocol core trên PC
+    mà <strong>không sửa một dòng nào</strong> trong firmware đang chạy.
+  </p>
+  <div class="headline-stats">
+    <div class="hstat"><div class="v">7</div><div class="k">ngày tới GUI</div></div>
+    <div class="hstat"><div class="v">0</div><div class="k">dòng sửa trong driver</div></div>
+    <div class="hstat"><div class="v">3</div><div class="k">ngày tới bản dùng được</div></div>
+    <div class="hstat"><div class="v">30′</div><div class="k">thời gian cần board</div></div>
+    <div class="hstat"><div class="v">6</div><div class="k">loại thiết bị CAN</div></div>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">00 — Điều kiện tiên quyết</span>Compile core trên PC mà không đụng firmware</h2>
+
+  <p class="lede">
+    Cả chiến lược "phát triển không cần board" phụ thuộc vào việc biên dịch được
+    <code>Xcp_Handler.c</code> trên PC. Có hai đường đạt được điều đó — và đường
+    <strong>không đụng vào firmware production</strong> hoá ra lại đủ tốt.
+  </p>
+
+  <div class="unlock">
+    <span class="label">Đường đang dùng · 0 dòng thay đổi trong driver/</span>
+    <h3>Stub header iLLD đặt trong chính port pc_sim</h3>
+
+    <p>
+      Toàn bộ ràng buộc của core vào iLLD chỉ là <strong>hai header</strong>:
+      <code>Ifx_Types.h</code> và <code>IfxCan_Can.h</code>. Cung cấp bản giả của chúng trong
+      include path của riêng bản build sim là xong.
+    </p>
+
+<pre><code>driver/port/pc_sim/
+├── illd_stub/
+│   ├── Ifx_Types.h     <span class="cmt"># uint8/16/32, sint8/16/32, boolean, TRUE/FALSE</span>
+│   └── IfxCan_Can.h    <span class="cmt"># typedef struct IfxCan_Can_Node IfxCan_Can_Node;</span>
+├── xcp_can_pcsim.c     <span class="cmt"># XcpCan_Init/_Send/_Receive — CÙNG chữ ký, trên UDP</span>
+├── xcp_appl_pcsim.c    <span class="cmt"># GetTimestamp, EnterCritical, GetPointer, cal page</span>
+└── Makefile            <span class="cmt"># gcc -Idriver/port/pc_sim/illd_stub …</span></code></pre>
+
+    <p>
+      Mấu chốt: <code>xcp_can_pcsim.c</code> <strong>implement đúng bộ hàm <code>XcpCan_*</code>
+      mà core đang gọi</strong>, chỉ khác là gửi datagram UDP thay vì đụng MultiCAN.
+      <code>xcp_can_tricore.c</code> đơn giản là không được biên dịch vào bản sim.
+      Core không phân biệt được.
+    </p>
+  </div>
+
+  <h3>Đường sạch hơn — patch để dành</h3>
+  <p>
+    Đã kiểm tra: <code>CanConfig</code> chỉ xuất hiện ở 3 chỗ trong toàn repo, và core
+    <strong>không bao giờ dereference</strong> nó — chỉ chuyển tiếp cho <code>XcpCan_Init()</code>.
+    Mà chính comment ở <code>xcp_can_tricore.h:44</code> đã ghi <em>"Call once … before
+    <code>Xcp_Init()</code>"</em>. Nên việc core gọi hộ vừa thừa, vừa sai tầng.
+  </p>
+
+<pre><code><span class="cmt">/* Xcp_Handler.h:948 */</span>
+<span class="del">-   #include "driver/port/tricore_illd/xcp_can_tricore.h"</span>
+
+<span class="cmt">/* Xcp_Handler.h:951 — trong Xcp_TransportLayerType */</span>
+<span class="del">-   const XcpCan_ConfigType *CanConfig;</span>   <span class="cmt">← kéo theo #include "IfxCan_Can.h"</span>
+
+<span class="cmt">/* Xcp_Handler.c:3382 — trong Xcp_Init() */</span>
+<span class="del">-   XcpCan_Init(ConfigPtr->TransportLayer->CanConfig);</span></code></pre>
+
+  <div class="note warn">
+    <span class="label">Để dành, không làm ngay</span>
+    <p>
+      Patch này <strong>không chỉ là thủ thuật để test</strong> — nó đúng với chính kiến trúc
+      callback mà bạn đã dựng, và port thứ hai bất kỳ (TC3xx, Ethernet) đều sẽ cần.
+      Nhưng nó đụng vào code đang chạy được, nên để bạn áp dụng khi tiện, kèm một lần
+      build + nạp board xác nhận. Áp xong thì stub <code>IfxCan_Can.h</code> bỏ được,
+      chỉ còn <code>Ifx_Types.h</code>.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">01 — Chiến lược</span>Ba thay đổi so với lộ trình gốc</h2>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Thay đổi</th><th>Vì sao nhanh hơn <em>và</em> tốt hơn</th><th class="win">Tiết kiệm</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Lát cắt dọc trước,<br>không xây theo tầng</td>
+        <td>Lộ trình gốc xây xong transport → xong master → xong a2l. Lỗi tích hợp chỉ lộ ra ở ngày thứ 8. Đổi thành: ngày 1 chạy được một đường xuyên suốt <code>CLI → UDP → Xcp_Handler.c → CONNECT</code>, rồi mới bồi đắp. Lỗi kiến trúc lộ ra trong 24 giờ đầu.</td>
+        <td class="win">−1,5 ngày</td>
+      </tr>
+      <tr>
+        <td>A2L parser hẹp,<br>không tổng quát</td>
+        <td>Parser ASAP2 đầy đủ mất 2 ngày. Nhưng A2L này do <em>chính bạn sinh ra</em> — chỉ cần đọc đúng tập cú pháp nó dùng. Viết parser hẹp + một test đối chiếu trên chính file đó: nửa ngày. Cần đọc A2L của hãng khác sau này thì thay bằng <code>pya2l</code>, không ảnh hưởng lớp trên.</td>
+        <td class="win">−1,5 ngày</td>
+      </tr>
+      <tr>
+        <td>GUI mỏng trên API dày,<br>không phải IDE</td>
+        <td>4 ngày là ngân sách cho một IDE có docking. Nhưng nếu <code>session/</code> có API tử tế thì GUI chỉ là lớp hiển thị: một cửa sổ, splitter, cây signal, plot, tab calibration. Và tool có API script được — thứ mà CANape làm rất tệ.</td>
+        <td class="win">−2 ngày</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note pick">
+    <span class="label">Nguyên tắc xuyên suốt</span>
+    <p>
+      <strong>Board chỉ cần trong 30 phút của cả dự án.</strong> Một lần smoke test cuối ngày 1
+      (chỉ CONNECT — để phát hiện sớm sai bitrate, sai ID filter, sai dây), và một lần bring-up
+      đầy đủ ở ngày 5. Mọi thứ còn lại chạy trên <code>xcp_sim.exe</code> với vòng lặp test dưới một giây.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">02 — Lịch</span>Bảy ngày, mỗi ngày một cổng nghiệm thu</h2>
+
+  <p class="lede">
+    Mỗi ngày kết thúc bằng một điều <em>chứng minh được bằng lệnh chạy</em>, không phải bằng
+    "đã viết xong module X". Nếu cổng không qua, ngày hôm sau bắt đầu bằng việc sửa nó —
+    không tích nợ sang tuần.
+  </p>
+
+  <div class="timeline">
+
+    <div class="day">
+      <div class="daymark"><span class="dnum">Ngày 0</span><span class="dlen">¼ ngày</span></div>
+      <div class="body">
+        <h3>Stub header + biên dịch core trên PC</h3>
+        <ul>
+          <li><code>driver/port/pc_sim/illd_stub/</code> — <code>Ifx_Types.h</code> và <code>IfxCan_Can.h</code> bản giả</li>
+          <li>Makefile MinGW, include path trỏ stub trước</li>
+          <li>Viết sẵn <code>docs/decouple-core.patch</code> để dành cho lúc bạn muốn dọn sạch</li>
+        </ul>
+        <div class="gate">
+          <span class="glabel">Cổng</span>
+          <code>Xcp_Handler.c</code> biên dịch sạch bằng gcc trên Windows, <strong>không sửa một dòng nào trong <code>driver/</code></strong>, không cài iLLD.
+        </div>
+      </div>
+    </div>
+
+    <div class="day">
+      <div class="daymark"><span class="dnum">Ngày 1</span><span class="dlen">1 ngày</span></div>
+      <div class="body">
+        <h3>Lát cắt dọc: PC nói chuyện được với chính core thật</h3>
+        <ul>
+          <li><code>xcp_can_pcsim.c</code> — <code>XcpCan_Init/_Send/_Receive</code> cùng chữ ký, chạy trên UDP</li>
+          <li><code>xcp_appl_pcsim.c</code> — GetTimestamp từ đồng hồ hệ thống, critical section rỗng, GetPointer</li>
+          <li>Ảnh dữ liệu giả cho calRAM/calROM/measData để có địa chỉ thật mà đọc ghi</li>
+          <li>Link ra <code>xcp_sim.exe</code></li>
+          <li>Python: <code>transport/udp.py</code>, <code>master/core.py</code> với CONNECT / GET_STATUS / DISCONNECT</li>
+        </ul>
+        <div class="gate">
+          <span class="glabel">Cổng</span>
+          <code>xcptool connect --transport udp</code> in ra resource, MAX_CTO, MAX_DTO — <em>từ chính protocol core sẽ chạy trên xe</em>.
+        </div>
+      </div>
+    </div>
+
+    <div class="day">
+      <div class="daymark"><span class="dnum">Ngày 1b</span><span class="dlen">½ ngày</span></div>
+      <div class="body">
+        <h3>Lớp thiết bị đa nền tảng <span class="hw">30 phút board</span></h3>
+        <ul>
+          <li><code>transport/registry.py</code> — bảng backend: <code>pcan</code> / <code>vector</code> / <code>etas</code> / <code>slcan</code> / <code>udp</code> / <code>replay</code></li>
+          <li><code>xcptool devices</code> — dò thiết bị đang cắm bằng <code>can.detect_available_configs()</code></li>
+          <li><code>~/.xcptool/config.toml</code> nhớ backend, channel, bitrate</li>
+          <li><em>Cuối ngày:</em> cắm board thật, chỉ thử CONNECT — để lộ sớm sai bitrate / ID filter / dây</li>
+        </ul>
+        <div class="gate">
+          <span class="glabel">Cổng</span>
+          <code>xcptool devices</code> liệt kê đúng thiết bị đang cắm; <code>xcptool connect</code> chạy với ECU thật mà không sửa code, chỉ đổi config.
+        </div>
+      </div>
+    </div>
+
+    <div class="day">
+      <div class="daymark"><span class="dnum">Ngày 2</span><span class="dlen">1 ngày</span></div>
+      <div class="body">
+        <h3>Truy cập bộ nhớ và trang calibration</h3>
+        <ul>
+          <li>SET_MTA / UPLOAD / SHORT_UPLOAD / DOWNLOAD / SHORT_DOWNLOAD + helper đọc-ghi khối dài</li>
+          <li>SET_CAL_PAGE / GET_CAL_PAGE / COPY_CAL_PAGE</li>
+          <li>Từ điển lỗi: mọi mã <code>CRC_*</code> → exception Python có tên và giải thích</li>
+        </ul>
+        <div class="gate">
+          <span class="glabel">Cổng</span>
+          Ghi rồi đọc lại <code>systemGain</code> khớp bit-for-bit. Ghi khi XCP đang ở reference page ném đúng <code>WriteProtectedError</code> chứ không phải lỗi chung chung.
+        </div>
+      </div>
+    </div>
+
+    <div class="day">
+      <div class="daymark"><span class="dnum">Ngày 3</span><span class="dlen">1 ngày</span></div>
+      <div class="body">
+        <h3>A2L parser — tool bắt đầu có ích thật</h3>
+        <ul>
+          <li>Tokenizer cho cú pháp <code>/begin … /end</code> (đều đặn, dễ)</li>
+          <li>MEASUREMENT, CHARACTERISTIC, COMPU_METHOD, RECORD_LAYOUT, MOD_COMMON, MATRIX_DIM</li>
+          <li>IF_DATA XCP: danh sách EVENT và XCP_ON_CAN — nguồn duy nhất biết event 0 = 10 ms</li>
+          <li>Bảng ánh xạ kiểu ASAP2 → format <code>struct</code> của Python</li>
+        </ul>
+        <div class="gate">
+          <span class="glabel">Cổng</span>
+          <code>xcptool read speedPid.kp</code> và <code>xcptool write torqueMap[3] 42.0</code> chạy được <em>bằng tên</em>. Từ đây tool đã thay thế được phần calibration của CANape.
+        </div>
+      </div>
+    </div>
+
+    <div class="day">
+      <div class="daymark"><span class="dnum">Ngày 4</span><span class="dlen">1½ ngày</span></div>
+      <div class="body">
+        <h3>DAQ engine — phần nặng nhất, nhưng vòng lặp test đã nhanh</h3>
+        <ul>
+          <li><strong>Viết test cho <code>pack_odts()</code> trước khi viết hàm</strong> — cụ thể ca ngân sách 3 byte của ODT 0</li>
+          <li>Chuỗi FREE_DAQ → ALLOC_* → SET_DAQ_PTR/WRITE_DAQ → SET_DAQ_LIST_MODE → START_STOP</li>
+          <li>Bảng giải mã <code>pid → (signal, offset)</code>, mask bit 7 overrun, gộp timestamp tràn 32-bit</li>
+          <li>Ring buffer + sink ra CSV</li>
+        </ul>
+        <div class="gate">
+          <span class="glabel">Cổng</span>
+          Thu 60 giây <code>engineRpm</code> + <code>speedPidTelemetry</code> từ sim: timestamp đơn điệu tăng, khoảng cách đúng 10 ms, không sót mẫu, không cảnh báo overrun.
+        </div>
+      </div>
+    </div>
+
+    <div class="day">
+      <div class="daymark"><span class="dnum">Ngày 5</span><span class="dlen">1 ngày</span></div>
+      <div class="body">
+        <h3>Bring-up trên phần cứng thật + đóng băng golden trace <span class="hw">cần board</span></h3>
+        <ul>
+          <li>Đổi transport sang PCAN/Vector, chạy lại toàn bộ kịch bản của ngày 2–4 trên ECU thật</li>
+          <li>Xử lý những gì chỉ phần cứng mới lộ ra: timing, pad DLC, tràn send queue, jitter</li>
+          <li>Ghi lại toàn bộ trace CAN, đóng băng thành fixture cho <code>transport/replay.py</code></li>
+        </ul>
+        <div class="gate">
+          <span class="glabel">Cổng</span>
+          Cùng bản thu 60 giây nhưng từ TC2xx thật. Và <code>pytest</code> phát lại được trace đó — từ giờ mọi regression bắt được mà không cần cắm board.
+        </div>
+      </div>
+    </div>
+
+    <div class="day">
+      <div class="daymark"><span class="dnum">Ngày 6–7</span><span class="dlen">2 ngày</span></div>
+      <div class="body">
+        <h3>Giao diện</h3>
+        <ul>
+          <li>Một cửa sổ, splitter: cây signal từ A2L bên trái, plot <code>pyqtgraph</code> bên phải</li>
+          <li>Tab calibration: bảng sửa trực tiếp, cột "giá trị gốc" lấy từ reference page, tô màu ô đã đổi</li>
+          <li>Tab trace: hex dump có giải mã tên lệnh — thứ bạn sẽ cảm ơn chính mình lúc gỡ lỗi</li>
+          <li>Thanh trạng thái: trang ECU / trang XCP / tải bus / đếm overrun</li>
+        </ul>
+        <div class="gate">
+          <span class="glabel">Cổng</span>
+          Kéo signal vào plot thấy đồ thị chạy; sửa một ô trong bảng thấy ECU đổi hành vi — không chạm tới dòng lệnh.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">03 — Song song</span>Ai làm gì cùng lúc</h2>
+
+  <p class="lede">
+    Đường tới hạn nằm ở chuỗi Python. Những việc dưới đây không nằm trên đó, nên làm xen kẽ
+    được mà không kéo dài lịch.
+  </p>
+
+  <div class="tracks">
+    <div class="track">
+      <div class="who">Bạn — cần toolchain / phần cứng</div>
+      <ul>
+        <li>Trước ngày 1b: dựng bus CAN, terminator 120 Ω, xác nhận bitrate 500 k</li>
+        <li>Trước ngày 1b: cài driver hãng cho thiết bị sẽ dùng</li>
+        <li>Trước ngày 3: chạy <code>sync_a2l_addresses.py</code>, đảm bảo A2L khớp bản build hiện tại</li>
+        <li>Ngày 5: có mặt cùng board</li>
+        <li><em>Khi nào tiện:</em> áp <code>decouple-core.patch</code> rồi build + nạp lại firmware</li>
+      </ul>
+    </div>
+    <div class="track">
+      <div class="who">Mình — không cần phần cứng</div>
+      <ul>
+        <li>Toàn bộ chuỗi Python ngày 1 → 4</li>
+        <li>Port <code>pc_sim</code>, stub header, Makefile</li>
+        <li>Bộ test và fixture</li>
+        <li>GUI ngày 6–7</li>
+      </ul>
+    </div>
+    <div class="track">
+      <div class="who">Đã chốt · 16/08/2026</div>
+      <ul>
+        <li><strong>Firmware:</strong> không đụng — dùng stub header, patch để dành</li>
+        <li><strong>Phần cứng:</strong> đa nền tảng, user chọn lúc setup</li>
+        <li><strong>Tên package:</strong> <code>xcptool</code></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">04 — Thiết bị</span>Hỗ trợ nhiều loại phần cứng CAN</h2>
+
+  <p class="lede">
+    Yêu cầu: phần cứng có thể là PEAK, Vector hoặc ETAS, và người dùng chọn được lúc setup.
+    Tin tốt — cả ba đều nằm sau cùng một API của <code>python-can</code>, nên đây là việc
+    <strong>cấu hình, không phải viết ba driver</strong>.
+  </p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Backend</th><th class="m">interface=</th><th>Nền tảng</th><th>Cần cài trước</th></tr></thead>
+    <tbody>
+      <tr><td>PEAK PCAN-USB</td><td class="m">pcan</td><td>Win / Linux</td><td>PCAN-Basic driver</td></tr>
+      <tr><td>Vector VN16xx</td><td class="m">vector</td><td>Windows</td><td>XL Driver Library</td></tr>
+      <tr><td>ETAS ES58x / ES5xx</td><td class="m">etas</td><td><strong>Windows only</strong></td><td>ETAS Distribution Package (BOA)</td></tr>
+      <tr><td>CANable / slcan</td><td class="m">slcan</td><td>Win / Linux</td><td>driver COM ảo</td></tr>
+      <tr><td>Sim nội bộ</td><td class="m">udp</td><td>mọi nơi</td><td>—</td></tr>
+      <tr><td>Phát lại trace</td><td class="m">replay</td><td>mọi nơi</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    ETAS ES581.4 / ES582.1 / ES584.1 còn được kernel Linux ≥ 5.13 hỗ trợ natively qua SocketCAN —
+    trên Linux thì dùng <code>interface='socketcan'</code> thay vì <code>etas</code>.
+  </p>
+
+  <h3>Thiết kế lớp thiết bị</h3>
+  <ul>
+    <li><b><code>transport/registry.py</code></b> — bảng đăng ký backend. Thêm hãng mới = thêm một entry, không đụng <code>master/</code>.</li>
+    <li><b>Dò tự động</b> — <code>can.detect_available_configs()</code> quét mọi backend đã cài và trả về channel đang cắm. <code>xcptool devices</code> chỉ là lớp hiển thị mỏng trên nó.</li>
+    <li><b>Nhớ lựa chọn</b> — <code>~/.xcptool/config.toml</code> lưu backend, channel, bitrate. Chạy lần sau không phải chọn lại.</li>
+    <li><b>Thoái lui khi thiếu driver</b> — import backend thất bại thì hiện đúng tên gói cần cài, không phải stack trace. Đây là lỗi người dùng gặp nhiều nhất với công cụ loại này.</li>
+    <li><b>GUI</b> — hộp thoại chọn thiết bị lần chạy đầu, kèm nút "Detect" quét lại.</li>
+  </ul>
+
+  <div class="note warn">
+    <span class="label">Khác biệt cần nói rõ trong UI</span>
+    <p>
+      Ba hãng cho timestamp <em>khác nhau về chất lượng</em>: PEAK và Vector có timestamp phần cứng,
+      slcan thì do phần mềm sinh. Master vốn đã dùng timestamp <strong>của ECU</strong> trong DTO
+      làm trục thời gian chính, nên khác biệt này chỉ ảnh hưởng cửa sổ trace — nhưng vẫn cần ghi rõ
+      để người dùng khỏi hiểu nhầm là dữ liệu đo kém chính xác.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">05 — Chất lượng</span>Năm cơ chế tự trả lại thời gian đã bỏ ra</h2>
+
+  <p class="lede">
+    Không phải "quy trình cho có". Mỗi mục dưới đây được chọn vì nó <em>rút ngắn</em> tổng thời gian,
+    chứ không phải vì nên làm thế.
+  </p>
+
+  <div class="qgrid">
+    <div class="q">
+      <div class="t">Sim chạy đúng core thật</div>
+      <div class="d">Slave giả lập bằng Python sẽ mô phỏng lại cách ta <em>hiểu</em> giao thức, nên sẽ đồng ý với mọi lỗi của master. Dùng chính <code>Xcp_Handler.c</code> thì lỗi tích hợp không có chỗ nấp.</div>
+      <span class="pay">trả lại: cả ngày 5 không phát sinh bất ngờ</span>
+    </div>
+    <div class="q">
+      <div class="t">Test packing viết trước hàm packing</div>
+      <div class="d">Ngân sách 3 byte của ODT 0 là lỗi mà slave <em>không</em> bắt — nó trả OK rồi hỏng lúc chạy. Đây là chỗ duy nhất trong dự án mà TDD rẻ hơn hẳn debug.</div>
+      <span class="pay">trả lại: 1 buổi chiều đi tìm bug nhầm chỗ</span>
+    </div>
+    <div class="q">
+      <div class="t">Golden trace phát lại được</div>
+      <div class="d">Thu trace CAN thật một lần ở ngày 5, đóng băng làm fixture. Mọi thay đổi sau đó kiểm tra được trong vài giây, không cần cắm board.</div>
+      <span class="pay">trả lại: mỗi lần regression, ~20 phút</span>
+    </div>
+    <div class="q">
+      <div class="t">Một luật ranh giới, kiểm tra tự động</div>
+      <div class="d"><code>master/</code> không được import <code>can</code> hay <code>PySide6</code>. Viết một test 3 dòng quét import để ép luật. Đó là thứ giữ cho core còn test được headless về sau.</div>
+      <span class="pay">trả lại: không bị rối tầng ở tháng thứ hai</span>
+    </div>
+    <div class="q">
+      <div class="t">Từ điển lỗi ngay từ ngày 2</div>
+      <div class="d">Ánh xạ từng mã <code>CRC_*</code> sang exception có tên và câu giải thích. Rẻ để viết, và biến mọi phiên gỡ lỗi sau đó từ "đoán" thành "đọc".</div>
+      <span class="pay">trả lại: mỗi lỗi giao thức, ~15 phút</span>
+    </div>
+    <div class="q">
+      <div class="t">Polling scope trước DAQ</div>
+      <div class="d"><code>SHORT_UPLOAD</code> lặp 10 Hz cho ra "scope" chạy được từ ngày 2. Nó tách bạch lỗi địa chỉ khỏi lỗi DAQ — hai thứ rất dễ đổ oan cho nhau.</div>
+      <span class="pay">trả lại: rủi ro chẩn đoán sai ở ngày 4</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">06 — Phạm vi</span>Hoãn có chủ đích, không phải bỏ quên</h2>
+
+  <p class="lede">
+    Những mục này đều hợp lý, nhưng không mục nào cần thiết để tool thay được CANape trong
+    công việc hằng ngày của bạn. Đưa vào v1 là đánh đổi 7 ngày lấy 12 ngày.
+  </p>
+
+  <div class="defer">
+    <div class="row"><div class="what">Ghi MDF4 (<code>asammdf</code>)</div><div class="why">CSV đủ dùng tới khi cần chia sẻ với công cụ khác</div></div>
+    <div class="row"><div class="what">Xuất/nhập DCM</div><div class="why">JSON làm được việc tương đương cho nội bộ</div></div>
+    <div class="row"><div class="what">XCP on Ethernet</div><div class="why">Chỉ cần khi CAN 500 k thành nút thắt băng thông</div></div>
+    <div class="row"><div class="what">Seed &amp; Key</div><div class="why">Slave đang tắt; thêm khi firmware bật</div></div>
+    <div class="row"><div class="what">STIM / flash programming</div><div class="why">Slave chưa implement</div></div>
+    <div class="row"><div class="what">Parser ASAP2 tổng quát</div><div class="why">Thay bằng <code>pya2l</code> khi cần đọc A2L của hãng khác</div></div>
+    <div class="row"><div class="what">Đóng gói .exe một file</div><div class="why">PyInstaller làm sau, khi tool đã ổn định</div></div>
+  </div>
+
+  <div class="note pick">
+    <span class="label">Nếu chỉ có 3 ngày</span>
+    <p>
+      Dừng sau <strong>ngày 3</strong>. Lúc đó bạn đã có một CLI đọc/ghi mọi tham số calibration
+      bằng tên, chuyển trang ROM/RAM, và một scope polling 10 Hz. Đó đã là công cụ dùng được hằng ngày —
+      chỉ thiếu DAQ tốc độ cao và giao diện đồ hoạ.
+    </p>
+  </div>
+</section>
+
+<footer>
+  Companion cho test_app/DESIGN.md · cơ sở: Xcp_Handler.h:951 · Xcp_Handler.c:3382 · xcp_can_tricore.h:23 · commit f48153d
+</footer>
+
+</div>

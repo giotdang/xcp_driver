@@ -1,0 +1,197 @@
+"""`RealSession` — hiện thực `session.api.Session` trên bus CAN thật.
+
+Đây là chỗ duy nhất `transport/` và `master/` gặp nhau. Lớp này không biết Qt
+tồn tại và không bao giờ gọi ngược lên UI: frontend gọi các phương thức chặn từ
+worker thread, rồi tự marshal kết quả về UI thread.
+"""
+
+from __future__ import annotations
+
+import functools
+import logging
+from collections.abc import Callable
+from typing import Any, TypeVar
+
+from ..master.core import XcpMaster
+from ..master.trace import DEFAULT_CAPACITY, TraceBuffer
+from ..transport import config as cfg_store
+from ..transport import registry
+from ..transport.base import Transport
+from .api import (
+    BusConfig,
+    ConnState,
+    DeviceInfo,
+    NotConnectedError,
+    PageMode,
+    SlaveCaps,
+    TraceEntry,
+    UnsupportedByEcuError,
+    XcpToolError,
+)
+
+__all__ = ["RealSession"]
+
+log = logging.getLogger("xcptool.session")
+
+# Bit của byte Resource Protection Status (GET_STATUS) ứng với tài nguyên mà
+# công cụ này thực sự dùng. Khoá riêng PGM không cản trở đo/hiệu chỉnh.
+_PROTECTION_BITS_WE_NEED = 0x01 | 0x04   # CAL/PAG | DAQ
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _guarded(what: str) -> Callable[[F], F]:
+    """Không ngoại lệ nào ngoài `XcpToolError` được rời khỏi Session.
+
+    Lỗi ngoài dự kiến vẫn ghi log kèm traceback — nuốt im lặng thì frontend hiện
+    được thông báo nhưng ta mất manh mối.
+    """
+    def decorate(fn: F) -> F:
+        @functools.wraps(fn)
+        def wrapper(*args: object, **kwargs: object) -> object:
+            try:
+                return fn(*args, **kwargs)
+            except XcpToolError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Lỗi ngoài dự kiến khi %s", what)
+                raise XcpToolError(f"Lỗi nội bộ khi {what}: {exc!r}") from exc
+        return wrapper  # type: ignore[return-value]
+    return decorate
+
+
+class RealSession:
+    def __init__(self, trace_capacity: int = DEFAULT_CAPACITY) -> None:
+        self._trace = TraceBuffer(trace_capacity)
+        self._master: XcpMaster | None = None
+        self._transport: Transport | None = None
+        self._last_state = ConnState.DISCONNECTED
+
+    # ── không chặn, an toàn thread ───────────────────────────────────────────
+
+    @property
+    def state(self) -> ConnState:
+        master = self._master
+        return self._last_state if master is None else master.state
+
+    @property
+    def caps(self) -> SlaveCaps | None:
+        master = self._master
+        return master.caps if master is not None else None
+
+    @property
+    def dropped_frames(self) -> int:
+        return self._trace.dropped
+
+    def drain_trace(self, max_items: int = 5000) -> list[TraceEntry]:
+        return self._trace.drain(max_items)
+
+    def load_config(self) -> BusConfig:
+        return cfg_store.load_bus_config()
+
+    # ── vòng đời ─────────────────────────────────────────────────────────────
+
+    @_guarded("dò thiết bị")
+    def list_devices(self) -> list[DeviceInfo]:
+        return registry.list_devices()
+
+    @_guarded("kết nối")
+    def connect(self, cfg: BusConfig) -> SlaveCaps:
+        self._teardown()
+        self._last_state = ConnState.CONNECTING
+
+        transport = registry.open_transport(cfg)
+        master = XcpMaster(transport, cfg, trace=self._trace)
+        self._transport = transport
+        self._master = master
+
+        try:
+            caps = master.connect()
+            self._reject_if_locked(master, caps)
+        except XcpToolError:
+            self._teardown()
+            self._last_state = ConnState.DISCONNECTED
+            raise
+
+        self._remember(cfg)
+        return caps
+
+    def _reject_if_locked(self, master: XcpMaster, caps: SlaveCaps) -> None:
+        """Seed & key: báo rõ rồi ngắt sạch, không hỏng lặng lẽ giữa chừng."""
+        protection = master.resource_protection or 0
+        if caps.needs_seed_and_key and protection & _PROTECTION_BITS_WE_NEED:
+            raise UnsupportedByEcuError(
+                "ECU yêu cầu seed & key để mở khoá calibration/DAQ "
+                f"(protection=0x{protection:02X}) — công cụ chưa hỗ trợ")
+
+    def _remember(self, cfg: BusConfig) -> None:
+        """Nhớ lựa chọn cho lần sau. Ghi hỏng thì thôi, đừng làm hỏng phiên."""
+        try:
+            cfg_store.save_bus_config(cfg)
+        except OSError:
+            log.warning("Không lưu được %s", cfg_store.config_path(), exc_info=True)
+
+    @_guarded("ngắt kết nối")
+    def disconnect(self) -> None:
+        master = self._master
+        if master is None:
+            return
+        master.disconnect()
+        self._last_state = master.state
+
+    def close(self) -> None:
+        """IDEMPOTENT và KHÔNG BAO GIỜ NÉM — frontend gọi trong closeEvent()."""
+        try:
+            # master.close() tự lo DISCONNECT (có giới hạn chờ) rồi mới dừng thread.
+            self._teardown()
+        except Exception:  # noqa: BLE001 — close() ném là bug, chặn tại đây
+            log.exception("Lỗi khi đóng phiên, đã nuốt")
+        finally:
+            self._last_state = ConnState.DISCONNECTED
+
+    def _teardown(self) -> None:
+        master, transport = self._master, self._transport
+        self._master = None
+        self._transport = None
+        if master is not None:
+            master.close()          # đã tự đóng link
+        elif transport is not None:
+            transport.close()
+
+    # ── bộ nhớ ───────────────────────────────────────────────────────────────
+
+    def _require_master(self) -> XcpMaster:
+        master = self._master
+        if master is None:
+            raise NotConnectedError("Chưa CONNECT tới ECU")
+        return master
+
+    @_guarded("đọc bộ nhớ")
+    def read(self, addr: int, size: int, ext: int = 0) -> bytes:
+        return self._require_master().read(addr, size, ext)
+
+    @_guarded("ghi bộ nhớ")
+    def write(self, addr: int, data: bytes, ext: int = 0) -> None:
+        self._require_master().write(addr, data, ext)
+
+    # ── trang calibration ────────────────────────────────────────────────────
+
+    @_guarded("đọc trang calibration")
+    def get_page(self, segment: int, mode: PageMode) -> int:
+        return self._require_master().get_page(segment, mode)
+
+    @_guarded("đổi trang calibration")
+    def set_page(self, segment: int, page: int, mode: PageMode) -> None:
+        self._require_master().set_page(segment, page, mode)
+
+    @_guarded("sao chép trang calibration")
+    def copy_page(
+        self, src_segment: int, src_page: int, dst_segment: int, dst_page: int
+    ) -> None:
+        self._require_master().copy_page(src_segment, src_page, dst_segment, dst_page)
+
+    # ── lệnh thô ─────────────────────────────────────────────────────────────
+
+    @_guarded("gửi lệnh thô")
+    def raw_command(self, payload: bytes, raise_on_error: bool = False) -> bytes:
+        return self._require_master().raw_command(payload, raise_on_error)

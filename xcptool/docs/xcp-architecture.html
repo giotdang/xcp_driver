@@ -1,0 +1,1007 @@
+<title>Kiến trúc xcptool</title>
+<style>
+  :root{
+    --ground:#FAFBFB;
+    --surface:#F0F3F4;
+    --surface-2:#E5EAEC;
+    --line:#D2DADD;
+    --line-soft:#E3E9EB;
+    --ink:#101619;
+    --ink-2:#4C5A61;
+    --ink-3:#77878E;
+    --accent:#0B6E75;
+    --accent-soft:#DBEDEE;
+    --warn:#8A5300;
+    --warn-soft:#FAEEDB;
+    --danger:#A32E1C;
+    --danger-soft:#FAE7E3;
+    --ok:#2C6E3F;
+    --ok-soft:#E0EFE4;
+
+    --sans:"Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,sans-serif;
+    --mono:"Cascadia Code","Cascadia Mono",Consolas,ui-monospace,"SF Mono",monospace;
+
+    --measure:68ch;
+    --wide:1080px;
+  }
+
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#0E1417;
+      --surface:#161F23;
+      --surface-2:#1E292E;
+      --line:#2C393F;
+      --line-soft:#212C31;
+      --ink:#E6ECEE;
+      --ink-2:#A4B3B9;
+      --ink-3:#7B8C93;
+      --accent:#45C8D0;
+      --accent-soft:#102F33;
+      --warn:#E8B067;
+      --warn-soft:#2C2213;
+      --danger:#F2836E;
+      --danger-soft:#301813;
+      --ok:#6FC98A;
+      --ok-soft:#14251A;
+    }
+  }
+
+  :root[data-theme="dark"]{
+    --ground:#0E1417;
+    --surface:#161F23;
+    --surface-2:#1E292E;
+    --line:#2C393F;
+    --line-soft:#212C31;
+    --ink:#E6ECEE;
+    --ink-2:#A4B3B9;
+    --ink-3:#7B8C93;
+    --accent:#45C8D0;
+    --accent-soft:#102F33;
+    --warn:#E8B067;
+    --warn-soft:#2C2213;
+    --danger:#F2836E;
+    --danger-soft:#301813;
+    --ok:#6FC98A;
+    --ok-soft:#14251A;
+  }
+
+  *{box-sizing:border-box;}
+
+  body{
+    background:var(--ground);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:16.5px;
+    line-height:1.65;
+    margin:0;
+    padding:0 24px 120px;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  .wrap{max-width:var(--wide);margin:0 auto;}
+  .col{max-width:var(--measure);}
+
+  header.masthead{
+    padding:72px 0 40px;
+    border-bottom:1px solid var(--line);
+    margin-bottom:8px;
+  }
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin:0 0 20px;
+  }
+  h1{
+    font-size:clamp(34px,5.2vw,52px);
+    line-height:1.08;
+    letter-spacing:-.028em;
+    font-weight:700;
+    margin:0 0 22px;
+    text-wrap:balance;
+    max-width:16ch;
+  }
+  .standfirst{
+    font-size:19px;
+    line-height:1.6;
+    color:var(--ink-2);
+    max-width:var(--measure);
+    margin:0;
+  }
+  .standfirst strong{color:var(--ink);font-weight:600;}
+  .standfirst code{font-size:.85em;}
+
+  .badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px;}
+  .badge{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.04em;
+    padding:4px 10px;
+    border-radius:3px;
+    border:1px solid var(--line);
+    color:var(--ink-2);
+  }
+
+  section{padding:52px 0 8px;}
+  section + section{border-top:1px solid var(--line-soft);}
+
+  h2{
+    font-size:27px;
+    letter-spacing:-.02em;
+    font-weight:680;
+    line-height:1.2;
+    margin:0 0 8px;
+    text-wrap:balance;
+  }
+  h2 .num{
+    font-family:var(--mono);
+    font-size:13px;
+    font-weight:400;
+    letter-spacing:.1em;
+    color:var(--ink-3);
+    display:block;
+    margin-bottom:10px;
+  }
+  h3{
+    font-size:18px;
+    font-weight:640;
+    letter-spacing:-.012em;
+    margin:34px 0 6px;
+    line-height:1.3;
+  }
+  h4{
+    font-family:var(--mono);
+    font-size:12.5px;
+    font-weight:600;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink-3);
+    margin:28px 0 8px;
+  }
+
+  p{margin:0 0 16px;max-width:var(--measure);}
+  .lede{color:var(--ink-2);font-size:17px;margin-bottom:26px;}
+
+  ul,ol{max-width:var(--measure);padding-left:20px;margin:0 0 18px;}
+  li{margin-bottom:9px;}
+  li::marker{color:var(--ink-3);}
+  li b{color:var(--ink);font-weight:640;}
+
+  code{
+    font-family:var(--mono);
+    font-size:.875em;
+    background:var(--surface-2);
+    padding:1px 5px;
+    border-radius:3px;
+  }
+  a{color:var(--accent);}
+  strong{font-weight:640;}
+  em{color:var(--ink);}
+
+  .scroll{overflow-x:auto;margin:0 0 24px;}
+  table{
+    border-collapse:collapse;
+    width:100%;
+    min-width:560px;
+    font-size:14.5px;
+    font-variant-numeric:tabular-nums;
+  }
+  th{
+    text-align:left;
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.09em;
+    text-transform:uppercase;
+    font-weight:600;
+    color:var(--ink-3);
+    padding:0 16px 9px 0;
+    border-bottom:1px solid var(--line);
+    vertical-align:bottom;
+  }
+  td{
+    padding:11px 16px 11px 0;
+    border-bottom:1px solid var(--line-soft);
+    vertical-align:top;
+    color:var(--ink-2);
+  }
+  td:first-child{color:var(--ink);font-weight:550;}
+  td.m,th.m{font-family:var(--mono);font-size:13px;}
+  tr:last-child td{border-bottom:none;}
+
+  .tag{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.05em;
+    padding:2px 7px;
+    border-radius:3px;
+    white-space:nowrap;
+    display:inline-block;
+  }
+  .tag.on{background:var(--ok-soft);color:var(--ok);}
+  .tag.off{background:var(--surface-2);color:var(--ink-3);}
+  .tag.owner{background:var(--accent-soft);color:var(--accent);}
+
+  .stack{
+    display:flex;
+    flex-direction:column;
+    gap:7px;
+    margin:8px 0 12px;
+    max-width:760px;
+  }
+  .layer{
+    display:grid;
+    grid-template-columns:150px 1fr;
+    gap:18px;
+    align-items:baseline;
+    background:var(--surface);
+    border:1px solid var(--line-soft);
+    border-left:3px solid var(--accent);
+    border-radius:4px;
+    padding:13px 16px;
+  }
+  .layer.fake{border-left-color:var(--ink-3);}
+  .layer .lname{
+    font-family:var(--mono);
+    font-size:12.5px;
+    font-weight:600;
+    letter-spacing:.03em;
+    color:var(--accent);
+  }
+  .layer.fake .lname{color:var(--ink-3);}
+  .layer .ldesc{font-size:14.5px;color:var(--ink-2);line-height:1.5;}
+  .layer .ldesc b{color:var(--ink);font-weight:600;}
+  .stack .wire{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    color:var(--ink-3);
+    padding:2px 0 2px 6px;
+  }
+
+  .note{
+    border-radius:5px;
+    padding:18px 20px;
+    margin:24px 0;
+    max-width:var(--measure);
+    font-size:15px;
+    line-height:1.6;
+  }
+  .note p{margin:0 0 10px;max-width:none;}
+  .note p:last-child{margin-bottom:0;}
+  .note .label{
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    font-weight:600;
+    display:block;
+    margin-bottom:8px;
+  }
+  .note.danger{background:var(--danger-soft);border:1px solid var(--danger);}
+  .note.danger .label{color:var(--danger);}
+  .note.pick{background:var(--accent-soft);border:1px solid var(--accent);}
+  .note.pick .label{color:var(--accent);}
+  .note.warn{background:var(--warn-soft);border:1px solid var(--warn);}
+  .note.warn .label{color:var(--warn);}
+
+  pre{
+    background:var(--surface);
+    border:1px solid var(--line-soft);
+    border-radius:5px;
+    padding:16px 18px;
+    overflow-x:auto;
+    margin:0 0 24px;
+    font-size:13px;
+    line-height:1.62;
+  }
+  pre code{background:none;padding:0;font-size:inherit;}
+  .cmt{color:var(--ink-3);}
+  .kw{color:var(--accent);}
+  .tree{color:var(--ink-2);}
+  .tree .own{color:var(--accent);}
+
+  .phase{
+    display:grid;
+    grid-template-columns:30px 1fr;
+    gap:16px;
+    padding:18px 0;
+    border-bottom:1px solid var(--line-soft);
+    max-width:820px;
+  }
+  .phase:last-child{border-bottom:none;}
+  .phase .pnum{
+    font-family:var(--mono);
+    font-size:13px;
+    font-weight:600;
+    color:var(--accent);
+    letter-spacing:.04em;
+    padding-top:2px;
+  }
+  .phase h4{margin:0 0 6px;font-size:14.5px;text-transform:none;letter-spacing:0;color:var(--ink);font-family:var(--sans);font-weight:640;}
+  .phase p{font-size:14.5px;color:var(--ink-2);margin:0;max-width:62ch;}
+  .phase code{font-size:.82em;}
+
+  .traps{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+    gap:2px;
+    margin-top:14px;
+  }
+  .trap{
+    background:var(--surface);
+    border-radius:4px;
+    padding:16px 18px;
+  }
+  .trap .t{
+    font-weight:620;
+    font-size:15px;
+    margin-bottom:5px;
+    line-height:1.35;
+  }
+  .trap .d{font-size:14px;color:var(--ink-2);line-height:1.55;}
+
+  .kv{
+    display:grid;
+    grid-template-columns:auto 1fr;
+    gap:6px 16px;
+    font-size:14.5px;
+    max-width:var(--measure);
+    margin:0 0 20px;
+  }
+  .kv dt{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--ink-3);
+    white-space:nowrap;
+    padding-top:2px;
+  }
+  .kv dd{margin:0;color:var(--ink-2);}
+
+  footer{
+    margin-top:56px;
+    padding-top:22px;
+    border-top:1px solid var(--line);
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:.05em;
+    color:var(--ink-3);
+  }
+
+  @media (max-width:640px){
+    body{padding:0 18px 80px;}
+    .layer{grid-template-columns:1fr;gap:5px;}
+    .phase{grid-template-columns:1fr;}
+  }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Architecture Reference · cập nhật 2026-08-16</p>
+  <h1>xcptool — Kiến trúc</h1>
+  <p class="standfirst">
+    Tài liệu dành cho <strong>developer hoặc agent sẽ sửa/mở rộng code</strong>, không phải end-user
+    (xem <code>USER_MANUAL.md</code> cho việc đó). Mô tả <strong>đúng code hiện có</strong> sau khi
+    B0→B4 + F0→F5 + J1 hoàn tất — không phải kế hoạch ban đầu. Khi <code>DESIGN.md</code>/<code>DEV_PLAN.md</code>
+    mâu thuẫn với file này, tin file này hoặc tin code.
+  </p>
+  <div class="badges">
+    <span class="badge">Python + PySide6</span>
+    <span class="badge">XCP on CAN</span>
+    <span class="badge">M1 + M2 xong</span>
+    <span class="badge">265 test xanh</span>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">01 — Tổng quan</span>Hai nguyên tắc chi phối mọi quyết định</h2>
+
+  <p class="lede">
+    xcptool là công cụ PC thay thế CANape/INCA cho việc đo lường/hiệu chỉnh ECU qua giao thức XCP trên CAN.
+  </p>
+
+  <ul>
+    <li><b>Độc lập với firmware trong <code>driver/</code></b> — xcptool không import, không đọc, không giả
+      định bất cứ thứ gì từ repo <code>driver/</code> (XCP slave TC2xx). Quan hệ duy nhất là giao thức XCP
+      trên dây, giống hệt quan hệ với ECU của hãng khác.</li>
+    <li><b>Độc lập với một ECU cụ thể</b> — không hardcode MAX_CTO, CAN ID, byte order, đơn vị timestamp ở
+      bất cứ đâu trong logic. Mọi đặc tính ECU đến từ <code>BusConfig</code> (user cấu hình) hoặc
+      <code>SlaveCaps</code> (hỏi ECU lúc CONNECT).</li>
+  </ul>
+
+  <div class="note pick">
+    <span class="label">Cưỡng chế bằng test, không bằng kỷ luật</span>
+    <p>Cả hai nguyên tắc trên được ép bằng <code>tests/test_boundaries.py</code> — quét AST, không bằng
+      quy ước hay code review. Xem §2.</p>
+  </div>
+
+  <h3>Phạm vi hiện tại</h3>
+  <div class="kv">
+    <dt>Đã xong (M1+M2)</dt>
+    <dd>chọn thiết bị CAN đa hãng → CONNECT → capability discovery → cửa sổ debug CAN (trace) →
+      console lệnh thô → đọc/ghi bộ nhớ theo địa chỉ → điều khiển trang calibration.</dd>
+    <dt>Chưa làm</dt>
+    <dd>DAQ engine/scope (M4), A2L parser (M3), MDF4/export (M5) — xem §11.</dd>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">02 — Kiến trúc</span>Năm lớp, ranh giới ép bằng AST</h2>
+
+  <p class="lede">
+    <code>master/</code> không biết CAN là gì; <code>ui/</code>/<code>cli/</code> không biết
+    <code>master/</code>/<code>transport/</code> tồn tại. Nhờ vậy toàn bộ phần khó nhất test được
+    headless, và <code>FakeSession</code> cho phép frontend build song song không cần chờ backend.
+  </p>
+
+  <div class="stack">
+    <div class="layer">
+      <span class="lname">ui/ · cli/</span>
+      <span class="ldesc"><b>Cửa sổ chính, dialog thiết bị, trace/console/memory panel; lệnh <code>xcptool …</code>.</b>
+        Chỉ nói chuyện qua <code>session.api.Session</code> — không với tay xuống tầng dưới.</span>
+    </div>
+    <div class="wire">▲ chỉ qua session.api.Session (Protocol)</div>
+    <div class="layer">
+      <span class="lname">session/</span>
+      <span class="ldesc"><b><code>api.py</code> (CONTRACT) · <code>real.py</code> · <code>fake.py</code></b> —
+        hai hiện thực cùng chữ ký. <code>RealSession</code> đi tiếp xuống hai lớp dưới;
+        <code>FakeSession</code> tự mô phỏng trong bộ nhớ, dừng lại ở đây.</span>
+    </div>
+    <div class="wire">▲ Link Protocol (send/recv/close) — chỉ RealSession đi tiếp</div>
+    <div class="layer">
+      <span class="lname">master/</span>
+      <span class="ldesc"><b>Protocol core XCP thuần.</b> CONNECT/UPLOAD/DOWNLOAD, capability discovery,
+        timeout/retry, demux CTO/DTO. Không import <code>can</code>, không import GUI.</span>
+    </div>
+    <div class="wire">▲ Transport ABC (send/recv/close)</div>
+    <div class="layer fake">
+      <span class="lname">transport/</span>
+      <span class="ldesc"><b>Registry đa backend</b> — <code>python-can</code>: pcan/vector/etas/slcan/virtual/replay.</span>
+    </div>
+  </div>
+
+  <h3>Ranh giới ép bằng AST (<code>tests/test_boundaries.py</code>)</h3>
+  <p>Ba luật, quét import bằng <code>ast</code> — chạy được cả khi chưa cài PySide6/python-can:</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Package</th><th>Cấm import</th></tr></thead>
+    <tbody>
+      <tr><td class="m">master/</td><td class="m">can, PySide6, xcptool.ui, xcptool.cli, xcptool.transport</td></tr>
+      <tr><td class="m">transport/</td><td class="m">PySide6, xcptool.ui, xcptool.cli, xcptool.master</td></tr>
+      <tr><td class="m">ui/</td><td class="m">can, xcptool.master, xcptool.transport, xcptool.a2l</td></tr>
+      <tr><td class="m">cli/</td><td class="m">can, xcptool.master, xcptool.transport, xcptool.a2l</td></tr>
+      <tr><td class="m">session/api.py, session/fake.py</td><td class="m">can, PySide6, xcptool.master, xcptool.transport</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Cộng thêm <code>test_no_hardcoded_ecu_constants</code>: grep toàn bộ <code>src/</code> tìm
+    <code>0x7E0</code>/<code>0x7E1</code>, chỉ cho phép ở <code>session/api.py</code>,
+    <code>transport/config.py</code>, <code>cli/defaults.py</code>.</p>
+
+  <div class="note danger">
+    <span class="label">Sửa code khi đỏ, đừng sửa test</span>
+    <p><code>test_boundaries.py</code> do lead sở hữu. Đỏ nghĩa là kiến trúc bị vi phạm thật.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">03 — Contract</span><code>session/api.py</code></h2>
+
+  <p class="lede">
+    Không có logic, chỉ có kiểu dữ liệu, cây ngoại lệ, chữ ký <code>Protocol</code>. Đổi contract →
+    sửa đúng một chỗ này, cả hai bên tự cập nhật theo.
+  </p>
+
+  <h3>3.1 Luật thread — chỗ app loại này chết nhiều nhất</h3>
+  <ul>
+    <li><b>Session không biết Qt tồn tại.</b> Không bao giờ gọi ngược lên UI.</li>
+    <li><b>Nhóm chặn</b> — mọi phương thức trừ nhóm dưới, có thể mất tới <code>timeout_s</code>. PHẢI gọi
+      từ worker thread rồi marshal kết quả về UI thread bằng Qt signal. Gọi thẳng từ UI thread = lỗi (UI đơ).</li>
+    <li><b>Nhóm không chặn, an toàn thread</b> — gọi thẳng từ UI thread được: <code>state</code>,
+      <code>caps</code>, <code>dropped_frames</code>, <code>drain_trace()</code>. Gọi theo
+      <code>QTimer</code> 30–50 ms, KHÔNG vẽ theo từng frame.</li>
+    <li><b>Không reentrant</b> — lệnh chồng lên lệnh đang chạy → <code>BusyError</code> ngay, không xếp hàng.</li>
+    <li><b><code>close()</code> idempotent, KHÔNG BAO GIỜ ném.</b> Gọi được cả lúc lỗi, cả lúc chưa connect.</li>
+  </ul>
+
+  <h3>3.2 Luật ngoại lệ</h3>
+  <p>Mọi lỗi lường trước là con của <code>XcpToolError</code>. Ngoại lệ nào khác lọt ra khỏi
+    <code>Session</code> là <strong>bug của backend</strong> (<code>RealSession</code> cưỡng chế bằng
+    decorator <code>_guarded()</code> — xem §4).</p>
+
+<pre><code class="tree">XcpToolError
+├── TransportError              <span class="cmt">(lỗi tầng bus, chưa đụng XCP)</span>
+│   ├── DeviceNotFoundError     kênh đã chọn không còn tồn tại
+│   ├── DriverMissingError      thiếu driver hãng — có .package_hint
+│   └── BusError                bus lỗi lúc đang chạy
+├── ProtocolError                <span class="cmt">(lỗi tầng XCP)</span>
+│   ├── XcpTimeoutError          hết T1, ECU không trả lời
+│   ├── MalformedResponseError   frame ngắn/sai định dạng — KHÔNG được để
+│   │                            struct.error/IndexError lọt ra thay vào đây
+│   └── SlaveError               ECU trả 0xFE — có .code/.name/.description
+│       ├── WriteProtectedError  CRC_WRITE_PROTECTED — nút "chuyển working page" ở UI
+│       ├── OutOfRangeError      CRC_OUT_OF_RANGE
+│       └── SequenceError        CRC_SEQUENCE
+├── NotConnectedError            gọi lệnh khi chưa CONNECT
+├── BusyError                    lệnh chồng lên lệnh đang chạy
+└── UnsupportedByEcuError        gọi tính năng ECU không có theo SlaveCaps</code></pre>
+
+  <p><code>AccessDeniedError</code> có trong <code>__all__</code> (CRC_ACCESS_DENIED/LOCKED) — chưa có
+    đường gọi tới trong M1/M2 vì seed &amp; key được xử lý ở <code>connect()</code> (§4.3), không phải
+    một lệnh riêng.</p>
+
+  <h3>3.3 Luật độc lập ECU</h3>
+  <p>Không trường nào trong <code>SlaveCaps</code> được hardcode — tất cả lấy từ response CONNECT và
+    các <code>GET_*_INFO</code>. <code>SlaveCaps.daq = None</code> nghĩa là ECU không trả lời — bỏ qua
+    êm, không ném lỗi.</p>
+
+  <h3>3.4 Dataclass quan trọng</h3>
+  <ul>
+    <li><b><code>BusConfig</code></b> — mọi thứ để mở bus + nói chuyện với một ECU. <code>cro_id</code>/<code>dto_id</code>
+      mặc định <code>0x7E0</code>/<code>0x7E1</code> chỉ là điểm khởi đầu tiện tay, user đổi được.</li>
+    <li><b><code>SlaveCaps</code></b> — ECU tự khai nó là gì. <code>protocol_version</code>/<code>transport_version</code>
+      là <code>(major, 0)</code> — xem §4.3.</li>
+    <li><b><code>DaqCaps</code></b> — khai báo sẵn cho M4, chưa dùng trong M1/M2.</li>
+    <li><b><code>TraceEntry</code></b> — một dòng trace CAN. <code>decoded</code> LUÔN có giá trị (hex nếu
+      không giải mã được).</li>
+    <li><b><code>DeviceInfo</code></b> — kết quả <code>list_devices()</code>. Chưa cài driver vẫn xuất hiện
+      với <code>available=False</code> + <code>hint</code>.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">04 — Protocol core</span><code>master/</code></h2>
+
+  <p class="lede">
+    <code>master/core.py</code> (<code>XcpMaster</code>) hiện thực giao thức XCP thuần, nói chuyện với
+    một <code>Link</code> (duck-typed qua <code>typing.Protocol</code>) mà <code>transport/</code>
+    hiện thực.
+  </p>
+
+  <h3>4.1 Luồng RX/TX</h3>
+  <ul>
+    <li><b>RX thread riêng</b> (<code>_rx_loop</code>, daemon) — <code>link.recv(0.05s)</code> liên tục,
+      phân loại bằng <code>codec.classify()</code>, ghi <code>TraceBuffer</code>, đẩy response vào
+      <code>queue.Queue(maxsize=1)</code>. Chết vì exception → không sập app: bắt <code>BaseException</code>,
+      chuyển <code>state=ERROR</code>, đánh thức lệnh đang chờ bằng sentinel thay vì ngồi hết T1.</li>
+    <li><b>Gọi lệnh (<code>transact</code>)</b> — khoá <code>threading.Lock(blocking=False)</code> →
+      <code>BusyError</code> ngay nếu đã có lệnh khác đang chạy.</li>
+    <li><b>Demux CRM vs DTO</b> — cùng CAN ID (<code>cfg.dto_id</code>). Byte 0 ∈
+      <code>{0xFF,0xFE,0xFD,0xFC}</code> → CTO, còn lại → <code>daq</code>.</li>
+  </ul>
+
+  <h3>4.2 Timeout &amp; retry</h3>
+  <p><code>_exchange()</code> chờ <code>timeout</code> giây; không có response → ghi trace, gửi
+    <code>SYNCH</code> (nếu <code>retry=True</code>) rồi thử lại một lần. Hết hai lần →
+    <code>XcpTimeoutError</code>.</p>
+
+  <div class="note pick">
+    <span class="label">Quyết định có chủ đích</span>
+    <p><code>raw_command()</code> gọi với <code>retry=False</code> — console debug phải cho thấy đúng
+      thứ xảy ra trên dây theo đúng byte user gõ, tự động thử lại sẽ che mất sự thật mà người debug
+      đang muốn nhìn thấy. Mọi lệnh khác (<code>read</code>/<code>write</code>/<code>connect</code>/<code>get_page</code>…)
+      đều <code>retry=True</code>.</p>
+  </div>
+
+  <h3>4.3 CONNECT &amp; capability discovery</h3>
+  <p><code>connect()</code> gửi CONNECT rồi hỏi thêm — không giả định gì:</p>
+  <ol>
+    <li><b><code>_parse_connect()</code></b> — đọc <code>SlaveCaps</code> từ 8 byte response (resource,
+      comm_mode_basic, MAX_CTO, MAX_DTO, version). Validate MAX_CTO/MAX_DTO ≥ 8, ném
+      <code>MalformedResponseError</code> nếu ECU khai nhỏ hơn.</li>
+    <li><b><code>_enrich_caps()</code></b> — mọi câu hỏi phụ qua <code>_optional()</code> (nuốt
+      <code>XcpToolError</code> thành <code>None</code>): <code>GET_STATUS</code> →
+      <code>resource_protection</code>; <code>GET_DAQ_PROCESSOR_INFO</code>+<code>GET_DAQ_RESOLUTION_INFO</code>
+      → <code>DaqCaps</code> (chỉ khi <code>supports_daq</code>); <code>GET_ID</code> type 1 → <code>id_string</code>.</li>
+    <li><b>Seed &amp; key — chỉ chặn nếu khoá chạm tài nguyên xcptool thực sự dùng.</b>
+      <code>_reject_if_locked()</code> kiểm tra <code>protection &amp; (CAL/PAG bit | DAQ bit)</code>,
+      KHÔNG chặn cứng theo <code>protection != 0</code>. ECU chỉ khoá riêng PGM/flash vẫn CONNECT được
+      bình thường.</li>
+  </ol>
+
+  <div class="note warn">
+    <span class="label">protocol_version luôn là (major, 0)</span>
+    <p>Response CONNECT chỉ mang 1 byte version trên dây, không có chỗ nào cho minor version.
+      <code>0</code> là placeholder do contract khai <code>tuple[int, int]</code>, KHÔNG phải giá trị
+      đo được. <code>GET_COMM_MODE_INFO</code> (tuỳ chọn) trả thêm <code>XCP_DRIVER_VERSION_NUMBER</code>,
+      nhưng đó là version của driver/hãng làm slave — không phải minor version của protocol XCP theo
+      đúng nghĩa.</p>
+  </div>
+
+  <h3>4.4 <code>read()</code>/<code>write()</code> — chia khối theo MAX_CTO thật</h3>
+  <p><code>_cto_len(caps) = min(caps.max_cto, link.max_frame_len)</code> — <strong>điểm mấu chốt của
+    toàn bộ tầng bộ nhớ.</strong> ECU có thể khai MAX_CTO lớn (có ý nghĩa với XCP-on-Ethernet), nhưng
+    CAN giới hạn cứng 8 byte/frame. Master luôn lấy <code>min</code>.</p>
+
+  <div class="note danger">
+    <span class="label">Hệ quả: SHORT_DOWNLOAD không dùng được trên CAN</span>
+    <p><code>short_capacity = _cto_len(caps) - 8</code>. Với MAX_CTO clamp về 8 →
+      <code>short_capacity = 0</code> → nhánh <code>SHORT_DOWNLOAD</code> trong <code>write()</code>
+      không bao giờ được chọn trên CAN. Đường ghi THẬT luôn là <code>SET_MTA</code> + <code>DOWNLOAD</code>
+      (chia theo <code>chunk = _cto_len(caps) - 2</code>). Khác với mô tả ban đầu trong
+      <code>DESIGN.md</code> §5 — đã sửa tài liệu đó, nhắc lại ở đây vì đây là chỗ dễ hiểu nhầm nhất khi
+      đọc code lần đầu.</p>
+  </div>
+
+  <p><code>read()</code> ngược lại: <code>SHORT_UPLOAD</code> một lệnh khi
+    <code>size &lt;= max_chunk</code> (rẻ hơn hai lệnh <code>SET_MTA</code>+<code>UPLOAD</code>), chỉ
+    chuyển sang lặp <code>SET_MTA</code>+<code>UPLOAD</code> khi khối dài hơn.</p>
+
+  <h3>4.5 Từ điển lỗi — <code>errors.py</code></h3>
+  <p><code>ERR_TABLE</code> ánh xạ mọi mã <code>CRC_*</code> trong spec XCP 1.0 sang đúng lớp ngoại lệ.
+    Mã lỗi lạ ngoài spec vẫn dựng được <code>SlaveError</code> (fallback
+    <code>ERR_UNKNOWN_0x{code:02X}</code>) — không bao giờ <code>KeyError</code>.</p>
+
+  <h3>4.6 <code>codec.py</code> — giải mã cho cửa sổ debug</h3>
+  <p><code>describe_tx()</code>/<code>describe_rx()</code> sinh chuỗi người đọc được cho
+    <code>TraceEntry.decoded</code> (vd. <code>"CONNECT mode=0"</code>). Không giải mã được thì rơi về
+    hex thô, không bao giờ để trống.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">05 — Transport layer</span><code>transport/</code></h2>
+
+  <h3>5.1 Registry pattern</h3>
+  <p><code>registry.py</code> giữ <code>SPECS: dict[str, BackendSpec]</code> — mỗi hãng CAN là một
+    <code>BackendSpec</code> (tên, <code>interface=</code> của python-can, label, hàm <code>open</code>,
+    <code>package_hint</code>, <code>log_needles</code>). <strong>Thêm hãng mới = thêm một
+    <code>BackendSpec</code>, không đụng <code>master/</code>.</strong></p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Backend</th><th class="m">interface=</th><th>Nền tảng</th><th>Ghi chú</th></tr></thead>
+    <tbody>
+      <tr><td>virtual</td><td class="m">virtual</td><td>mọi nơi</td><td>không cần driver — dùng cho test/dev</td></tr>
+      <tr><td>PEAK PCAN-USB</td><td class="m">pcan</td><td>Win / Linux</td><td rowspan="4">build trên <code>PyCanTransport</code> dùng chung, chỉ khai <code>SPEC</code></td></tr>
+      <tr><td>Vector VN16xx</td><td class="m">vector</td><td>Windows only</td></tr>
+      <tr><td>ETAS ES58x/ES5xx</td><td class="m">etas</td><td>Windows only</td></tr>
+      <tr><td>CANable / slcan</td><td class="m">slcan</td><td>Win / Linux</td></tr>
+      <tr><td>Phát lại trace</td><td class="m">replay</td><td>mọi nơi</td><td><code>ReplayTransport</code> riêng — xem dưới</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p><code>etas</code>/<code>vector</code> giới hạn <code>platforms=("win32",)</code> vì driver chỉ có
+    bản Windows.</p>
+
+  <div class="note pick">
+    <span class="label"><code>replay.py</code> là ngoại lệ</span>
+    <p>Tự hiện thực <code>Transport</code> riêng (<code>ReplayTransport</code>), KHÔNG qua
+      <code>python-can</code>/<code>PyCanTransport</code>, vì nó phát lại file trace text
+      (<code>&lt;t_mono&gt; &lt;tx|rx&gt; &lt;can_id_hex&gt; &lt;byte hex&gt;</code>) chứ không nói
+      chuyện với bus thật. Chỉ frame <code>rx</code> trong file được phát lại. Thêm backend không qua
+      python-can (vd. TCP cho XCP-on-Ethernet sau này) → viết <code>Transport</code> riêng theo mẫu này,
+      không theo mẫu <code>pcan.py</code>.</p>
+  </div>
+
+  <h3>5.2 <code>list_devices()</code> — không bao giờ ném, không để lọt rác</h3>
+  <p><code>can.detect_available_configs()</code> phun hàng chục dòng cảnh báo ra stderr cho backend
+    chưa cài driver. <code>transport/quiet.py</code> gắn <code>logging.Handler</code> riêng vào logger
+    <code>"can"</code>, cắt <code>propagate</code>, cộng <code>redirect_stderr</code> — không dòng nào
+    lọt ra ngoài khối <code>with</code>.</p>
+
+  <div class="note danger">
+    <span class="label">Bug đã gặp và đã sửa</span>
+    <p>Lấy bừa dòng cảnh báo đầu tiên khớp tên backend làm <code>hint</code> là sai — logger
+      <code>can</code> còn phun cả lời khuyên vô hại (vd. PEAK báo <code>"uptime library not available,
+      timestamps are relative to boot time"</code>, không liên quan tới thiếu driver).
+      <code>BLOCKING_PHRASES</code> trong <code>quiet.py</code> là danh sách từ vựng xác định đúng loại
+      cảnh báo "backend thực sự không dùng được" trước khi lấy làm <code>hint</code>.</p>
+  </div>
+
+  <h3>5.3 <code>config.py</code> — persistence CAN ID/bitrate</h3>
+  <p><code>~/.xcptool/config.toml</code> (hoặc <code>$XCPTOOL_HOME/config.toml</code> — override cho
+    test). Đọc bằng <code>tomllib</code> (stdlib), ghi bằng hàm tự viết ~15 dòng. File hỏng/thiếu → trả
+    về <code>DEFAULT_BUS_CONFIG</code>, không ném.</p>
+
+  <div class="note danger">
+    <span class="label">Phát hiện &amp; đã sửa: hai cơ chế "nhớ lựa chọn" độc lập, không đồng bộ</span>
+    <p>Từng có hai file không tham chiếu tới nhau: <code>transport/config.py</code> ghi
+      <code>~/.xcptool/config.toml</code> sau CONNECT thành công nhưng không ai đọc lại
+      (<code>load_bus_config()</code> tồn tại, không có lời gọi nào); song song đó
+      <code>ui/device_dialog.py</code> tự làm riêng <code>~/.xcptool/ui-last-device.json</code> —
+      đọc/ghi ngay trong <code>ui/</code>, phá tinh thần ranh giới "chỉ nói chuyện qua
+      <code>session.api</code>".</p>
+    <p style="margin-top:12px;"><b>Đã sửa:</b> thêm <code>Session.load_config() -&gt; BusConfig</code>
+      (không chặn) vào contract. <code>RealSession</code> hiện thực bằng
+      <code>cfg_store.load_bus_config()</code> — đúng file <code>config.toml</code> đã có sẵn, chỉ là
+      chưa từng được gọi. <code>FakeSession.load_config()</code> trả về cấu hình của lần
+      <code>connect()</code> gần nhất trong tiến trình. <code>ui-last-device.json</code> và
+      <code>load_last_choice</code>/<code>save_last_choice</code> bị bỏ hẳn;
+      <code>DeviceDialog</code> nhận tham số <code>initial: BusConfig | None</code>,
+      <code>MainWindow.open_device_dialog()</code> truyền
+      <code>initial=self.session.load_config()</code>. Đối chiếu chữ ký lại vẫn khớp 100%, J1 chạy lại
+      vẫn xanh 10/10 bước.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">06 — Hai hiện thực</span><code>Session</code>: Real vs Fake</h2>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th></th><th><code>RealSession</code></th><th><code>FakeSession</code></th></tr></thead>
+    <tbody>
+      <tr><td>Chủ</td><td>backend</td><td>frontend</td></tr>
+      <tr><td>Bus thật?</td><td>Có — python-can qua transport/</td><td>Không — Python thuần, mô phỏng trong bộ nhớ</td></tr>
+      <tr><td>Dùng để</td><td>Chạy thật với ECU</td><td>GUI/CLI phát triển &amp; test không cần phần cứng</td></tr>
+      <tr><td>Ngoại lệ ngoài dự kiến</td><td>decorator <code>_guarded()</code> — bắt, log, ném lại thành <code>XcpToolError</code></td><td><code>FakeBehavior</code> tự cấu hình</td></tr>
+      <tr><td>Mô phỏng hành vi tồi</td><td><code>FakeSlave</code> (devtools, node CAN thật trên virtual bus)</td><td><code>FakeBehavior</code> — delay, lỗi, rút dây, response méo, flood</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>6.1 Đối chiếu chữ ký — đã xác nhận khớp 100%</h3>
+  <p><code>inspect.signature()</code> so từng property/method của <code>Session</code> (Protocol) với
+    cả hai hiện thực — không lệch chỗ nào. <code>isinstance(RealSession(), Session)</code> và tương tự
+    đều <code>True</code> (<code>@runtime_checkable</code>).</p>
+
+  <div class="note pick">
+    <span class="label">J1 — bằng chứng tích hợp mạnh nhất hiện có</span>
+    <p><code>tests/ui/j1_smoke.py</code>: dựng <code>MainWindow</code> thật trên <code>RealSession</code>
+      thật, nói chuyện với <code>FakeSlave</code> qua <code>virtual</code> bus, chạy kịch bản selftest —
+      10/10 bước xanh, kết quả <strong>giống hệt</strong> khi chạy với <code>FakeSession</code>. Chạy tay:
+      <code>QT_QPA_PLATFORM=offscreen python tests/ui/j1_smoke.py</code></p>
+  </div>
+
+  <h3>6.2 <code>devtools/fakeslave.py</code> — KHÁC <code>session/fake.py</code>, đừng nhầm</h3>
+  <p><code>FakeSlave</code> là một <strong>node XCP thật</strong> trên <code>virtual</code> bus (dùng
+    <code>can.Bus</code> thật) — đường code của <code>transport/</code> và <code>master/</code> đi qua y
+    hệt lúc cắm phần cứng. <code>FakeSession</code> thì không có bus nào. <code>FakeSlave</code> là ECU
+    giả cho test backend + J1; <code>FakeSession</code> là Session giả cho phát triển frontend.</p>
+
+  <p>Mọi đặc tính của <code>FakeSlave</code> là tham số của <code>SlaveConfig</code> (đổi
+    <code>max_cto=12</code> thì <code>SlaveCaps.max_cto</code> đọc được phải đổi theo) — chứng minh
+    master không hardcode đặc tính ECU. <code>FakeSlave.commands_seen</code> là
+    <code>deque(maxlen=10_000)</code>, không phải list vô hạn — tránh hiện ra thành "rò bộ nhớ" giả
+    trong báo cáo soak.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">07 — UI layer</span><code>ui/</code></h2>
+
+  <h3>7.1 Stack: PySide6-Fluent-Widgets</h3>
+  <p>Widget Fluent (<code>NavigationInterface</code>, <code>TableWidget</code>, <code>MessageBox</code>,
+    <code>InfoBar</code>…) từ <code>qfluentwidgets</code> thay QWidget trần cho phần lớn giao diện.
+    <code>QMenuBar</code>/<code>QStatusBar</code> là widget Qt chuẩn nên phủ QSS thủ công riêng
+    (<code>theme.py</code>). Theme tối dùng <code>setTheme(Theme.DARK)</code> có sẵn, KHÔNG dùng
+    <code>pyqtdarktheme</code> (đã ngừng maintain).</p>
+
+  <div class="note warn">
+    <span class="label">License: dual GPLv3 / thương mại</span>
+    <p>Xác nhận điều khoản trước khi đóng gói bản phân phối ra ngoài — xem <code>pyproject.toml</code>
+      và <code>DESIGN.md</code> QĐ5.</p>
+  </div>
+
+  <h3>7.2 <code>MainWindow</code> — điều phối duy nhất giữa UI và <code>Session</code></h3>
+  <p>Ba luật contract được cưỡng chế tại đúng một chỗ, không rải rác khắp UI:</p>
+  <ol>
+    <li>Mọi lời gọi chặn đi qua <code>self.runner</code> (<code>TaskRunner</code>, <code>workers.py</code>)
+      rồi quay về UI thread bằng Qt signal. Không widget nào tự gọi <code>session.*</code> trực tiếp.</li>
+    <li><code>drain_trace()</code> chỉ gọi ở đúng một nơi — <code>_poll_trace()</code>, theo
+      <code>QTimer</code> 40 ms. Hai nơi cùng <code>drain()</code> sẽ ăn mất frame của nhau (ring buffer
+      pop-once).</li>
+    <li><code>closeEvent()</code> luôn gọi <code>session.close()</code>, kể cả khi đang bận hay đang lỗi.</li>
+  </ol>
+  <p><code>TaskRunner</code> dùng <code>QThreadPool</code> + <code>QRunnable</code>;
+    <code>Task.cancel()</code> KHÔNG cắt ngang lời gọi đang chạy — chỉ đánh dấu bỏ qua kết quả, "huỷ"
+    thực chất là gọi <code>session.close()</code> đóng cả phiên.</p>
+
+  <h3>7.3 Các panel chính</h3>
+  <ul>
+    <li><b><code>TraceView</code></b> — <code>TraceModel</code> là <code>QAbstractTableModel</code>
+      dùng <code>beginInsertRows</code>/<code>beginRemoveRows</code> theo LÔ, không theo từng dòng —
+      quan trọng khi flood hàng nghìn frame/giây. Lọc theo <code>kind</code>, tạm dừng, xuất CSV.</li>
+    <li><b><code>ConsoleView</code></b> — gõ hex → <code>raw_command()</code>. Lịch sử lệnh bằng phím
+      mũi tên. Checkbox <code>raise_on_error</code> điều khiển tham số cùng tên.</li>
+    <li><b><code>MemoryView</code></b> — hex dump sửa trực tiếp (double-click ô), ghi TRỌN KHỐI.
+      <code>WORKING_PAGE = 0</code> là QUY ƯỚC của slave tham chiếu (XcpBasic), không phải chuẩn XCP.</li>
+    <li><b><code>DeviceDialog</code></b> — xem §5.3 về persistence riêng.</li>
+  </ul>
+
+  <div class="note pick">
+    <span class="label">Điểm UX quan trọng nhất — WriteProtectedError</span>
+    <p><code>MainWindow._on_write_protected()</code> đưa thẳng hộp thoại kèm nút "Chuyển sang trang 0
+      và ghi lại". Chấp nhận → <code>set_page(XCP, WORKING_PAGE)</code> → ghi lại NGAY bằng
+      <code>QTimer.singleShot(0, retry_write)</code>, KHÔNG chen một lượt đọc trang vào giữa (Session
+      không reentrant — sẽ đụng <code>BusyError</code>).</p>
+  </div>
+
+  <h3>7.5 Excepthook &amp; thoát an toàn</h3>
+  <p><code>ui/app.py</code> sở hữu <code>sys.excepthook</code>/<code>threading.excepthook</code> toàn
+    cục — bắt mọi ngoại lệ chưa bắt trên bất kỳ thread nào, log kèm traceback, hiện hộp thoại xin lỗi +
+    đường dẫn log (KHÔNG traceback thô). <code>faulthandler.enable()</code> bắt cả crash Python không
+    kịp dựng traceback. <code>main()</code> gọi <code>session.close()</code> trong <code>finally</code>.</p>
+
+  <h3>7.6 <code>selftest.py</code> — không thay pytest</h3>
+  <p><code>--selftest</code> chạy 15 bước tuần tự trên MỘT event loop Qt THẬT (không mock) — list
+    devices → connect → raw command → đọc/ghi bộ nhớ → trang calibration → disconnect → close. Dùng
+    chung được cho cả <code>--session fake</code> và <code>--session real</code> — đây chính là cơ chế
+    J1.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">08 — CLI</span><code>cli/</code> — người tiêu thụ thứ hai của contract</h2>
+
+  <p class="lede">Chạy đồng bộ trên main thread — không có luật worker thread (đó là luật của Qt).
+    <code>close()</code> vẫn phải gọi trên mọi đường thoát (<code>finally</code>), kể cả khi ném
+    <code>XcpToolError</code> hay <code>KeyboardInterrupt</code>.</p>
+
+  <p><b>Vì sao CLI thuộc frontend, không thuộc backend:</b> nó là người tiêu thụ thứ hai của cùng
+    contract. Hai người tiêu thụ độc lập lộ ngay chỗ contract thiết kế tệ.</p>
+
+  <p>Lệnh con: <code>devices</code>, <code>connect</code>, <code>read</code>, <code>write</code>,
+    <code>pages</code>, <code>set-page</code>, <code>raw</code>, <code>trace</code>. Mặc định
+    <code>--session real</code> (giống GUI — cả hai đều yêu cầu tự chọn <code>fake</code> khi muốn chạy
+    không cần bus).</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">09 — Chiến lược test</span></h2>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Loại</th><th>Ở đâu</th><th>Ý nghĩa</th></tr></thead>
+    <tbody>
+      <tr><td>Ranh giới kiến trúc</td><td class="m">tests/test_boundaries.py</td><td>Quét AST, không import module thật — chạy được cả khi thiếu dependency.</td></tr>
+      <tr><td>Unit</td><td class="m">tests/unit/ <span class="tag owner">backend</span></td><td>master/, transport/config.py — logic thuần, không cần bus.</td></tr>
+      <tr><td>Integration</td><td class="m">tests/integration/ <span class="tag owner">backend</span></td><td>Qua virtual bus + FakeSlave thật — CONNECT/read/write/robustness thật sự đi qua transport.</td></tr>
+      <tr><td>UI</td><td class="m">tests/ui/ <span class="tag owner">frontend</span></td><td>pytest-qt, QT_QPA_PLATFORM=offscreen — chạy được trong CI không cần màn hình.</td></tr>
+      <tr><td>J1 smoke</td><td class="m">tests/ui/j1_smoke.py</td><td>KHÔNG chạy bằng pytest — script tay, lead điều phối. Xem §6.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note warn">
+    <span class="label">Mọi thư mục test cần <code>__init__.py</code></span>
+    <p>Bắt buộc — nếu không pytest sẽ coi hai file trùng tên ở hai thư mục khác nhau (vd.
+      <code>tests/unit/test_trace.py</code> và <code>tests/ui/test_trace.py</code>) là cùng một module
+      và báo lỗi collect ("import file mismatch"). Đã gặp lỗi này thật khi hai agent cùng đặt tên file
+      trùng nhau.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">10 — Bản đồ file</span></h2>
+
+<pre><code class="tree">xcptool/
+├── ARCHITECTURE.md              tài liệu này
+├── USER_MANUAL.md                hướng dẫn dùng cho end-user
+├── DESIGN.md, DEV_PLAN.md        tài liệu lên kế hoạch (có chỗ lỗi thời)
+├── pyproject.toml                dependency + entry point `xcptool`
+├── tests/
+│   ├── test_boundaries.py        <span class="own">[lead]</span> ranh giới kiến trúc
+│   ├── conftest.py                fixture dùng chung
+│   ├── unit/                     <span class="own">[backend]</span> master/, transport/config.py
+│   ├── integration/               <span class="own">[backend]</span> qua virtual bus + FakeSlave
+│   └── ui/                       <span class="own">[frontend]</span> pytest-qt, offscreen; j1_smoke.py
+└── src/xcptool/
+    ├── session/
+    │   ├── api.py                 <span class="own">[lead]</span> CONTRACT — Protocol, dataclass, exception
+    │   ├── real.py                <span class="own">[backend]</span> RealSession — bus CAN thật
+    │   └── fake.py                <span class="own">[frontend]</span> FakeSession — mô phỏng thuần Python
+    ├── master/                    <span class="own">[backend]</span> protocol core, KHÔNG import can/PySide6
+    │   ├── core.py                 XcpMaster — connect/read/write/page/raw_command
+    │   ├── codec.py                 classify(), describe_tx/rx(), pack_u32()
+    │   ├── constants.py            Cmd/Pid/ErrCode enum, TIMESTAMP_UNIT_NS
+    │   ├── errors.py               ERR_TABLE — mã CRC_* → exception class
+    │   └── trace.py                TraceBuffer — ring buffer có trần
+    ├── transport/                 <span class="own">[backend]</span> mọi thứ biết CAN là gì
+    │   ├── base.py                  Transport ABC, CanFrame, BackendSpec
+    │   ├── registry.py             SPECS, list_devices(), open_transport()
+    │   ├── config.py               ~/.xcptool/config.toml
+    │   ├── quiet.py                bắt cảnh báo stderr của python-can
+    │   ├── pycan.py                 PyCanTransport — dùng chung cho mọi backend
+    │   └── virtual.py, pcan.py, vector.py, etas.py, slcan.py, replay.py
+    ├── devtools/                  <span class="own">[backend]</span> công cụ test, KHÔNG phải sản phẩm
+    │   ├── fakeslave.py            FakeSlave — node XCP thật trên virtual bus
+    │   └── soak.py                 chạy dài, bắt rò bộ nhớ/thread chết âm thầm
+    ├── ui/                        <span class="own">[frontend]</span> PySide6 + Fluent-Widgets
+    │   ├── app.py                   entry point, excepthook, --selftest
+    │   ├── main_window.py          điều phối UI ↔ Session (§7.2)
+    │   ├── device_dialog.py        dialog chọn thiết bị, tự điền từ `initial`
+    │   │                            (session.load_config()), không tự đọc file
+    │   ├── trace_view.py, console_view.py, memory_view.py
+    │   ├── workers.py              TaskRunner — worker thread → Qt signal
+    │   ├── theme.py                 Fluent dark/light + QSS cho menu/status bar
+    │   ├── errors.py                exception → (tiêu đề, nội dung) tiếng Việt
+    │   ├── logging_setup.py        log file + faulthandler + excepthook
+    │   ├── selftest.py             --selftest, dùng chung cho j1_smoke.py
+    │   └── session_factory.py      create_session("fake"|"real")
+    └── cli/                       <span class="own">[frontend]</span> người tiêu thụ thứ hai của contract
+        ├── main.py                  toàn bộ lệnh con
+        └── defaults.py             DEFAULT_BUS — lấy từ BusConfig, không lặp lại</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">11 — Giới hạn hiện tại</span>Việc dang dở, chưa sửa có chủ đích</h2>
+
+  <p class="lede">Không phải bug — quyết định có chủ đích, ghi lại để không ai "phát hiện lại":</p>
+  <ul>
+    <li><code>protocol_version</code>/<code>transport_version</code> là <code>(major, 0)</code> — §4.3.</li>
+    <li>Side-effect <code>connect()</code> tự lưu <code>config.toml</code> không nằm trong contract — §5.3
+      (đỡ hại hơn từ khi có <code>Session.load_config()</code> đọc lại đúng qua contract).</li>
+    <li><s>Hai cơ chế "nhớ lựa chọn thiết bị" độc lập, không đồng bộ</s> — <b>đã sửa</b>, hợp nhất về
+      <code>Session.load_config()</code>, bỏ <code>ui-last-device.json</code>. Xem §5.3.</li>
+    <li><code>WORKING_PAGE = 0</code> trong <code>memory_view.py</code> là quy ước của slave tham chiếu,
+      không phải chuẩn XCP.</li>
+  </ul>
+
+  <h3>Hoãn có chủ đích tới mốc sau</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Hoãn tới</th><th>Nội dung</th></tr></thead>
+    <tbody>
+      <tr><td>M3</td><td>A2L parser — làm việc theo tên thay vì địa chỉ, cây signal, bảng calibration.</td></tr>
+      <tr><td>M4</td><td>DAQ engine, scope pyqtgraph. <code>DaqCaps</code> đã khai sẵn trong contract. Nhớ ngân sách 3 byte của ODT đầu tiên khi bật timestamp — bug packing tham chiếu trong <code>DESIGN.md</code> §4.3 đã biết, phải sửa cùng lúc viết test.</td></tr>
+      <tr><td>M5</td><td>MDF4 (asammdf), xuất/nhập bộ tham số, XCP-on-Ethernet, đóng gói .exe.</td></tr>
+      <tr><td>Giai đoạn sau</td><td>Kiểm tra trên board thật; <code>driver/port/pc_sim/</code> nếu vẫn muốn.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">12 — Hướng dẫn mở rộng</span>Cho dev hoặc agent tiếp theo</h2>
+
+  <h4>Thêm backend CAN mới</h4>
+  <div class="phase"><div class="pnum">1</div><div><p>Tạo <code>transport/&lt;hãng&gt;.py</code>, viết <code>open_&lt;hãng&gt;(cfg) -> Transport</code> — thường chỉ gọi <code>open_pycan_bus(interface, cfg, package_hint, **extra)</code>.</p></div></div>
+  <div class="phase"><div class="pnum">2</div><div><p>Khai <code>SPEC = BackendSpec(name=..., can_interface=..., label=..., package_hint=..., open=open_&lt;hãng&gt;, log_needles=(...))</code>.</p></div></div>
+  <div class="phase"><div class="pnum">3</div><div><p>Thêm vào import và <code>SPECS</code> trong <code>registry.py</code>.</p></div></div>
+  <div class="phase"><div class="pnum">4</div><div><p>KHÔNG đụng <code>master/</code> — protocol core không biết backend nào đang chạy.</p></div></div>
+
+  <h4 style="margin-top:36px;">Thêm lệnh XCP mới vào <code>master/</code></h4>
+  <div class="phase"><div class="pnum">1</div><div><p>Thêm mã lệnh vào <code>constants.Cmd</code> nếu chưa có.</p></div></div>
+  <div class="phase"><div class="pnum">2</div><div><p>Viết phương thức trên <code>XcpMaster</code> dùng <code>self._locked_transact(...)</code> — không tự ý bỏ qua khoá <code>_cmd_lock</code>.</p></div></div>
+  <div class="phase"><div class="pnum">3</div><div><p>Nếu lệnh trả dữ liệu có ý nghĩa cho UI, thêm vào <code>session/api.py</code> TRƯỚC — không thêm phương thức "ngầm" chỉ có ở <code>RealSession</code>. Agent: nhắn lead, đợi duyệt.</p></div></div>
+  <div class="phase"><div class="pnum">4</div><div><p>Cập nhật cả <code>RealSession</code> VÀ <code>FakeSession</code> cùng lúc — dùng script đối chiếu ở §6.1 tự kiểm tra trước khi báo xong.</p></div></div>
+
+  <h4 style="margin-top:36px;">Thêm panel UI mới</h4>
+  <div class="phase"><div class="pnum">1</div><div><p>Widget mới nhận callback do <code>MainWindow</code> cấp (mẫu <code>MemoryView</code>: nhận <code>read_cb</code>, <code>write_cb</code>… — không tự gọi <code>session.*</code>).</p></div></div>
+  <div class="phase"><div class="pnum">2</div><div><p><code>MainWindow</code> là nơi DUY NHẤT gọi <code>self._call(...)</code> qua worker thread — panel mới không tự tạo <code>TaskRunner</code> riêng.</p></div></div>
+  <div class="phase"><div class="pnum">3</div><div><p>Cần dữ liệu trace → nhận qua <code>MainWindow._poll_trace()</code> phân phát, KHÔNG tự gọi <code>drain_trace()</code>.</p></div></div>
+  <div class="phase"><div class="pnum">4</div><div><p>Thêm vào <code>nav.addItem(...)</code> trong <code>_build_navigation()</code> và <code>view_menu</code> trong <code>_build_menus()</code>.</p></div></div>
+
+  <h3 style="margin-top:44px;">Quy tắc không được phá vỡ — test sẽ đỏ nếu phá</h3>
+  <div class="traps">
+    <div class="trap">
+      <div class="t">Import chéo tầng</div>
+      <div class="d">Không import <code>can</code>/<code>PySide6</code> chéo tầng — xem bảng ranh giới ở §2.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Hardcode đặc tính ECU</div>
+      <div class="d">Không hardcode <code>0x7E0</code>/<code>0x7E1</code> hay bất kỳ đặc tính ECU cụ thể nào ngoài ba file được phép.</div>
+    </div>
+    <div class="trap">
+      <div class="t">Sửa contract một mình</div>
+      <div class="d"><code>session/api.py</code> chỉ lead sửa. Cần đổi contract → nhắn lead, không tự sửa rồi báo sau.</div>
+    </div>
+    <div class="trap">
+      <div class="t"><code>close()</code> không idempotent</div>
+      <div class="d">Mọi tầng (<code>Session</code>, <code>XcpMaster</code>, <code>Transport</code>) phải idempotent và không bao giờ ném — vi phạm làm app treo lúc thoát, khó tái hiện.</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Nguồn — src/xcptool/ toàn bộ · tests/test_boundaries.py · DEV_PLAN.md · B0→B4 + F0→F5 + J1, 2026-08-16
+</footer>
+
+</div>

@@ -1,2 +1,9 @@
 .claude/settings.local.json
 .claude/memory/
+
+# xcptool (Python)
+.venv/
+.venv-linux/
+__pycache__/
+*.egg-info/
+.pytest_cache/
