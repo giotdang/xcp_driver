@@ -22,6 +22,9 @@ QMenu::item:selected { background: #3a3a3a; }
 QMenu::separator { height: 1px; background: #3a3a3a; margin: 4px 8px; }
 QStatusBar { background: #1a1a1a; color: #c8c8c8; }
 QStatusBar::item { border: none; }
+QDockWidget { border: 1px solid #3a3a3a; }
+QMainWindow::separator { background: #3a3a3a; width: 5px; height: 5px; }
+QMainWindow::separator:hover { background: #6b6b6b; }
 """
 
 CHROME_QSS_LIGHT = """
@@ -34,6 +37,9 @@ QMenu::item { padding: 6px 24px; border-radius: 4px; }
 QMenu::item:selected { background: #ececec; }
 QStatusBar { background: #e9e9e9; color: #303030; }
 QStatusBar::item { border: none; }
+QDockWidget { border: 1px solid #d8d8d8; }
+QMainWindow::separator { background: #d8d8d8; width: 5px; height: 5px; }
+QMainWindow::separator:hover { background: #a8a8a8; }
 """
 
 

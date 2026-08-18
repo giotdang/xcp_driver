@@ -308,6 +308,400 @@ ASAP2_VERSION 1 71
       /end IF_DATA
     /end MEASUREMENT
 
+    /* ================================================================
+     * RECORD_LAYOUT blocks — one per scalar datatype used in calRAM.
+     * FNC_VALUES <position> <datatype> <index_mode> <addr_type>
+     * ================================================================ */
+
+    /begin RECORD_LAYOUT rl_float32
+      FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+
+    /begin RECORD_LAYOUT rl_uint32
+      FNC_VALUES 1 ULONG ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+
+    /begin RECORD_LAYOUT rl_uint16
+      FNC_VALUES 1 UWORD ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+
+    /begin RECORD_LAYOUT rl_uint8
+      FNC_VALUES 1 UBYTE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+
+    /begin RECORD_LAYOUT rl_sint16
+      FNC_VALUES 1 SWORD ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+
+    /begin RECORD_LAYOUT rl_sint8
+      FNC_VALUES 1 SBYTE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+
+    /* ================================================================
+     * CHARACTERISTIC blocks — CalData_t scalars, arrays, struct members.
+     * Base address placeholder: 0x80100000 (calRAM start).
+     * Run tools/sync_a2l_addresses.py after build to fill real addresses.
+     * ================================================================ */
+
+    /* --- Scalars (VALUE) ------------------------------------------- */
+
+    /begin CHARACTERISTIC systemGain
+      "System gain factor"
+      VALUE
+      0x80100000
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      10.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC idleSpeedRpm
+      "Idle engine speed setpoint"
+      VALUE
+      0x80100004
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      500.0
+      3000.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC voltageThreshold
+      "Battery voltage low threshold"
+      VALUE
+      0x80100008
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      8.0
+      16.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC timeoutMs
+      "General timeout in milliseconds"
+      VALUE
+      0x8010000C
+      rl_uint32
+      0
+      NO_COMPU_METHOD
+      100
+      60000
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC adcScaleFactor
+      "ADC raw-to-value scale factor"
+      VALUE
+      0x80100010
+      rl_uint16
+      0
+      NO_COMPU_METHOD
+      0
+      4095
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC ctrlMode
+      "Control mode selector (0=off 1=open 2=closed 3=auto)"
+      VALUE
+      0x80100012
+      rl_uint8
+      0
+      NO_COMPU_METHOD
+      0
+      3
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC tempOffsetDegC
+      "Temperature sensor offset in degrees Celsius"
+      VALUE
+      0x80100014
+      rl_sint16
+      0
+      NO_COMPU_METHOD
+      -50
+      50
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC trimValue
+      "Trim adjustment (signed byte)"
+      VALUE
+      0x80100016
+      rl_sint8
+      0
+      NO_COMPU_METHOD
+      -100
+      100
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC featureEnabled
+      "Feature enable flag (0=disabled 1=enabled)"
+      VALUE
+      0x80100017
+      rl_uint8
+      0
+      NO_COMPU_METHOD
+      0
+      1
+    /end CHARACTERISTIC
+
+    /* --- Arrays (VAL_BLK) ------------------------------------------ */
+
+    /begin CHARACTERISTIC torqueMap
+      "Torque lookup table (8 entries)"
+      VAL_BLK
+      0x80100018
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      100.0
+      NUMBER 8
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC adcCalPoints
+      "ADC calibration points (4 entries)"
+      VAL_BLK
+      0x80100038
+      rl_uint16
+      0
+      NO_COMPU_METHOD
+      0
+      4095
+      NUMBER 4
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC gainSchedule
+      "Gain schedule table (4 entries)"
+      VAL_BLK
+      0x80100040
+      rl_uint8
+      0
+      NO_COMPU_METHOD
+      0
+      100
+      NUMBER 4
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC tempCompTable
+      "Temperature compensation table (6 entries)"
+      VAL_BLK
+      0x80100044
+      rl_sint16
+      0
+      NO_COMPU_METHOD
+      -100
+      100
+      NUMBER 6
+    /end CHARACTERISTIC
+
+    /* --- Struct members: speedPid -----------------------------------  */
+
+    /begin CHARACTERISTIC speedPid_kp
+      "Speed PID proportional gain"
+      VALUE
+      0x80100050
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      10.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC speedPid_ki
+      "Speed PID integral gain"
+      VALUE
+      0x80100054
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      5.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC speedPid_kd
+      "Speed PID derivative gain"
+      VALUE
+      0x80100058
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      1.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC speedPid_outMin
+      "Speed PID minimum output clamp"
+      VALUE
+      0x8010005C
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      -200.0
+      0.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC speedPid_outMax
+      "Speed PID maximum output clamp"
+      VALUE
+      0x80100060
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      200.0
+    /end CHARACTERISTIC
+
+    /* --- Struct members: currentPid ---------------------------------- */
+
+    /begin CHARACTERISTIC currentPid_kp
+      "Current PID proportional gain"
+      VALUE
+      0x80100064
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      10.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC currentPid_ki
+      "Current PID integral gain"
+      VALUE
+      0x80100068
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      5.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC currentPid_kd
+      "Current PID derivative gain"
+      VALUE
+      0x8010006C
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      1.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC currentPid_outMin
+      "Current PID minimum output clamp"
+      VALUE
+      0x80100070
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      -100.0
+      0.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC currentPid_outMax
+      "Current PID maximum output clamp"
+      VALUE
+      0x80100074
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.0
+      100.0
+    /end CHARACTERISTIC
+
+    /* --- Struct members: sensorFilter -------------------------------- */
+
+    /begin CHARACTERISTIC sensorFilter_cutoffHz
+      "Sensor low-pass filter cutoff frequency"
+      VALUE
+      0x80100078
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      1.0
+      1000.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC sensorFilter_enabled
+      "Sensor filter enable flag"
+      VALUE
+      0x8010007C
+      rl_uint8
+      0
+      NO_COMPU_METHOD
+      0
+      1
+    /end CHARACTERISTIC
+
+    /* --- Struct members: outputRamp ---------------------------------- */
+
+    /begin CHARACTERISTIC outputRamp_rateUp
+      "Output ramp-up rate"
+      VALUE
+      0x80100080
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.1
+      1000.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC outputRamp_rateDown
+      "Output ramp-down rate"
+      VALUE
+      0x80100084
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      0.1
+      1000.0
+    /end CHARACTERISTIC
+
+    /* --- Struct members: pressureSensor ------------------------------ */
+
+    /begin CHARACTERISTIC pressureSensor_rawLow
+      "Pressure sensor raw ADC lower calibration point"
+      VALUE
+      0x80100088
+      rl_uint16
+      0
+      NO_COMPU_METHOD
+      0
+      4095
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC pressureSensor_rawHigh
+      "Pressure sensor raw ADC upper calibration point"
+      VALUE
+      0x8010008A
+      rl_uint16
+      0
+      NO_COMPU_METHOD
+      0
+      4095
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC pressureSensor_refLow
+      "Pressure sensor engineering-unit lower reference"
+      VALUE
+      0x8010008C
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      -100.0
+      100.0
+    /end CHARACTERISTIC
+
+    /begin CHARACTERISTIC pressureSensor_refHigh
+      "Pressure sensor engineering-unit upper reference"
+      VALUE
+      0x80100090
+      rl_float32
+      0
+      NO_COMPU_METHOD
+      -100.0
+      100.0
+    /end CHARACTERISTIC
+
   /end MODULE
 
 /end PROJECT

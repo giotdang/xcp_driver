@@ -126,6 +126,11 @@ def test_nut_lenh_nhanh_dien_vao_o_nhap(qtbot, window: MainWindow) -> None:
     from PySide6.QtCore import Qt
     from qfluentwidgets import PushButton
 
+    # console_view nằm trong dock; phải raise dock trước để button có thể nhận click
+    window.show()
+    window.switch_to(window.console_view)
+    qtbot.waitExposed(window.console_view)
+
     buttons = {b.text(): b for b in window.console_view.findChildren(PushButton)}
     qtbot.mouseClick(buttons["CONNECT"], Qt.LeftButton)
     assert window.console_view.input.text() == "FF 00"

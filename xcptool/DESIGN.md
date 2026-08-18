@@ -62,7 +62,7 @@ event 1 = "100 ms raster". → A2L parser nằm trên đường tới hạn, kh�
 Nguyên tắc: **protocol core không biết gì về GUI, và cũng không biết gì về CAN.**
 
 ```
-ui/  cli/    Scope, bảng calibration, cây signal, cửa sổ debug CAN
+ui/  cli/    Calibration panel, Measurement scope, dock widget debug
              CHỈ gọi session/ qua giao diện trong session/api.py.
              Không import master/, transport/ hay a2l/ — test ranh giới ép luật
    ▲ session/api.py — Session Protocol, dataclass, cây ngoại lệ
@@ -71,6 +71,7 @@ session/     Kết dính A2L với slave. "Đo engineRpm" → tra symbol →
    ▲ symbol table + measurement request
 a2l/         Parser + symbol database. MEASUREMENT, CHARACTERISTIC,
              COMPU_METHOD, RECORD_LAYOUT, IF_DATA XCP → dict tra theo tên
+             Hoàn toàn độc lập — không import session/, master/, transport/
    ▲ ────────────── (độc lập hoàn toàn) ──────────────
 master/      Protocol core. CONNECT/UPLOAD/DOWNLOAD, DAQ allocation,
              DTO decoder, timeout T1, retry qua SYNC.
@@ -258,27 +259,119 @@ Chậm và không có timestamp chuẩn, nhưng **tách bạch được lỗi đ
 
 ## 5. Calibration — mô hình hai trang trên phía PC
 
-Slave phân biệt *trang ECU đang đọc* và *trang XCP đang nhìn* — hai thứ độc lập.
-Địa chỉ A2L luôn trỏ ROM; `Xcp_GetPointer()` tự chuyển hướng sang RAM khi XCP ở working page.
+### Mô hình XCP spec vs. mô hình UI (chốt 2026-08-17)
 
-- **Ghi tham số** — về nguyên tắc `SHORT_DOWNLOAD(addr, size, data)` với địa chỉ ROM lấy thẳng từ A2L,
-  không tự tính lại địa chỉ RAM (đó là việc của slave). **Trên CAN thì không dùng được**: dung lượng
-  SHORT_DOWNLOAD = MAX_CTO − 8, mà CAN giới hạn khung 8 byte nên MAX_CTO clamp về 8 → dung lượng = 0.
-  xcptool luôn đi bằng `SET_MTA` + `DOWNLOAD` trên CAN *(xác nhận 2026-08-16 khi backend triển khai
-  `master/core.py`)*; SHORT_DOWNLOAD chỉ có ý nghĩa nếu sau này có transport khung lớn hơn (XCP-on-Ethernet, M5).
-- **Nhận `0xFE` + `CRC_WRITE_PROTECTED`** — không phải bug, mà là XCP đang trỏ reference page.
-  Thông báo đúng nguyên nhân đó, kèm nút chuyển về working page.
-- **So sánh working vs reference** — checksum đã tắt → chuyển XCP page qua lại, UPLOAD cả hai
-  vùng rồi diff trên PC. Đây là tính năng "so với giá trị gốc" mà kỹ sư hiệu chỉnh dùng liên tục.
-- **Xuất/nhập bộ tham số** — JSON hoặc DCM, để chia sẻ kết quả hiệu chỉnh giữa các lần chạy.
+XCP spec cho phép trang ECU và trang XCP độc lập nhau (`SET_CAL_PAGE` nhận `mode` byte với
+bit `ECU_ACCESS` và `XCP_ACCESS` riêng). Tuy nhiên trong workflow hiệu chỉnh thực tế,
+hai trang luôn đi cùng nhau — không kỹ sư nào set chúng lệch nhau có chủ đích.
 
-> **Chi tiết dễ bỏ sót:** với struct/mảng như `speedPid` hay `torqueMap[8]`, đọc/ghi **trọn khối**
-> bằng `SET_MTA` + `DOWNLOAD` liên tiếp, thay vì mỗi field một `SHORT_DOWNLOAD`. Ghi từng field
-> rời rạc → ECU chạy qua trạng thái nửa cũ nửa mới; với hệ số PID có thể làm vòng điều khiển giật một nhịp.
+**Quy ước xcptool:** UI chỉ phân biệt **Working Page (RAM)** và **Reference Page (ROM)**.
+Mọi hành động của user set cả ECU lẫn XCP về cùng một trang.
+
+```
+Spec (bên dưới)          UI (người dùng thấy)
+─────────────────         ──────────────────────────────
+ECU_ACCESS bit   ┐        Trang hiện tại: [Working (RAM)]
+XCP_ACCESS bit   ┘   →                hoặc [Reference (ROM)]
+                          Hành động: [→ Working] [→ Reference]
+                                     [Copy Ref → Working]
+```
+
+`master/core.py` vẫn hỗ trợ set page độc lập vì cần cho sequence trung gian
+(ví dụ: giữ ECU trên Reference trong khi COPY_CAL_PAGE đang chạy). Layer này
+không lộ ra UI.
+
+**Trường hợp trang không đồng bộ:** nếu `GET_CAL_PAGE` trả về ECU ≠ XCP (do tool
+ngoài set hoặc sequence bị gián đoạn giữa chừng), Calibration panel hiển thị cảnh
+báo *"⚠ Trang không đồng bộ (ECU: x, XCP: y)"* kèm nút **[Đồng bộ lại]** — set cả
+hai về trang của XCP, vì XCP là phía master đang kiểm soát.
+
+### Các điểm kỹ thuật khác
+
+- **Ghi tham số** — xcptool luôn đi bằng `SET_MTA` + `DOWNLOAD` trên CAN *(xác nhận
+  2026-08-16)*; `SHORT_DOWNLOAD` không dùng được vì MAX_CTO=8 trên CAN (dung lượng = 0).
+  Địa chỉ lấy thẳng từ A2L (ROM); slave tự remap sang RAM qua `Xcp_GetPointer()`.
+- **Nhận `CRC_WRITE_PROTECTED`** — XCP đang trỏ Reference page. Thông báo đúng nguyên
+  nhân, kèm nút **[Chuyển sang Working và ghi lại]**.
+- **Ghi trọn khối** — struct/mảng như `speedPid`, `torqueMap[8]` phải ghi trọn một lần
+  (`SET_MTA` + nhiều `DOWNLOAD` liên tiếp), không ghi từng field rời. Ghi rời → ECU qua
+  trạng thái nửa cũ nửa mới, vòng điều khiển giật.
+- **So sánh working vs reference** — checksum tắt → chuyển XCP page, UPLOAD cả hai
+  vùng, diff trên PC. Hoãn tới M5.
+- **Xuất/nhập bộ tham số** — JSON/DCM. Hoãn tới M5.
 
 ---
 
-## 6. Lộ trình 6 giai đoạn
+## 6. Bố cục giao diện — feature map *(chốt M3, 2026-08-17)*
+
+### Tổ chức cửa sổ
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Navigation  │  Panel chính                                       │
+│  sidebar     │                                                    │
+│              │  [Calibration]  ← panel mặc định sau khi load A2L │
+│  Calibration │      hoặc                                         │
+│  Measurement │  [Measurement]  ← M4, scope pyqtgraph             │
+│  (M4)        │                                                    │
+│              ├────────────────────────────────────────────────────│
+│              │  [Trace CAN] [Lệnh thô]  [Memory/Debug]  [▲ Thu]  │
+│              │  ... dock widget — collapsible, có thể float ...  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Phân loại feature
+
+| Feature | Panel | Vai trò | Milestone |
+|---|---|---|---|
+| Chọn thiết bị CAN, CONNECT/DISCONNECT | toolbar / status bar | Luôn hiển thị | M1 ✅ |
+| Nạp file A2L | menu File | Bật Calibration panel | M3 |
+| **Calibration** — duyệt CHARACTERISTIC theo tên, đọc/ghi giá trị có scaling, quản lý trang | Panel chính | **Tính năng chính** | M3 |
+| **Measurement** — chọn MEASUREMENT signal, scope thời gian thực | Panel chính | **Tính năng chính** | M4 |
+| **Trace CAN** — bảng frame thô, lọc, xuất | Dock widget đáy | Debug / giám sát | M1 ✅ → M3 di chuyển |
+| **Lệnh thô** — gõ hex, thấy response | Dock widget đáy | Debug | M1 ✅ → M3 di chuyển |
+| **Memory/Debug** — hex dump theo địa chỉ | Dock widget đáy | Debug nâng cao | M1 ✅ → M3 thu nhỏ |
+| Ghi log MDF4, xuất tham số | — | — | M5 |
+
+### QDockWidget — quyết định thiết kế
+
+- **Trace CAN** và **Lệnh thô** trở thành `QDockWidget`, mặc định dock vào đáy, tab chung một group.
+- **Memory/Debug** cũng là `QDockWidget`; mặc định ẩn, mở từ menu View.
+- User có thể: collapse/expand bằng nút, float thành cửa sổ riêng, tab cùng nhau, dock sang cạnh.
+- Qt serialize layout tự động → vị trí nhớ giữa các phiên (`QMainWindow::saveState/restoreState`).
+- Title bar của `QDockWidget` dùng QSS tùy chỉnh để khớp theme Fluent (màu nền, font, nút đóng).
+
+### Calibration panel — thiết kế chi tiết
+
+```
+┌─ Calibration ──────────────────────────────────────────────────┐
+│  A2L: xcp_daq_example.a2l  [Mở A2L...]   Trạng thái: Đã nạp  │
+├─────────────────────────────────────────────────────────────────│
+│  Tìm kiếm: [________________]                                   │
+│                                                                 │
+│  Tên               Giá trị     Đơn vị   Min    Max   Đã sửa   │
+│  ▶ Engine control                                               │
+│    systemGain      1.000       —        0.0    10.0            │
+│    throttleOffset  0.050       V        -1.0   1.0             │
+│  ▶ Speed PID                                                    │
+│    Kp              0.500       —        0.0    5.0             │
+│    Ki              0.100       —        0.0    2.0             │
+│    ...                                                          │
+├─────────────────────────────────────────────────────────────────│
+│  Trang hiện tại: Working (RAM)         [Đọc lại trạng thái]    │
+│  [→ Working]  [→ Reference]  [Copy Ref → Working]  [Ghi tất]  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- Double-click một hàng → edit inline, Enter để xác nhận, Esc để huỷ.
+- Hàng đã sửa nhưng chưa ghi xuống ECU tô màu khác (pending).
+- **"Ghi tất"** ghi toàn bộ hàng pending trong một lần (`SET_MTA` + nhiều `DOWNLOAD` liên tiếp).
+- **Chỉ báo trang** dùng mô hình đơn giản Working/Reference (xem §5). Nếu ECU ≠ XCP, hiện cảnh báo *"⚠ Trang không đồng bộ"* kèm nút Đồng bộ lại.
+- Phần quản lý trang giữ nguyên logic từ Memory panel cũ; Memory panel cũ thu về dock widget debug.
+
+---
+
+## 7. Lộ trình 6 giai đoạn
 
 Thứ tự sắp để **rủi ro lớn nhất bị đẩy lên sớm nhất**. GUI để cuối vì nó là phần duy nhất
 có thể xây trên nền đã chắc chắn.
@@ -294,7 +387,7 @@ có thể xây trên nền đã chắc chắn.
 
 ---
 
-## 7. Danh sách bẫy
+## 8. Danh sách bẫy
 
 | Bẫy | Cách tránh |
 |---|---|
@@ -309,7 +402,7 @@ có thể xây trên nền đã chắc chắn.
 
 ---
 
-## 8. Bắt đầu từ đâu
+## 9. Bắt đầu từ đâu
 
 **Lịch triển khai chi tiết đã chuyển sang [DEV_PLAN.md](DEV_PLAN.md)** — bản rút gọn 7 ngày,
 thay cho lộ trình 11,5 ngày ở §6 trên.

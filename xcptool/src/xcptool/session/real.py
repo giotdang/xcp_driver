@@ -10,8 +10,11 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, TypeVar
 
+from ..a2l import A2LDatabase
+from ..a2l import load as _a2l_load
 from ..master.core import XcpMaster
 from ..master.trace import DEFAULT_CAPACITY, TraceBuffer
 from ..transport import config as cfg_store
@@ -66,6 +69,7 @@ class RealSession:
         self._master: XcpMaster | None = None
         self._transport: Transport | None = None
         self._last_state = ConnState.DISCONNECTED
+        self._a2l_db: A2LDatabase = A2LDatabase()
 
     # ── không chặn, an toàn thread ───────────────────────────────────────────
 
@@ -88,6 +92,10 @@ class RealSession:
 
     def load_config(self) -> BusConfig:
         return cfg_store.load_bus_config()
+
+    @property
+    def symbols(self) -> A2LDatabase:
+        return self._a2l_db
 
     # ── vòng đời ─────────────────────────────────────────────────────────────
 
@@ -189,6 +197,12 @@ class RealSession:
         self, src_segment: int, src_page: int, dst_segment: int, dst_page: int
     ) -> None:
         self._require_master().copy_page(src_segment, src_page, dst_segment, dst_page)
+
+    # ── A2L ──────────────────────────────────────────────────────────────────
+
+    @_guarded("nạp A2L")
+    def load_a2l(self, path: str | Path) -> None:
+        self._a2l_db = _a2l_load(path)
 
     # ── lệnh thô ─────────────────────────────────────────────────────────────
 

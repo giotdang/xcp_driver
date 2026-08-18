@@ -208,7 +208,11 @@ class TraceView(QWidget):
         self.table.verticalHeader().hide()
         mono = QFont("Consolas")
         mono.setStyleHint(QFont.Monospace)
+        mono.setPointSize(9)
         self.table.setFont(mono)
+        # qfluentwidgets.TableBase khoá sẵn 38px/dòng (đủ cho control cảm ứng)
+        # — quá cao cho bảng log dày đặc muốn nhìn nhiều dòng cùng lúc.
+        self.table.verticalHeader().setDefaultSectionSize(22)
         header = self.table.horizontalHeader()
         for i, mode in enumerate((
             QHeaderView.ResizeToContents, QHeaderView.ResizeToContents,

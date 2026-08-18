@@ -105,12 +105,12 @@ class MemoryView(QWidget):
         self.size_spin = SpinBox(self)
         self.size_spin.setRange(1, 4096)
         self.size_spin.setValue(64)
-        self.size_spin.setFixedWidth(100)
+        self.size_spin.lineEdit().setMinimumWidth(50)
 
         self.ext_spin = SpinBox(self)
         self.ext_spin.setRange(0, 255)
         self.ext_spin.setValue(0)
-        self.ext_spin.setFixedWidth(80)
+        self.ext_spin.lineEdit().setMinimumWidth(40)
         self.ext_spin.setToolTip("Address extension — hầu hết ECU dùng 0")
 
         self.read_btn = PrimaryPushButton("Đọc", self)
@@ -160,7 +160,7 @@ class MemoryView(QWidget):
         # ── điều khiển trang ─────────────────────────────────────────────────
         self.segment_spin = SpinBox(self)
         self.segment_spin.setRange(0, 255)
-        self.segment_spin.setFixedWidth(80)
+        self.segment_spin.lineEdit().setMinimumWidth(40)
 
         self.ecu_page_label = StrongBodyLabel("—", self)
         self.xcp_page_label = StrongBodyLabel("—", self)
@@ -170,7 +170,7 @@ class MemoryView(QWidget):
 
         self.page_spin = SpinBox(self)
         self.page_spin.setRange(0, 255)
-        self.page_spin.setFixedWidth(80)
+        self.page_spin.lineEdit().setMinimumWidth(40)
 
         self.mode_combo = ComboBox(self)
         self.mode_combo.addItems(["Trang XCP (công cụ nhìn)", "Trang ECU (ECU chạy)"])
@@ -181,11 +181,11 @@ class MemoryView(QWidget):
         self.copy_src_spin = SpinBox(self)
         self.copy_src_spin.setRange(0, 255)
         self.copy_src_spin.setValue(1)
-        self.copy_src_spin.setFixedWidth(80)
+        self.copy_src_spin.lineEdit().setMinimumWidth(40)
         self.copy_dst_spin = SpinBox(self)
         self.copy_dst_spin.setRange(0, 255)
         self.copy_dst_spin.setValue(0)
-        self.copy_dst_spin.setFixedWidth(80)
+        self.copy_dst_spin.lineEdit().setMinimumWidth(40)
         self.copy_btn = PushButton("Copy trang", self)
         self.copy_btn.clicked.connect(self._on_copy_page)
 

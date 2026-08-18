@@ -280,10 +280,74 @@ Giữ lại từ bản trước, những cái vẫn đúng trong phạm vi M1/M2
 
 | Hoãn tới | Nội dung |
 |---|---|
-| M3 | A2L parser → làm việc theo tên, cây signal, bảng calibration |
+| M3 | **Đang triển khai** — xem §9 |
 | M4 | DAQ engine, scope pyqtgraph — **nhớ: ngân sách 3 byte của ODT 0, và bản `pack_odts` trong `DESIGN.md` §4.3 đang sinh ODT 0 rỗng, phải sửa cùng test** |
 | M5 | MDF4, xuất/nhập bộ tham số, XCP on Ethernet, đóng gói .exe |
+| Chưa xếp mốc | **Multi-window kiểu INCA** — mỗi loại object A2L (CHARACTERISTIC, MEASUREMENT, sau này CURVE/MAP) có cửa sổ con riêng, nổi/kéo-thả được, nhiều thực thể cùng loại mở song song, thay vì một cây phẳng duy nhất trong Calibration panel. Ý tưởng do user đề xuất (2026-08-18), tham chiếu INCA "Measure window"/"Calibration window". Đánh đổi: cần `QMdiArea` hoặc nhiều `QDockWidget` động + đồng bộ nhiều view cùng đọc/ghi một CHARACTERISTIC. Khuyến nghị: làm sau khi có layout 2-panel Calibration + Measurement (DESIGN.md §6, M4) — đừng nhảy thẳng vào MDI khi mới có một loại object hiển thị. |
 | Giai đoạn sau | Kiểm tra trên board thật; `driver/port/pc_sim/` nếu vẫn còn muốn |
+
+---
+
+## 9. M3 — A2L Parser + Calibration Panel + UI Dock *(2026-08-17)*
+
+### Phạm vi
+
+Ba việc được làm trong cùng một milestone vì chúng kết nối nhau: A2L parser vô nghĩa nếu không có UI dùng nó; UI cần được tổ chức lại để Calibration panel có chỗ; tổ chức lại UI là thời điểm đúng để di chuyển Trace/Console sang dock widget.
+
+### Quyết định kiến trúc đã chốt (2026-08-17)
+
+| Quyết định | Nội dung |
+|---|---|
+| **Trace CAN + Lệnh thô → QDockWidget** | Mặc định dock đáy, tab chung nhau, collapsible. User có thể float, tab, dock sang cạnh. Layout nhớ giữa phiên qua `saveState/restoreState`. Title bar dùng QSS tùy chỉnh để khớp Fluent theme. |
+| **Memory panel → Debug dock** | Phần hex dump thu về dock widget, mặc định ẩn, mở từ menu View. Phần quản lý trang (segment/page/copy) chuyển vào Calibration panel. |
+| **Calibration panel → panel chính** | Tree/list CHARACTERISTIC từ A2L, đọc/ghi giá trị có scaling + unit, inline edit, highlight hàng chưa ghi, "Ghi tất" cho nhiều hàng cùng lúc. Tham khảo `DESIGN.md §6` (Calibration panel — thiết kế chi tiết). |
+| **A2L parser — thư viện nào** | Tự viết parser tối giản cho subset cần thiết (không dùng `pya2l`/`python-a2l` vì quá nặng và khó debug). Chỉ parse: `MEASUREMENT`, `CHARACTERISTIC`, `COMPU_METHOD`, `RECORD_LAYOUT`, `IF_DATA XCP`. Bỏ qua block không nhận ra thay vì ném lỗi. |
+| **session/api.py** | Thêm `load_a2l(path: str | Path) -> None` và `symbols: A2LDatabase` vào `Session` Protocol. Lead sửa contract; cả `RealSession` và `FakeSession` phải implement. |
+
+### Cây thư mục mới
+
+```
+xcptool/
+└── src/xcptool/
+    ├── a2l/                   ← MỚI
+    │   ├── __init__.py
+    │   ├── parser.py          parse text → raw block dict
+    │   ├── database.py        A2LDatabase: lookup theo tên, nhóm theo category
+    │   └── types.py           dataclass: Measurement, Characteristic, CompuMethod, RecordLayout
+    ├── session/
+    │   ├── api.py             ← thêm load_a2l() + symbols vào Protocol (lead)
+    │   ├── real.py            ← implement load_a2l
+    │   └── fake.py            ← implement load_a2l (dùng file a2l thật hoặc hardcode)
+    └── ui/
+        ├── calibration_view.py  ← MỚI: Calibration panel
+        ├── dock_manager.py      ← MỚI: tạo + quản lý QDockWidget
+        ├── main_window.py       ← sửa: chuyển trace/console sang dock
+        ├── memory_view.py       ← sửa: bỏ phần page management (chuyển sang calibration)
+        ├── trace_view.py        ← không sửa logic, chỉ wrap vào QDockWidget
+        └── console_view.py      ← không sửa logic, chỉ wrap vào QDockWidget
+```
+
+### Mốc và cổng kiểm chứng
+
+| Mốc | Nội dung | Cổng |
+|---|---|---|
+| **A3a** | `a2l/` parser: parse `xcp_daq_example.a2l` thành `A2LDatabase` | `pytest tests/unit/test_a2l_parser.py -q` — xanh; in ra đủ số MEASUREMENT/CHARACTERISTIC đúng địa chỉ và kiểu |
+| **A3b** | `session/api.py` cập nhật contract; `RealSession.load_a2l()` + `FakeSession.load_a2l()` | `pytest tests/unit/test_capabilities.py tests/ui/test_fake_session.py -q` vẫn xanh; `FakeSession` expose đúng symbols sau load |
+| **A3c** | Trace CAN + Lệnh thô → QDockWidget; Memory panel → Debug dock; layout lưu/phục hồi | `pytest tests/ui/ -q` xanh; khởi động app → collapse trace → restart → trace vẫn collapse |
+| **A3d** | Calibration panel: load A2L từ UI, hiển thị tree CHARACTERISTIC, đọc giá trị qua `FakeSession`, inline edit + ghi | `pytest tests/ui/test_calibration.py -q` xanh; selftest: load A2L → sửa `systemGain` → giá trị đổi trong panel |
+
+### Lệnh validate M3
+
+```
+pytest tests/unit/test_a2l_parser.py -q
+pytest tests/unit tests/integration tests/ui -q
+pytest tests/test_boundaries.py -q
+python -m xcptool.ui.app --session fake --selftest
+```
+
+### Thứ tự làm
+
+A3a → A3b (cùng lúc: backend viết parser, lead cập nhật contract) → A3c → A3d. A3c và A3d có thể song song nếu contract A3b đã xong.
 
 ---
 

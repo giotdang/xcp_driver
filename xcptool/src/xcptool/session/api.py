@@ -20,7 +20,7 @@ Session KHÔNG biết gì về Qt. Nó không bao giờ gọi ngược lên UI.
     làm đơ giao diện — coi như lỗi.
 
   * Nhóm KHÔNG CHẶN, an toàn thread — gọi thẳng từ UI thread được:
-        state, caps, dropped_frames, drain_trace(), load_config()
+        state, caps, dropped_frames, drain_trace(), load_config(), symbols
     Frontend gọi `drain_trace()` theo QTimer 30–50 ms. KHÔNG vẽ theo từng frame.
 
   * Session KHÔNG reentrant: mỗi lúc chỉ một lệnh trên bus. Backend tự
@@ -51,7 +51,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
+
+from ..a2l import A2LDatabase
 
 __all__ = [
     "ConnState", "PageMode", "Direction", "FrameKind",
@@ -60,7 +63,7 @@ __all__ = [
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
     "SlaveError", "WriteProtectedError", "OutOfRangeError", "SequenceError",
     "AccessDeniedError", "NotConnectedError", "BusyError", "UnsupportedByEcuError",
-    "Session",
+    "A2LDatabase", "Session",
 ]
 
 
@@ -361,6 +364,13 @@ class Session(Protocol):
         trong tiến trình, hoặc giá trị mặc định nếu chưa từng connect.
         """
 
+    @property
+    def symbols(self) -> A2LDatabase:
+        """Database A2L đã nạp. Trả `A2LDatabase()` rỗng nếu chưa `load_a2l()`.
+
+        KHÔNG CHẶN — chỉ trả object đã có trong bộ nhớ, an toàn gọi từ UI thread.
+        """
+
     # ── vòng đời (CHẶN — gọi từ worker thread) ───────────────────────────────
 
     def list_devices(self) -> list[DeviceInfo]:
@@ -425,6 +435,17 @@ class Session(Protocol):
         self, src_segment: int, src_page: int, dst_segment: int, dst_page: int
     ) -> None:
         """COPY_CAL_PAGE. Raises: UnsupportedByEcuError, SlaveError"""
+
+    # ── A2L (M3) ─────────────────────────────────────────────────────────────
+
+    def load_a2l(self, path: str | Path) -> None:
+        """Nạp và parse file A2L. CHẶN (đọc file + parse).
+
+        Kết quả truy xuất qua `symbols`. Gọi từ worker thread — có thể mất vài
+        trăm ms với file lớn.
+
+        Raises: XcpToolError nếu file không đọc được hoặc lỗi parse nghiêm trọng
+        """
 
     # ── lệnh thô (M1 — cửa sổ debug) ─────────────────────────────────────────
 

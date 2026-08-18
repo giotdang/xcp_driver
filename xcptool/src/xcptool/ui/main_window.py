@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QSettings, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -43,8 +43,13 @@ from ..session.api import (
     XcpToolError,
 )
 from . import errors
+from .calibration_view import (
+    WORKING_PAGE as CAL_WORKING_PAGE,
+    CalibrationView,
+)
 from .console_view import ConsoleView
 from .device_dialog import DeviceDialog
+from .dock_manager import DockManager
 from .logging_setup import current_log_path
 from .memory_view import WORKING_PAGE, MemoryView, ask_switch_to_working_page
 from .theme import apply_theme
@@ -77,9 +82,18 @@ class MainWindow(QMainWindow):
 
         self._build_views()
         self._build_navigation()
+        self._build_docks()
         self._build_menus()
         self._build_statusbar()
         apply_theme(self)
+
+        # Khôi phục trạng thái dock từ lần chạy trước
+        _settings = QSettings("xcptool", "xcptool")
+        _dock_state = _settings.value("dock_state")
+        if _dock_state:
+            self.dock_manager.restore_state(bytes(_dock_state))
+        if _settings.value("debug_area_collapsed", False, type=bool):
+            self.dock_manager.toggle_debug_area()
 
         self.trace_timer = QTimer(self)
         self.trace_timer.setInterval(TRACE_POLL_MS)
@@ -102,6 +116,15 @@ class MainWindow(QMainWindow):
             copy_page_cb=self.copy_page,
             parent=self,
         )
+        self.calibration_view = CalibrationView(
+            read_all_cb=self.read_all_characteristics,
+            write_cb=self.write_characteristic,
+            get_pages_cb=self.cal_get_pages,
+            set_page_cb=self.cal_set_page,
+            copy_page_cb=self.cal_copy_page,
+            parent=self,
+        )
+        self.calibration_view.a2l_load_requested.connect(self._on_a2l_load_requested)
 
     def _build_navigation(self) -> None:
         central = QWidget(self)
@@ -116,24 +139,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
-        for widget, icon, text, tip in (
-            (self.trace_view, FluentIcon.ALIGNMENT, "Trace CAN",
-             "Mọi frame đi qua bus, kể cả frame không thuộc phiên"),
-            (self.console_view, FluentIcon.COMMAND_PROMPT, "Lệnh thô",
-             "Gõ CTO dạng hex và xem byte thô ECU trả về"),
-            (self.memory_view, FluentIcon.TILES, "Bộ nhớ",
-             "Đọc/ghi theo địa chỉ và điều khiển trang calibration"),
-        ):
-            self.stack.addWidget(widget)
-            self.nav.addItem(
-                routeKey=widget.objectName(),
-                icon=icon,
-                text=text,
-                onClick=lambda _=False, w=widget: self.switch_to(w),
-                position=NavigationItemPosition.TOP,
-                tooltip=tip,
-            )
+        self.stack.addWidget(self.calibration_view)
 
+        self.nav.addItem(
+            routeKey="calibration",
+            icon=FluentIcon.EDIT,
+            text="Hiệu chỉnh",
+            onClick=lambda: self.switch_to(self.calibration_view),
+            position=NavigationItemPosition.SCROLL,
+        )
         self.nav.addItem(
             routeKey="connect",
             icon=FluentIcon.CONNECT,
@@ -143,7 +157,11 @@ class MainWindow(QMainWindow):
             position=NavigationItemPosition.BOTTOM,
         )
         self.nav.setExpandWidth(200)
-        self.switch_to(self.trace_view)
+
+    def _build_docks(self) -> None:
+        """Tạo DockManager và gắn trace/console/memory vào dock bottom."""
+        self.dock_manager = DockManager(self)
+        self.dock_manager.setup(self.trace_view, self.console_view, self.memory_view)
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
@@ -159,21 +177,40 @@ class MainWindow(QMainWindow):
         session_menu.addAction(self.act_disconnect)
         session_menu.addSeparator()
 
+        act_load_a2l = QAction("Nạp &A2L…", self)
+        act_load_a2l.setShortcut(QKeySequence("Ctrl+O"))
+        act_load_a2l.triggered.connect(self.calibration_view.load_btn.click)
+        session_menu.addAction(act_load_a2l)
+        session_menu.addSeparator()
+
         act_quit = QAction("T&hoát", self)
         act_quit.setShortcut(QKeySequence.Quit)
         act_quit.triggered.connect(self.close)
         session_menu.addAction(act_quit)
 
         view_menu = bar.addMenu("&Xem")
-        for widget, text, shortcut in (
-            (self.trace_view, "&Trace CAN", "Ctrl+1"),
-            (self.console_view, "&Lệnh thô", "Ctrl+2"),
-            (self.memory_view, "&Bộ nhớ", "Ctrl+3"),
+        for dock, text, shortcut in (
+            (self.dock_manager.trace_dock, "&Trace CAN", "Ctrl+1"),
+            (self.dock_manager.console_dock, "&Lệnh thô", "Ctrl+2"),
         ):
             act = QAction(text, self)
             act.setShortcut(QKeySequence(shortcut))
-            act.triggered.connect(lambda _=False, w=widget: self.switch_to(w))
+            act.triggered.connect(
+                lambda _=False, d=dock: (
+                    d.show(), d.raise_(), self.dock_manager.ensure_debug_area_expanded()
+                )
+            )
             view_menu.addAction(act)
+        mem_toggle = self.dock_manager.memory_dock.toggleViewAction()
+        mem_toggle.setText("&Memory / Debug")
+        mem_toggle.setShortcut(QKeySequence("Ctrl+3"))
+        view_menu.addAction(mem_toggle)
+        view_menu.addSeparator()
+
+        self.act_toggle_debug_area = QAction("Ẩn/hiện &vùng debug (Trace + Lệnh thô)", self)
+        self.act_toggle_debug_area.setShortcut(QKeySequence("Ctrl+`"))
+        self.act_toggle_debug_area.triggered.connect(self.toggle_debug_area)
+        view_menu.addAction(self.act_toggle_debug_area)
 
         help_menu = bar.addMenu("&Trợ giúp")
         act_log = QAction("Đường dẫn file &log", self)
@@ -210,8 +247,26 @@ class MainWindow(QMainWindow):
     # ── điều hướng ───────────────────────────────────────────────────────────
 
     def switch_to(self, widget: QWidget) -> None:
+        """Chuyển hiển thị view. Dock view → show + raise dock; stack view → set current."""
+        dm = getattr(self, "dock_manager", None)
+        if dm is not None:
+            dock_map = {
+                id(self.trace_view): dm.trace_dock,
+                id(self.console_view): dm.console_dock,
+                id(self.memory_view): dm.memory_dock,
+            }
+            dock = dock_map.get(id(widget))
+            if dock is not None:
+                dock.show()
+                dock.raise_()
+                if dock in (dm.trace_dock, dm.console_dock):
+                    dm.ensure_debug_area_expanded()
+                return
+        # Fallback: widget nằm trong stack (Calibration, placeholder…)
         self.stack.setCurrentWidget(widget)
-        self.nav.setCurrentItem(widget.objectName())
+
+    def toggle_debug_area(self) -> None:
+        self.dock_manager.toggle_debug_area()
 
     def notify(self, title: str, content: str) -> None:
         InfoBar.info(
@@ -238,6 +293,7 @@ class MainWindow(QMainWindow):
         self.busy_ring.show()
         self.cancel_btn.setVisible(cancellable)
         self.memory_view.set_busy(True)
+        self.calibration_view.set_busy(True)
         self.act_connect.setEnabled(False)
 
     def _end_busy(self) -> None:
@@ -246,6 +302,7 @@ class MainWindow(QMainWindow):
         self.busy_ring.hide()
         self.cancel_btn.hide()
         self.memory_view.set_busy(False)
+        self.calibration_view.set_busy(False)
         self.act_connect.setEnabled(True)
         self._refresh_state()
 
@@ -344,8 +401,9 @@ class MainWindow(QMainWindow):
         def ok(caps: SlaveCaps) -> None:
             self._connect_task = None
             self._end_busy()
+            self.calibration_view.set_byte_order(caps.byte_order)
             self.notify("Đã kết nối", self._caps_summary(caps))
-            self.memory_view.refresh_pages()
+            self._refresh_pages_after_connect()
 
         def err(exc: Exception) -> None:
             self._connect_task = None
@@ -355,6 +413,31 @@ class MainWindow(QMainWindow):
         self._connect_task = self.runner.run(
             self.session.connect, cfg, on_ok=ok, on_err=err
         )
+
+    def _refresh_pages_after_connect(self) -> None:
+        """Đọc trạng thái trang MỘT LẦN sau khi connect, cập nhật cả memory
+        panel lẫn calibration panel từ cùng một cặp GET_CAL_PAGE.
+
+        KHÔNG được gọi `memory_view.refresh_pages()` rồi `cal_get_pages()` nối
+        tiếp: cái đầu set busy=True ngay khi return (worker chạy bất đồng bộ
+        trên thread khác), nên cái sau bị `_guard()` từ chối tức thì với
+        thông báo "Đang bận" — hai nhãn bận trùng nhau ("Đang đọc trạng thái
+        trang…") càng làm user tưởng lệnh đang treo dù chẳng có gì đang chạy.
+        """
+        segment = self.calibration_view.segment_spin.value()
+        if not self._guard():
+            return
+
+        def read_both() -> tuple[int | None, int | None]:
+            ecu = self.session.get_page(segment, PageMode.ECU)
+            xcp = self.session.get_page(segment, PageMode.XCP)
+            return ecu, xcp
+
+        def ok(pages: tuple[int | None, int | None]) -> None:
+            self.memory_view.on_pages(segment, *pages)
+            self.calibration_view.on_pages(segment, *pages)
+
+        self._call("Đang đọc trạng thái trang…", read_both, on_ok=ok)
 
     def do_disconnect(self) -> None:
         if self.busy:
@@ -471,6 +554,141 @@ class MainWindow(QMainWindow):
             on_err=err,
         )
 
+    # ── A2L / calibration ────────────────────────────────────────────────────
+
+    def _on_a2l_load_requested(self, path: str) -> None:
+        self._call(
+            "Nạp A2L…",
+            self.session.load_a2l, path,
+            on_ok=lambda _: self._after_a2l_load(),
+        )
+
+    def _after_a2l_load(self) -> None:
+        db = self.session.symbols
+        self.calibration_view.set_database(db)
+        self.notify(
+            "A2L đã nạp",
+            f"{len(db.characteristics)} CHARACTERISTIC, {len(db.measurements)} MEASUREMENT",
+        )
+        self.switch_to(self.calibration_view)
+
+    def read_all_characteristics(self) -> None:
+        if not self._guard():
+            return
+        symbols = self.session.symbols
+        if not symbols.characteristics:
+            self.calibration_view.status_label.setText(
+                "Chưa nạp A2L hoặc file không có CHARACTERISTIC nào."
+            )
+            return
+
+        def _batch() -> dict:
+            results: dict[str, bytes | None] = {}
+            for name, char in symbols.characteristics.items():
+                if char.byte_size <= 0:
+                    results[name] = None
+                    continue
+                try:
+                    results[name] = self.session.read(char.address, char.byte_size)
+                except Exception:  # noqa: BLE001
+                    results[name] = None
+            return results
+
+        self._call(
+            "Đang đọc tất cả tham số…",
+            _batch,
+            on_ok=self.calibration_view.on_batch_read_done,
+        )
+
+    def write_characteristic(self, name: str, addr: int, data: bytes) -> None:
+        if not self._guard():
+            return
+
+        def err(exc: Exception) -> None:
+            if isinstance(exc, WriteProtectedError):
+                self._on_cal_write_protected(exc, name, addr, data)
+            else:
+                errors.show_error(self, exc)
+
+        self._call(
+            f"Đang ghi '{name}'…",
+            self.session.write, addr, data,
+            on_ok=lambda _: self.calibration_view.on_write_done(name),
+            on_err=err,
+        )
+
+    def _on_cal_write_protected(
+        self, exc: WriteProtectedError, name: str, addr: int, data: bytes
+    ) -> None:
+        """UI chỉ có khái niệm Working/Reference — chuyển page nghĩa là chuyển
+        CẢ ECU lẫn XCP cùng lúc (DESIGN.md §5), không riêng XCP như memory panel cũ."""
+        if not ask_switch_to_working_page(self, exc.description):
+            return
+        seg = self.calibration_view.segment_spin.value()
+
+        def _both() -> None:
+            self.session.set_page(seg, CAL_WORKING_PAGE, PageMode.ECU)
+            self.session.set_page(seg, CAL_WORKING_PAGE, PageMode.XCP)
+
+        self._call(
+            "Đang chuyển sang Working…",
+            _both,
+            on_ok=lambda _: self._after_cal_switch_working(seg, name, addr, data),
+        )
+
+    def _after_cal_switch_working(
+        self, segment: int, name: str, addr: int, data: bytes
+    ) -> None:
+        self.calibration_view.set_page_indicator(CAL_WORKING_PAGE)
+        self._call(
+            f"Đang ghi lại '{name}'…",
+            self.session.write, addr, data,
+            on_ok=lambda _: self.calibration_view.on_write_done(name),
+        )
+
+    def cal_get_pages(self, segment: int) -> None:
+        if not self._guard():
+            return
+
+        def read_both() -> tuple[int | None, int | None]:
+            ecu = self.session.get_page(segment, PageMode.ECU)
+            xcp = self.session.get_page(segment, PageMode.XCP)
+            return ecu, xcp
+
+        self._call(
+            "Đang đọc trạng thái trang…",
+            read_both,
+            on_ok=lambda pages: self.calibration_view.on_pages(segment, *pages),
+        )
+
+    def cal_set_page(self, segment: int, page: int) -> None:
+        """Đặt CẢ ECU lẫn XCP về `page` — UI chỉ biết Working/Reference, không
+        set hai trang lệch nhau có chủ đích (DESIGN.md §5)."""
+        if not self._guard():
+            return
+
+        def _both() -> None:
+            self.session.set_page(segment, page, PageMode.ECU)
+            self.session.set_page(segment, page, PageMode.XCP)
+
+        name = "Working" if page == CAL_WORKING_PAGE else "Reference"
+        self._call(
+            f"Đang chuyển sang {name}…",
+            _both,
+            on_ok=lambda _: self.cal_get_pages(segment),
+        )
+
+    def cal_copy_page(
+        self, src_seg: int, src_page: int, dst_seg: int, dst_page: int
+    ) -> None:
+        if not self._guard():
+            return
+        self._call(
+            f"Đang copy trang {src_page} → {dst_page}…",
+            self.session.copy_page, src_seg, src_page, dst_seg, dst_page,
+            on_ok=lambda _: self.cal_get_pages(dst_seg),
+        )
+
     # ── trace ────────────────────────────────────────────────────────────────
 
     def _poll_trace(self) -> None:
@@ -524,6 +742,11 @@ class MainWindow(QMainWindow):
         errors.show_unexpected(self, exc, str(current_log_path()))  # type: ignore[arg-type]
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt đặt tên
+        # Lưu trạng thái dock trước khi đóng
+        _settings = QSettings("xcptool", "xcptool")
+        _settings.setValue("dock_state", self.dock_manager.save_state())
+        _settings.setValue("debug_area_collapsed", self.dock_manager.is_debug_area_collapsed())
+
         self.trace_timer.stop()
         if self._connect_task is not None:
             self._connect_task.cancel()

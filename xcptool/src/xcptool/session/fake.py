@@ -15,7 +15,10 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
+from ..a2l import A2LDatabase
+from ..a2l import load as _a2l_load
 from .api import (
     BusConfig,
     BusError,
@@ -39,8 +42,11 @@ __all__ = ["FakeBehavior", "FakeSession", "MEM_BASE", "MEM_SIZE"]
 
 # Vùng nhớ mà ECU giả này chấp nhận. Không phải hằng số của một ECU thật —
 # chỉ là "bản đồ" của bản giả, để địa chỉ ngoài vùng có gì đó để từ chối.
+# Đủ lớn để phủ luôn vùng CHARACTERISTIC của examples/xcp_daq_example.a2l
+# (0x80100000..0x80100094) — nếu không, "Đọc tất cả" ở panel Hiệu chỉnh sẽ
+# ăn OutOfRangeError ngay từ _check_range(), trước cả khi có frame lên bus.
 MEM_BASE = 0x8000_0000
-MEM_SIZE = 0x1_0000
+MEM_SIZE = 0x20_0000
 
 WORKING_PAGE = 0
 REFERENCE_PAGE = 1
@@ -87,10 +93,18 @@ def _hex(data: bytes) -> str:
     return " ".join(f"{b:02X}" for b in data)
 
 
-def _default_byte(page: int, addr: int) -> int:
+def _default_byte(addr: int) -> int:
     """Nội dung mặc định của một byte — hàm thuần, để hex dump nhìn có nghĩa
-    và để đọc lại hai lần cho cùng kết quả."""
-    x = (addr * 2654435761 + page * 40503) & 0xFFFF_FFFF
+    và để đọc lại hai lần cho cùng kết quả.
+
+    KHÔNG phụ thuộc vào số trang: giống firmware thật, Working (RAM) và
+    Reference (ROM) có cùng giá trị mặc định cho tới khi Working bị ghi đè
+    (khởi động: XcpCal_InitWorkingPage() = memcpy(calRAM, calROM) — xem
+    CLAUDE.md). Trước đây hàm này trộn số trang vào hash nên hai trang luôn
+    khác nhau kể cả chưa ai ghi gì — làm "Copy Ref → Working" trông như
+    không hoạt động vì đọc lại Working sau copy vẫn ra giá trị khác Reference.
+    """
+    x = (addr * 2654435761) & 0xFFFF_FFFF
     return (x >> 13) & 0xFF
 
 
@@ -152,6 +166,8 @@ class FakeSession:
         self._flood_thread: threading.Thread | None = None
         self._flood_stop = threading.Event()
 
+        self._a2l_db: A2LDatabase = A2LDatabase()
+
     # ── nhóm không chặn, an toàn thread ──────────────────────────────────────
 
     @property
@@ -173,6 +189,10 @@ class FakeSession:
         chạy khác, chỉ cần đúng hành vi "nhớ trong phiên" để UI test được.
         """
         return self._cfg or BusConfig(backend="virtual", channel="fake0")
+
+    @property
+    def symbols(self) -> A2LDatabase:
+        return self._a2l_db
 
     def drain_trace(self, max_items: int = 5000) -> list[TraceEntry]:
         with self._trace_lock:
@@ -310,7 +330,7 @@ class FakeSession:
             page = self._xcp_page
             overrides = self._mem[page]
             out = bytes(
-                overrides.get(a, _default_byte(page, a))
+                overrides.get(a, _default_byte(a))
                 for a in range(addr, addr + size)
             )
             cfg = self._cfg
@@ -399,6 +419,11 @@ class FakeSession:
                 )
             self._mem[dst_page] = dict(self._mem[src_page])
             self._emit(cfg.dto_id, "rx", bytes([0xFF]), "res", "COPY_CAL_PAGE ok")
+
+    # ── A2L ──────────────────────────────────────────────────────────────────
+
+    def load_a2l(self, path: str | Path) -> None:
+        self._a2l_db = _a2l_load(path)
 
     # ── lệnh thô ─────────────────────────────────────────────────────────────
 
