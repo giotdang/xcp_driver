@@ -290,17 +290,33 @@ File: `ui/measurement_view.py` (mới).
 
 ---
 
-## 8. Milestone tiếp theo: M5 — chưa lên kế hoạch chi tiết
+## 8. Kế hoạch M5 (Fix bug, UX & Performance Improvement)
 
-Chưa có D5a/D5b... — chỉ mới liệt kê ứng viên ở bảng Deferred dưới đây. Việc dở
-dang từ M4 cần xử lý trước hoặc đầu M5:
+Đã hoàn thành trong M5:
+- [x] **Tối ưu hiệu năng MeasurementView**:
+  - Dùng NumPy `np.fromiter()` thay list comprehension, tránh allocate list 3000 phần tử mỗi 40ms.
+  - Bật `useOpenGL=True` (PyOpenGL) offload render sang GPU, giảm tải tối đa cho UI thread.
+  - Bỏ qua `setData()` khi không có điểm mới (`_drawn_len`).
+- [x] **Tự động mở rộng Array signal (`MATRIX_DIM`)**:
+  - Tự động tách `torqueSamples[4]` thành `[0]..[3]` với địa chỉ và size chuẩn, khắc phục `ValueError: 16B > max 7B/ODT`.
+- [x] **Cột Live Value & Nút Switch bật/tắt đồ thị (Scope)**:
+  - Thêm cột `Giá trị` (COL_VALUE) hiển thị trực tiếp số thực thời gian thực trên tree widget.
+  - Thêm `SwitchButton` bật/tắt đồ thị: khi tắt, ẩn scope và bỏ qua 100% việc vẽ curve, siêu nhẹ CPU/GPU.
+- [x] **Phân cấp Struct & Array cho cả MeasurementView và CalibrationView**:
+  - `MeasurementView`: Tự động gom nhóm các signal struct (`speedPidTelemetry_*`) thành node cha có 1 Checkbox duy nhất, các con không checkbox; Array `[0]..[n-1]` mở rộng dưới cha.
+  - `CalibrationView`: Gom nhóm struct `speedPid_*` thành node cha `STRUCT (N)`; Array `VAL_BLK` mở rộng thành các dòng con `[0]..[n-1]` cho phép double-click sửa riêng từng ô giá trị và tự động đồng bộ dòng cha.
 
-- Zoom trục thời gian (X) trong scope `measurement_view.py` (pyqtgraph) — hiện
-  chỉ zoom được trục giá trị (Y). Người dùng hỏi, chưa điều tra/sửa.
-- `speed_pid_kd` trong `PidPlant` mới seed giá trị, chưa thực sự dùng trong công
-  thức (chưa có D-term thật) — biết trước, chưa cần sửa trừ khi có nhu cầu demo cụ thể.
-- Toàn bộ M4 vẫn CHƯA COMMIT — cân nhắc commit trước khi bắt đầu việc mới, để
-  không trộn lẫn diff M4 với M5.
+### 📌 Vấn đề cần đào sâu nghiên cứu tiếp (Session tiếp theo):
+- **Hiện tượng**: Ngay sau khi bấm "Bắt đầu đo" (Start DAQ), UI bị lag / khựng một khoảng thời gian ngắn rồi mới dần ổn định (kể cả khi đã tắt chế độ vẽ Scope).
+- **Nguyên nhân nghi vấn**:
+  1. *Flood frame DTO vào `TraceView`*: DTO frame bắn về liên tục 100Hz–200Hz. Mặc định `TraceView` đang tick bật loại `DAQ`, dẫn đến `TraceModel.append()` và `table.scrollToBottom()` bị gọi dồn dập trên UI thread dù user đang ở tab khác.
+  2. *Backlog bộ đệm RX*: Trong thời gian worker gửi chuỗi lệnh XCP cấu hình DAQ (`FREE_DAQ` $\rightarrow$ `ALLOC_*` $\rightarrow$ `START_STOP_SYNCH`), CAN frames dồn ứ lại và bị `drain_trace()` / `drain_daq()` xả một lượng khổng lồ ở 1–2 nhịp timer đầu tiên.
+- **Hướng giải pháp dự kiến**:
+  - Bỏ chọn mặc định loại `DAQ` trong bộ lọc `TraceView` (chỉ bật `CMD`, `RES`, `ERR`, `EV`).
+  - Không gọi `table.scrollToBottom()` / repaint khi `TraceView` đang bị ẩn (không active).
+  - Áp dụng batch throttling khi xả hàng đợi trace lúc khởi động.
+
+---
 
 ## 9. Deferred (ứng viên cho M5+, chưa ưu tiên)
 
