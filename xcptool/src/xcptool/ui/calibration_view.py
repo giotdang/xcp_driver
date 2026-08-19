@@ -107,6 +107,46 @@ def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> 
     return bytes(buf)
 
 
+def _group_by_prefix(names: list[str]) -> list[tuple[str | None, list[str]]]:
+    """Gom nhóm các tên theo struct prefix (dấu '.' hoặc tiền tố '_' nếu có >= 2 biến).
+
+    Trả về danh sách (group_name, [full_name1, full_name2, ...]):
+    - Nếu là struct: ("speedPid", ["speedPid_kp", "speedPid_ki", ...])
+    - Nếu là biến đơn/mảng: (None, ["tempCompTable"])
+    """
+    prefixes: dict[str, list[str]] = {}
+    for name in names:
+        if "." in name:
+            p = name.split(".", 1)[0]
+            prefixes.setdefault(p, []).append(name)
+        elif "_" in name:
+            p = name.rsplit("_", 1)[0]
+            prefixes.setdefault(p, []).append(name)
+        else:
+            prefixes.setdefault("", []).append(name)
+
+    valid_groups = {p: member_list for p, member_list in prefixes.items() if p and len(member_list) >= 2}
+
+    handled: set[str] = set()
+    result: list[tuple[str | None, list[str]]] = []
+    for name in names:
+        if name in handled:
+            continue
+        found = None
+        for p, members in valid_groups.items():
+            if name in members:
+                found = (p, members)
+                break
+        if found is not None:
+            p, members = found
+            result.append((p, members))
+            handled.update(members)
+        else:
+            result.append((None, [name]))
+            handled.add(name)
+    return result
+
+
 class CalibrationView(QWidget):
     """Panel hiệu chỉnh — xem và sửa CHARACTERISTIC từ A2L.
 
@@ -170,7 +210,7 @@ class CalibrationView(QWidget):
         self.tree = QTreeWidget(self)
         self.tree.setColumnCount(len(_HEADERS))
         self.tree.setHeaderLabels(_HEADERS)
-        self.tree.setRootIsDecorated(False)
+        self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         # Chỉ cho sửa khi double-click cột Value — xem _start_value_edit
@@ -178,6 +218,7 @@ class CalibrationView(QWidget):
         self.tree.itemDoubleClicked.connect(self._start_value_edit)
         self.tree.itemSelectionChanged.connect(self._update_write_btn)
         self.tree.itemChanged.connect(self._on_item_changed)
+
 
         hdr = self.tree.header()
         hdr.setSectionResizeMode(COL_NAME, QHeaderView.ResizeToContents)
@@ -248,7 +289,7 @@ class CalibrationView(QWidget):
     # ── cập nhật dữ liệu (gọi từ MainWindow, UI thread) ─────────────────────
 
     def set_database(self, db: A2LDatabase) -> None:
-        """Điền tree từ A2LDatabase mới nạp. Xoá mọi state cũ."""
+        """Điền tree từ A2LDatabase mới nạp. Gom nhóm Struct và phân rã Array."""
         self._db = db
         self._char_items.clear()
         self._original.clear()
@@ -257,10 +298,43 @@ class CalibrationView(QWidget):
         self._suspend_signals = True
         try:
             self.tree.clear()
-            for name, char in sorted(db.characteristics.items()):
-                item = self._make_item(name, char)
-                self.tree.addTopLevelItem(item)
-                self._char_items[name] = item
+            groups = _group_by_prefix(sorted(db.characteristics.keys()))
+            for group_name, members in groups:
+                if group_name is not None and len(members) >= 2:
+                    # ── STRUCT / GROUP ──────────────────────────────────────
+                    chars = [db.characteristics[m] for m in members]
+                    min_addr = min(c.address for c in chars)
+                    total_size = sum(c.byte_size for c in chars)
+
+                    parent = QTreeWidgetItem()
+                    parent.setData(COL_NAME, Qt.UserRole, group_name)
+                    parent.setText(COL_NAME, group_name)
+                    parent.setText(COL_TYPE, f"STRUCT ({len(members)})")
+                    parent.setText(COL_ADDR, f"0x{min_addr:08X}")
+                    parent.setText(COL_SIZE, str(total_size))
+                    parent.setText(COL_VALUE, "—")
+                    parent.setText(COL_RANGE, "")
+                    parent.setText(COL_DESC, f"Nhóm {len(members)} tham số")
+                    parent.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                    self.tree.addTopLevelItem(parent)
+
+                    for c in chars:
+                        disp_name = c.name[len(group_name):].lstrip("._") or c.name
+                        child = self._make_item(c.name, c, display_name=disp_name)
+                        parent.addChild(child)
+                        self._char_items[c.name] = child
+                        if c.array_size > 1:
+                            self._build_array_children(child, c)
+                    parent.setExpanded(True)
+                else:
+                    # ── SCALAR hoặc ARRAY ĐỘC LẬP ───────────────────────────
+                    name = members[0]
+                    char = db.characteristics[name]
+                    item = self._make_item(name, char)
+                    self.tree.addTopLevelItem(item)
+                    self._char_items[name] = item
+                    if char.array_size > 1:
+                        self._build_array_children(item, char)
         finally:
             self._suspend_signals = False
 
@@ -287,6 +361,14 @@ class CalibrationView(QWidget):
         try:
             item.setText(COL_VALUE, text)
             item.setForeground(COL_VALUE, self.tree.palette().text())
+
+            # Cập nhật các dòng con nếu là array
+            if char.array_size > 1 and item.childCount() > 0:
+                parts = [p.strip() for p in text.split(",")]
+                for i in range(min(item.childCount(), len(parts))):
+                    child = item.child(i)
+                    child.setText(COL_VALUE, parts[i])
+                    child.setForeground(COL_VALUE, self.tree.palette().text())
         finally:
             self._suspend_signals = False
         self._original[name] = text
@@ -314,6 +396,8 @@ class CalibrationView(QWidget):
         self._suspend_signals = True
         try:
             item.setForeground(COL_VALUE, self.tree.palette().text())
+            for i in range(item.childCount()):
+                item.child(i).setForeground(COL_VALUE, self.tree.palette().text())
         finally:
             self._suspend_signals = False
         self._original[name] = item.text(COL_VALUE)
@@ -439,12 +523,13 @@ class CalibrationView(QWidget):
 
     # ── nội bộ ───────────────────────────────────────────────────────────────
 
-    def _make_item(self, name: str, char: Any) -> QTreeWidgetItem:
+    def _make_item(self, name: str, char: Any, display_name: str | None = None) -> QTreeWidgetItem:
         item = QTreeWidgetItem()
         item.setData(COL_NAME, Qt.UserRole, name)
-        item.setText(COL_NAME, name)
+        item.setText(COL_NAME, display_name or name)
         item.setText(COL_TYPE, char.char_type)
         item.setText(COL_ADDR, f"0x{char.address:08X}")
+
         item.setText(COL_SIZE, str(char.byte_size))
         item.setText(COL_VALUE, "—")
         lo = f"{char.lower_limit:.6g}"
@@ -454,10 +539,29 @@ class CalibrationView(QWidget):
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         return item
 
+    def _build_array_children(self, parent_item: QTreeWidgetItem, char: Any) -> None:
+        """Tạo các node con hiển thị từng phần tử của Array."""
+        elem_size = char.byte_size // char.array_size
+        for i in range(char.array_size):
+            child = QTreeWidgetItem()
+            child.setData(COL_NAME, Qt.UserRole, ("array_elem", char.name, i))
+            child.setText(COL_NAME, f"[{i}]")
+            child.setText(COL_TYPE, char.datatype or "ELEMENT")
+            child.setText(COL_ADDR, f"0x{(char.address + i * elem_size):08X}")
+            child.setText(COL_SIZE, str(elem_size))
+            child.setText(COL_VALUE, "—")
+            child.setText(COL_RANGE, parent_item.text(COL_RANGE))
+            child.setText(COL_DESC, f"{char.name}[{i}]")
+            child.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            parent_item.addChild(child)
+        parent_item.setExpanded(True)
+
     def _start_value_edit(self, item: QTreeWidgetItem, column: int) -> None:
         """Cho phép sửa inline khi double-click đúng cột Giá trị."""
         if column != COL_VALUE:
             return
+        if "STRUCT" in item.text(COL_TYPE):
+            return   # Không sửa trực tiếp dòng cha STRUCT
         item.setFlags(item.flags() | Qt.ItemIsEditable)
         self.tree.editItem(item, COL_VALUE)
 
@@ -467,29 +571,80 @@ class CalibrationView(QWidget):
         # Khoá edit sau khi người dùng commit — tránh vô tình sửa tiếp
         item.setFlags(item.flags() & ~Qt.ItemIsEditable)
 
-        name = item.data(COL_NAME, Qt.UserRole)
-        if name is None:
+        data_role = item.data(COL_NAME, Qt.UserRole)
+        if data_role is None:
             return
-        current = item.text(COL_VALUE)
-        original = self._original.get(name)
 
         dirty_color = QColor("#FFB86C") if isDarkTheme() else QColor("#B35C00")
         neutral = self.tree.palette().text().color()
-        is_dirty = original is not None and current != original
-        item.setForeground(COL_VALUE, dirty_color if is_dirty else neutral)
 
-        if is_dirty:
-            self._dirty.add(name)
+        if isinstance(data_role, tuple) and data_role[0] == "array_elem":
+            # ── SỬA PHẦN TỬ CON CỦA ARRAY ──────────────────────────────────
+            _, char_name, idx = data_role
+            parent_item = self._char_items.get(char_name)
+            if parent_item is None:
+                return
+
+            # Dựng lại chuỗi tóm tắt của dòng cha
+            child_vals = [parent_item.child(i).text(COL_VALUE) for i in range(parent_item.childCount())]
+            parent_text = ", ".join(child_vals)
+
+            original = self._original.get(char_name)
+            is_dirty = original is not None and parent_text != original
+
+            self._suspend_signals = True
+            try:
+                parent_item.setText(COL_VALUE, parent_text)
+                parent_item.setForeground(COL_VALUE, dirty_color if is_dirty else neutral)
+                item.setForeground(COL_VALUE, dirty_color if is_dirty else neutral)
+            finally:
+                self._suspend_signals = False
+
+            if is_dirty:
+                self._dirty.add(char_name)
+            else:
+                self._dirty.discard(char_name)
         else:
-            self._dirty.discard(name)
+            # ── SỬA SCALAR HOẶC DÒNG CHA ARRAY ──────────────────────────────
+            char_name = data_role
+            if not isinstance(char_name, str):
+                return
+            current = item.text(COL_VALUE)
+            original = self._original.get(char_name)
+            is_dirty = original is not None and current != original
+            item.setForeground(COL_VALUE, dirty_color if is_dirty else neutral)
+
+            # Nếu là array, cập nhật các con tương ứng
+            if item.childCount() > 0:
+                parts = [p.strip() for p in current.split(",")]
+                self._suspend_signals = True
+                try:
+                    for i in range(min(item.childCount(), len(parts))):
+                        child = item.child(i)
+                        child.setText(COL_VALUE, parts[i])
+                        child.setForeground(COL_VALUE, dirty_color if is_dirty else neutral)
+                finally:
+                    self._suspend_signals = False
+
+            if is_dirty:
+                self._dirty.add(char_name)
+            else:
+                self._dirty.discard(char_name)
+
         self._update_write_btn()
 
     def _selected_char_name(self) -> str | None:
         item = self.tree.currentItem()
         if item is None:
             return None
-        return item.data(COL_NAME, Qt.UserRole)
+        data_role = item.data(COL_NAME, Qt.UserRole)
+        if isinstance(data_role, tuple) and data_role[0] == "array_elem":
+            return data_role[1]
+        if isinstance(data_role, str):
+            return data_role
+        return None
 
     def _update_write_btn(self) -> None:
         name = self._selected_char_name()
         self.write_btn.setEnabled(name is not None and name in self._dirty)
+

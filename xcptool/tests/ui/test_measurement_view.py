@@ -238,3 +238,61 @@ def test_scope_toggle_hides_plot_and_skips_curve_data(view: MeasurementView) -> 
     assert len(view._xs.get("speed", [])) == 0
 
 
+def test_set_database_groups_struct_measurements(view: MeasurementView) -> None:
+    """Kiểm tra MEASUREMENT dạng struct (speedPidTelemetry_*) được gom nhóm thành parent-child."""
+    db = A2LDatabase()
+    db.measurements["speedPidTelemetry_error"] = Measurement(
+        name="speedPidTelemetry_error",
+        description="PID Error",
+        datatype="FLOAT32_IEEE",
+        address=MEM_BASE + 0x10,
+        lower_limit=-100.0,
+        upper_limit=100.0,
+    )
+    db.measurements["speedPidTelemetry_integral"] = Measurement(
+        name="speedPidTelemetry_integral",
+        description="PID Integral",
+        datatype="FLOAT32_IEEE",
+        address=MEM_BASE + 0x14,
+        lower_limit=-100.0,
+        upper_limit=100.0,
+    )
+    db.measurements["speedPidTelemetry_output"] = Measurement(
+        name="speedPidTelemetry_output",
+        description="PID Output",
+        datatype="FLOAT32_IEEE",
+        address=MEM_BASE + 0x18,
+        lower_limit=-100.0,
+        upper_limit=100.0,
+    )
+    view.set_database(db)
+
+    # Cây chỉ có 1 top-level item là struct parent
+    assert view.tree.topLevelItemCount() == 1
+    parent = view.tree.topLevelItem(0)
+    assert parent.text(COL_NAME) == "speedPidTelemetry"
+    assert "STRUCT" in parent.text(COL_DTYPE)
+    assert parent.childCount() == 3
+
+    # Các trường con không có Checkbox
+    for i in range(3):
+        child = parent.child(i)
+        assert child.checkState(COL_NAME) == Qt.Unchecked or child.data(COL_NAME, Qt.CheckStateRole) is None
+
+    # Khi tick dòng cha -> _build_daq_lists sinh ra cả 3 signals
+    parent.setCheckState(COL_NAME, Qt.Checked)
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert len(emitted) == 1
+    sigs = emitted[0][0].signals
+    assert len(sigs) == 3
+    assert {s.name for s in sigs} == {
+        "speedPidTelemetry_error",
+        "speedPidTelemetry_integral",
+        "speedPidTelemetry_output",
+    }
+
+
+

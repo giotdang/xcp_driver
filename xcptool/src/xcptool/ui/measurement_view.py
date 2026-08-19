@@ -73,6 +73,47 @@ def _raw_to_float(data: bytes, datatype: str, byte_order: str) -> float | None:
     return float(struct.unpack_from(endian + fmt, data)[0])
 
 
+def _group_by_prefix(names: list[str]) -> list[tuple[str | None, list[str]]]:
+    """Gom nhóm các tên theo struct prefix (dấu '.' hoặc tiền tố '_' nếu có >= 2 biến).
+
+    Trả về danh sách (group_name, [full_name1, full_name2, ...]):
+    - Nếu là struct: ("speedPidTelemetry", ["speedPidTelemetry_error", ...])
+    - Nếu là biến đơn/mảng: (None, ["engineRpm"])
+    """
+    prefixes: dict[str, list[str]] = {}
+    for name in names:
+        if "." in name:
+            p = name.split(".", 1)[0]
+            prefixes.setdefault(p, []).append(name)
+        elif "_" in name:
+            p = name.rsplit("_", 1)[0]
+            prefixes.setdefault(p, []).append(name)
+        else:
+            prefixes.setdefault("", []).append(name)
+
+    valid_groups = {p: member_list for p, member_list in prefixes.items() if p and len(member_list) >= 2}
+
+    handled: set[str] = set()
+    result: list[tuple[str | None, list[str]]] = []
+    for name in names:
+        if name in handled:
+            continue
+        found = None
+        for p, members in valid_groups.items():
+            if name in members:
+                found = (p, members)
+                break
+        if found is not None:
+            p, members = found
+            result.append((p, members))
+            handled.update(members)
+        else:
+            result.append((None, [name]))
+            handled.add(name)
+    return result
+
+
+
 class MeasurementView(QWidget):
     """Panel đo lường — checkbox tree (trái) + pyqtgraph scope (phải).
 
@@ -193,39 +234,73 @@ class MeasurementView(QWidget):
     # ── API công khai (gọi từ MainWindow, UI thread) ─────────────────────────
 
     def set_database(self, db: A2LDatabase) -> None:
-        """Điền tree từ A2LDatabase mới nạp — xoá mọi state cũ."""
+        """Điền tree từ A2LDatabase mới nạp — gom nhóm struct và array phân cấp."""
         self._db = db
         self.tree.clear()
         self._tree_items.clear()
-        for name, meas in sorted(db.measurements.items()):
-            item = QTreeWidgetItem()
-            item.setData(COL_NAME, Qt.UserRole, name)
-            item.setText(COL_NAME, name)
-            item.setCheckState(COL_NAME, Qt.Unchecked)
-            item.setText(
-                COL_DTYPE,
-                meas.datatype if meas.array_size == 1 else f"{meas.datatype}[{meas.array_size}]"
-            )
-            item.setText(COL_ADDR, f"0x{meas.address:08X}")
-            item.setText(COL_VALUE, "-")
-            item.setToolTip(COL_NAME, meas.description)
-            self.tree.addTopLevelItem(item)
 
-            if meas.array_size == 1:
-                self._tree_items[name] = item
-            else:
-                elem_size = meas.byte_size // meas.array_size
-                for i in range(meas.array_size):
-                    child_name = f"{meas.name}[{i}]"
+        groups = _group_by_prefix(sorted(db.measurements.keys()))
+        for group_name, members in groups:
+            if group_name is not None and len(members) >= 2:
+                # ── STRUCT / GROUP ──────────────────────────────────────────
+                struct_meas = [db.measurements[m] for m in members]
+                min_addr = min(m.address for m in struct_meas)
+
+                parent = QTreeWidgetItem()
+                # Lưu danh sách tất cả các signal con vào parent data
+                parent.setData(COL_NAME, Qt.UserRole, members)
+                parent.setText(COL_NAME, group_name)
+                parent.setCheckState(COL_NAME, Qt.Unchecked)
+                parent.setText(COL_DTYPE, f"STRUCT ({len(members)})")
+                parent.setText(COL_ADDR, f"0x{min_addr:08X}")
+                parent.setText(COL_VALUE, "-")
+                self.tree.addTopLevelItem(parent)
+
+                # Các trường con không có Checkbox
+                for m in struct_meas:
                     child = QTreeWidgetItem()
-                    child.setData(COL_NAME, Qt.UserRole, child_name)
-                    child.setText(COL_NAME, f"[{i}]")
-                    child.setText(COL_DTYPE, meas.datatype)
-                    child.setText(COL_ADDR, f"0x{(meas.address + i * elem_size):08X}")
+                    child.setData(COL_NAME, Qt.UserRole, m.name)
+                    disp_name = m.name[len(group_name):].lstrip("._") or m.name
+                    child.setText(COL_NAME, disp_name)
+                    child.setText(COL_DTYPE, m.datatype)
+                    child.setText(COL_ADDR, f"0x{m.address:08X}")
                     child.setText(COL_VALUE, "-")
-                    item.addChild(child)
-                    self._tree_items[child_name] = child
-                item.setExpanded(True)
+                    child.setToolTip(COL_NAME, m.description)
+                    parent.addChild(child)
+                    self._tree_items[m.name] = child
+                parent.setExpanded(True)
+            else:
+                # ── SCALAR hoặc ARRAY ───────────────────────────────────────
+                name = members[0]
+                meas = db.measurements[name]
+                item = QTreeWidgetItem()
+                item.setData(COL_NAME, Qt.UserRole, name)
+                item.setText(COL_NAME, name)
+                item.setCheckState(COL_NAME, Qt.Unchecked)
+                item.setText(
+                    COL_DTYPE,
+                    meas.datatype if meas.array_size == 1 else f"{meas.datatype}[{meas.array_size}]"
+                )
+                item.setText(COL_ADDR, f"0x{meas.address:08X}")
+                item.setText(COL_VALUE, "-")
+                item.setToolTip(COL_NAME, meas.description)
+                self.tree.addTopLevelItem(item)
+
+                if meas.array_size == 1:
+                    self._tree_items[name] = item
+                else:
+                    elem_size = meas.byte_size // meas.array_size
+                    for i in range(meas.array_size):
+                        child_name = f"{meas.name}[{i}]"
+                        child = QTreeWidgetItem()
+                        child.setData(COL_NAME, Qt.UserRole, child_name)
+                        child.setText(COL_NAME, f"[{i}]")
+                        child.setText(COL_DTYPE, meas.datatype)
+                        child.setText(COL_ADDR, f"0x{(meas.address + i * elem_size):08X}")
+                        child.setText(COL_VALUE, "-")
+                        item.addChild(child)
+                        self._tree_items[child_name] = child
+                    item.setExpanded(True)
 
         n = len(db.measurements)
         self.count_label.setText(f"{n} MEASUREMENT")
@@ -233,6 +308,7 @@ class MeasurementView(QWidget):
             "Chọn signals (tick ô vuông) rồi bấm 'Bắt đầu đo'."
             if n > 0 else "File A2L không có MEASUREMENT nào."
         )
+
 
     def set_byte_order(self, byte_order: str) -> None:
         self._byte_order = byte_order
@@ -348,10 +424,13 @@ class MeasurementView(QWidget):
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
             if item.checkState(COL_NAME) == Qt.Checked:
-                name = item.data(COL_NAME, Qt.UserRole)
-                if name:
-                    names.append(name)
+                data = item.data(COL_NAME, Qt.UserRole)
+                if isinstance(data, list):
+                    names.extend(data)
+                elif isinstance(data, str) and data:
+                    names.append(data)
         return names
+
 
     def _build_daq_lists(self) -> list[DaqList]:
         """Dựng danh sách DaqList từ signals được tick.

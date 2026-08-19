@@ -588,3 +588,75 @@ def test_connect_cap_nhat_ca_hai_panel_trang_tu_mot_lan_doc(
     assert v.page_toggle.currentRouteKey() == _ROUTE_WORKING
     assert connected_window.memory_view.xcp_page_label.text() == str(WORKING_PAGE)
     assert connected_window.memory_view.ecu_page_label.text() == str(WORKING_PAGE)
+
+
+def test_set_database_groups_struct_characteristics(qtbot) -> None:
+    """Kiểm tra CHARACTERISTIC dạng struct (speedPid_*) được gom nhóm thành parent-child."""
+    db = A2LDatabase()
+    for param in ("kp", "ki", "kd"):
+        db.characteristics[f"speedPid_{param}"] = Characteristic(
+            name=f"speedPid_{param}",
+            description=f"PID {param}",
+            char_type="VALUE",
+            address=MEM_BASE + 0x08,
+            record_layout="F32",
+            lower_limit=-10.0,
+            upper_limit=10.0,
+            datatype="FLOAT32_IEEE",
+        )
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    assert v.tree.topLevelItemCount() == 1
+    parent = v.tree.topLevelItem(0)
+    assert parent.text(COL_NAME) == "speedPid"
+    assert "STRUCT" in parent.text(COL_TYPE)
+    assert parent.childCount() == 3
+    child_names = [parent.child(i).text(COL_NAME) for i in range(3)]
+    assert child_names == ["kd", "ki", "kp"] or set(child_names) == {"kp", "ki", "kd"}
+
+
+def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
+    """Kiểm tra Array CHARACTERISTIC (VAL_BLK) có các node con và sửa con đồng bộ cha."""
+    db = A2LDatabase()
+    db.characteristics["tempTable"] = Characteristic(
+        name="tempTable",
+        description="Temperature table",
+        char_type="VAL_BLK",
+        address=MEM_BASE + 0x20,
+        record_layout="F32",
+        lower_limit=-40.0,
+        upper_limit=150.0,
+        array_size=3,
+        datatype="FLOAT32_IEEE",
+    )
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    parent = v.tree.topLevelItem(0)
+    assert parent.text(COL_NAME) == "tempTable"
+    assert parent.childCount() == 3
+    assert parent.child(0).text(COL_NAME) == "[0]"
+    assert parent.child(1).text(COL_NAME) == "[1]"
+    assert parent.child(2).text(COL_NAME) == "[2]"
+
+    # Giả lập đọc xong giá trị
+    v.on_read_done("tempTable", struct.pack("<3f", 10.0, 20.0, 30.0))
+    assert parent.text(COL_VALUE) == "10, 20, 30"
+    assert parent.child(0).text(COL_VALUE) == "10"
+    assert parent.child(1).text(COL_VALUE) == "20"
+    assert parent.child(2).text(COL_VALUE) == "30"
+
+    # Người dùng chọn và sửa phần tử con [1] thành "25"
+    child1 = parent.child(1)
+    v.tree.setCurrentItem(child1)
+    child1.setText(COL_VALUE, "25")
+    # Kích hoạt signal itemChanged
+    v._on_item_changed(child1, COL_VALUE)
+
+    assert parent.text(COL_VALUE) == "10, 25, 30"
+    assert "tempTable" in v._dirty
+    assert v._selected_char_name() == "tempTable"
+    assert v.write_btn.isEnabled()
+
+
