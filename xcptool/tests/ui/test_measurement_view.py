@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt
 from xcptool.a2l.types import A2LDatabase, Measurement
 from xcptool.session.api import DaqList, DaqSignal, SamplePoint
 from xcptool.session.fake import FakeBehavior, FakeSession, MEM_BASE
-from xcptool.ui.measurement_view import COL_DTYPE, COL_NAME, MeasurementView
+from xcptool.ui.measurement_view import COL_ADDR, COL_DTYPE, COL_NAME, COL_VALUE, MeasurementView
 
 
 # ── fixture helpers ──────────────────────────────────────────────────────────
@@ -197,4 +197,44 @@ def test_start_emits_daq_start_requested_for_array(qtbot, view: MeasurementView)
         assert sigs[i].address == (MEM_BASE + 0x1C) + i * 4
         assert sigs[i].size == 4
         assert sigs[i].datatype == "FLOAT32_IEEE"
+
+
+def test_on_samples_updates_live_value_in_tree(view: MeasurementView) -> None:
+    """on_samples cập nhật giá trị hiển thị cột Giá trị trực tiếp trên Tree."""
+    db = _make_db()
+    view.set_database(db)
+
+    item = view._tree_items.get("speed")
+    assert item is not None
+    assert item.text(COL_VALUE) == "-"
+
+    raw = struct.pack("<H", 85)
+    sp = SamplePoint(name="speed", timestamp_ns=1000, value_raw=raw, datatype="UWORD")
+    view.on_samples([sp])
+
+    assert "85" in item.text(COL_VALUE)
+
+
+def test_scope_toggle_hides_plot_and_skips_curve_data(view: MeasurementView) -> None:
+    """Khi tắt scope switch, đồ thị ẩn đi và on_samples không nạp điểm vào curve."""
+    db = _make_db()
+    view.set_database(db)
+    view.start_btn.click()
+
+    # Tắt scope switch
+    view.scope_switch.setChecked(False)
+    assert not view._plot.isVisible()
+
+    raw = struct.pack("<H", 100)
+    sp = SamplePoint(name="speed", timestamp_ns=1000, value_raw=raw, datatype="UWORD")
+    view.on_samples([sp])
+
+    # Tree vẫn được cập nhật live value
+    item = view._tree_items.get("speed")
+    assert item is not None
+    assert "100" in item.text(COL_VALUE)
+
+    # Nhưng curve không nạp thêm điểm
+    assert len(view._xs.get("speed", [])) == 0
+
 

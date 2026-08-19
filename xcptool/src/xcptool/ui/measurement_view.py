@@ -29,6 +29,7 @@ from qfluentwidgets import (
     CaptionLabel,
     PrimaryPushButton,
     PushButton,
+    SwitchButton,
 )
 
 from ..session.api import A2LDatabase, DaqList, DaqSignal, SamplePoint
@@ -56,6 +57,8 @@ _MAX_POINTS = 3000
 COL_NAME  = 0
 COL_DTYPE = 1
 COL_ADDR  = 2
+COL_VALUE = 3
+
 
 
 def _raw_to_float(data: bytes, datatype: str, byte_order: str) -> float | None:
@@ -91,6 +94,9 @@ class MeasurementView(QWidget):
         self._byte_order = "little"
         self._daq_running = False
 
+        # Ánh xạ tên signal (vd: "speed", "torqueSamples[0]") -> QTreeWidgetItem
+        self._tree_items: dict[str, QTreeWidgetItem] = {}
+
         # Plot state — được thiết lập khi _setup_curves() chạy
         self._curves: dict[str, pg.PlotDataItem] = {}
         # Fix 1: Tách thành hai deque float riêng thay vì deque[tuple] —
@@ -121,25 +127,34 @@ class MeasurementView(QWidget):
         self.stop_btn.clicked.connect(self._on_stop)
         self.stop_btn.setEnabled(False)
 
+        # Switch bật / tắt vẽ đồ thị
+        self.scope_switch = SwitchButton(self)
+        self.scope_switch.setOnText("Đồ thị: Bật")
+        self.scope_switch.setOffText("Đồ thị: Tắt")
+        self.scope_switch.setChecked(True)
+        self.scope_switch.checkedChanged.connect(self._on_scope_toggled)
+
         self.count_label = BodyLabel("Chưa nạp A2L.", self)
 
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.load_btn)
         toolbar.addWidget(self.start_btn)
         toolbar.addWidget(self.stop_btn)
+        toolbar.addWidget(self.scope_switch)
         toolbar.addWidget(self.count_label)
         toolbar.addStretch(1)
 
-        # cây signal (trái)
+        # cây signal (trái) — hiển thị dạng bảng thông số & live values
         self.tree = QTreeWidget(self)
-        self.tree.setColumnCount(3)
-        self.tree.setHeaderLabels(["Signal", "Kiểu", "Địa chỉ"])
-        self.tree.setRootIsDecorated(False)
+        self.tree.setColumnCount(4)
+        self.tree.setHeaderLabels(["Signal", "Kiểu", "Địa chỉ", "Giá trị"])
+        self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         hdr = self.tree.header()
         hdr.setSectionResizeMode(COL_NAME,  QHeaderView.Stretch)
         hdr.setSectionResizeMode(COL_DTYPE, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(COL_ADDR,  QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(COL_VALUE, QHeaderView.ResizeToContents)
 
         # đồ thị (phải)
         # Fix 2: OpenGL offload render sang GPU — nhanh hơn software QPainter.
@@ -159,12 +174,12 @@ class MeasurementView(QWidget):
         self._plot.showGrid(x=True, y=True, alpha=0.3)
         self._legend = self._plot.addLegend(offset=(10, 10))
 
-        splitter = QSplitter(Qt.Horizontal, self)
-        splitter.addWidget(self.tree)
-        splitter.addWidget(self._plot)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([240, 800])
+        self._splitter = QSplitter(Qt.Horizontal, self)
+        self._splitter.addWidget(self.tree)
+        self._splitter.addWidget(self._plot)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([320, 720])
 
         self.status_label = CaptionLabel("", self)
 
@@ -172,7 +187,7 @@ class MeasurementView(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(8)
         layout.addLayout(toolbar)
-        layout.addWidget(splitter, 1)
+        layout.addWidget(self._splitter, 1)
         layout.addWidget(self.status_label)
 
     # ── API công khai (gọi từ MainWindow, UI thread) ─────────────────────────
@@ -181,15 +196,37 @@ class MeasurementView(QWidget):
         """Điền tree từ A2LDatabase mới nạp — xoá mọi state cũ."""
         self._db = db
         self.tree.clear()
+        self._tree_items.clear()
         for name, meas in sorted(db.measurements.items()):
             item = QTreeWidgetItem()
             item.setData(COL_NAME, Qt.UserRole, name)
             item.setText(COL_NAME, name)
             item.setCheckState(COL_NAME, Qt.Unchecked)
-            item.setText(COL_DTYPE, meas.datatype)
+            item.setText(
+                COL_DTYPE,
+                meas.datatype if meas.array_size == 1 else f"{meas.datatype}[{meas.array_size}]"
+            )
             item.setText(COL_ADDR, f"0x{meas.address:08X}")
+            item.setText(COL_VALUE, "-")
             item.setToolTip(COL_NAME, meas.description)
             self.tree.addTopLevelItem(item)
+
+            if meas.array_size == 1:
+                self._tree_items[name] = item
+            else:
+                elem_size = meas.byte_size // meas.array_size
+                for i in range(meas.array_size):
+                    child_name = f"{meas.name}[{i}]"
+                    child = QTreeWidgetItem()
+                    child.setData(COL_NAME, Qt.UserRole, child_name)
+                    child.setText(COL_NAME, f"[{i}]")
+                    child.setText(COL_DTYPE, meas.datatype)
+                    child.setText(COL_ADDR, f"0x{(meas.address + i * elem_size):08X}")
+                    child.setText(COL_VALUE, "-")
+                    item.addChild(child)
+                    self._tree_items[child_name] = child
+                item.setExpanded(True)
+
         n = len(db.measurements)
         self.count_label.setText(f"{n} MEASUREMENT")
         self.status_label.setText(
@@ -217,11 +254,23 @@ class MeasurementView(QWidget):
         self.status_label.setText("Đã dừng.")
 
     def on_samples(self, samples: list[SamplePoint]) -> None:
-        """Gọi từ timer 40ms trong MainWindow — thêm điểm vào scope."""
-        if not samples or not self._curves:
+        """Gọi từ timer 40ms trong MainWindow — cập nhật live value & scope."""
+        if not samples:
             return
 
-        # Bước 1: nạp điểm mới vào buffer
+        # Bước 1: Cập nhật giá trị hiển thị thời gian thực (Live Value) trên Tree
+        for sp in samples:
+            val = _raw_to_float(sp.value_raw, sp.datatype, self._byte_order)
+            if val is not None:
+                tree_item = self._tree_items.get(sp.name)
+                if tree_item is not None:
+                    tree_item.setText(COL_VALUE, f"{val:.4g}")
+
+        # Bước 2: Nếu tắt chế độ vẽ Scope hoặc chưa cấu hình curves -> bỏ qua phần vẽ đồ thị
+        if not self.scope_switch.isChecked() or not self._curves:
+            return
+
+        # Bước 3: Nạp điểm mới vào buffer đồ thị
         for sp in samples:
             xs_buf = self._xs.get(sp.name)
             ys_buf = self._ys.get(sp.name)
@@ -243,7 +292,7 @@ class MeasurementView(QWidget):
             xs_buf.append(t_s)
             ys_buf.append(val)  # type: ignore[union-attr]
 
-        # Bước 2: vẽ lại những curve có điểm mới
+        # Bước 4: Vẽ lại những curve có điểm mới
         # Fix 1: np.fromiter() + Fix 3: skip khi độ dài không đổi
         for name, curve in self._curves.items():
             xs_buf = self._xs[name]
@@ -255,6 +304,15 @@ class MeasurementView(QWidget):
             ys = np.fromiter(self._ys[name], dtype=np.float64, count=n)
             curve.setData(x=xs, y=ys)
             self._drawn_len[name] = n
+
+    def _on_scope_toggled(self, checked: bool) -> None:
+        """Ẩn/hiện scope plot khi gạt switch."""
+        self._plot.setVisible(checked)
+        if checked:
+            self._splitter.setSizes([320, 720])
+        else:
+            self._splitter.setSizes([1000, 0])
+
 
     def set_busy(self, busy: bool) -> None:
         """MainWindow gọi khi bắt đầu / kết thúc một tác vụ nền."""
