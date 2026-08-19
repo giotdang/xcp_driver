@@ -296,6 +296,16 @@ class MeasurementView(QWidget):
         return names
 
     def _build_daq_lists(self) -> list[DaqList]:
+        """Dựng danh sách DaqList từ signals được tick.
+
+        Array signal (MATRIX_DIM) tự động tách thành N DaqSignal riêng:
+          torqueSamples[4] (FLOAT32_IEEE, 4B) →
+            torqueSamples[0] @ addr+0
+            torqueSamples[1] @ addr+4
+            torqueSamples[2] @ addr+8
+            torqueSamples[3] @ addr+12
+        Scalar signal (matrix_dim rỗng) giữ nguyên.
+        """
         checked = self._checked_names()
         if not checked:
             return []
@@ -304,13 +314,27 @@ class MeasurementView(QWidget):
             meas = self._db.measurements.get(name)
             if meas is None:
                 continue
-            signals.append(DaqSignal(
-                name=meas.name,
-                address=meas.address,
-                ext=0,
-                size=meas.byte_size,
-                datatype=meas.datatype,
-            ))
+            n = meas.array_size       # 1 nếu scalar, >1 nếu array
+            elem_size = meas.byte_size // n   # kích thước một phần tử (bytes)
+            if n == 1:
+                # Scalar — không thay đổi gì
+                signals.append(DaqSignal(
+                    name=meas.name,
+                    address=meas.address,
+                    ext=0,
+                    size=elem_size,
+                    datatype=meas.datatype,
+                ))
+            else:
+                # Array — tách thành N phần tử riêng, tên = "name[i]"
+                for i in range(n):
+                    signals.append(DaqSignal(
+                        name=f"{meas.name}[{i}]",
+                        address=meas.address + i * elem_size,
+                        ext=0,
+                        size=elem_size,
+                        datatype=meas.datatype,
+                    ))
         if not signals:
             return []
         return [DaqList(signals=signals, event=0, timestamp=True)]

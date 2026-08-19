@@ -164,3 +164,37 @@ def test_on_samples_stores_decoded_data(qtbot, view: MeasurementView) -> None:
     assert xs_buf is not None and len(xs_buf) > 0, "_xs buffer trống"
     assert ys_buf is not None and len(ys_buf) > 0, "_ys buffer trống"
     assert abs(ys_buf[-1] - 1234.0) < 1e-3
+
+
+def test_start_emits_daq_start_requested_for_array(qtbot, view: MeasurementView) -> None:
+    """Kiểm tra MEASUREMENT dạng array (MATRIX_DIM) được tự động tách thành N DaqSignal."""
+    db = A2LDatabase()
+    db.measurements["torqueSamples"] = Measurement(
+        name="torqueSamples",
+        description="Torque samples array",
+        datatype="FLOAT32_IEEE",
+        address=MEM_BASE + 0x1C,
+        lower_limit=0.0,
+        upper_limit=100.0,
+        matrix_dim=[4],
+    )
+    view.set_database(db)
+
+    # Check torqueSamples
+    item = view.tree.topLevelItem(0)
+    assert item.text(COL_NAME) == "torqueSamples"
+    item.setCheckState(COL_NAME, Qt.Checked)
+
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert len(emitted) == 1
+    sigs = emitted[0][0].signals
+    assert len(sigs) == 4
+    for i in range(4):
+        assert sigs[i].name == f"torqueSamples[{i}]"
+        assert sigs[i].address == (MEM_BASE + 0x1C) + i * 4
+        assert sigs[i].size == 4
+        assert sigs[i].datatype == "FLOAT32_IEEE"
+
