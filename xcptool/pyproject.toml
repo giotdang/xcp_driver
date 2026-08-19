@@ -18,6 +18,8 @@ dependencies = [
     "PySide6>=6.6",
     "PySide6-Fluent-Widgets>=1.11",
     "pyqtgraph>=0.13",
+    "numpy>=1.26",     # dùng trực tiếp trong measurement_view.py (Fix 1: np.fromiter)
+    "PyOpenGL>=3.1",   # dùng trong measurement_view.py (Fix 2: useOpenGL=True)
 ]
 
 # asammdf (MDF4) để tới mốc sau, chưa cần cho M1/M2–M4.

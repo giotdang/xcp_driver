@@ -158,7 +158,9 @@ def test_on_samples_stores_decoded_data(qtbot, view: MeasurementView) -> None:
     view.on_daq_started()
     view.on_samples([sp])
 
-    buf = view._data.get("speed")
-    assert buf is not None and len(buf) > 0
-    _, val = buf[-1]
-    assert abs(val - 1234.0) < 1e-3
+    # Sau Fix 1: buffer tách thành _xs / _ys riêng thay vì _data[deque[tuple]]
+    xs_buf = view._xs.get("speed")
+    ys_buf = view._ys.get("speed")
+    assert xs_buf is not None and len(xs_buf) > 0, "_xs buffer trống"
+    assert ys_buf is not None and len(ys_buf) > 0, "_ys buffer trống"
+    assert abs(ys_buf[-1] - 1234.0) < 1e-3

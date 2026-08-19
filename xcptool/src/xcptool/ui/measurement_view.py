@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import struct
 import time
 from collections import deque
 from typing import Any
+
+import numpy as np
+
+log = logging.getLogger(__name__)
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
@@ -88,7 +93,12 @@ class MeasurementView(QWidget):
 
         # Plot state — được thiết lập khi _setup_curves() chạy
         self._curves: dict[str, pg.PlotDataItem] = {}
-        self._data: dict[str, deque[tuple[float, float]]] = {}
+        # Fix 1: Tách thành hai deque float riêng thay vì deque[tuple] —
+        # tránh unpack tuple mỗi lần, np.fromiter() nhanh hơn list comprehension.
+        self._xs: dict[str, deque[float]] = {}
+        self._ys: dict[str, deque[float]] = {}
+        # Fix 3: Theo dõi số điểm đã vẽ — skip setData() khi không có gì mới.
+        self._drawn_len: dict[str, int] = {}
         self._legend: pg.LegendItem | None = None
 
         # Mốc thời gian: ns từ ECU (t0_ns) hoặc wall clock (start_mono)
@@ -132,7 +142,17 @@ class MeasurementView(QWidget):
         hdr.setSectionResizeMode(COL_ADDR,  QHeaderView.ResizeToContents)
 
         # đồ thị (phải)
-        pg.setConfigOptions(antialias=True, useOpenGL=False)
+        # Fix 2: OpenGL offload render sang GPU — nhanh hơn software QPainter.
+        # Graceful fallback nếu PyOpenGL chưa cài (log warning, không crash).
+        try:
+            import OpenGL  # noqa: F401
+            pg.setConfigOptions(antialias=True, useOpenGL=True)
+        except ImportError:
+            log.warning(
+                "PyOpenGL chưa cài — scope dùng software rendering (chậm hơn). "
+                "Cài bằng: pip install PyOpenGL"
+            )
+            pg.setConfigOptions(antialias=False, useOpenGL=False)
         self._plot = pg.PlotWidget(background=None)
         self._plot.setLabel("left",   "Giá trị")
         self._plot.setLabel("bottom", "Thời gian (s)")
@@ -201,10 +221,12 @@ class MeasurementView(QWidget):
         if not samples or not self._curves:
             return
 
+        # Bước 1: nạp điểm mới vào buffer
         for sp in samples:
-            buf   = self._data.get(sp.name)
-            curve = self._curves.get(sp.name)
-            if buf is None or curve is None:
+            xs_buf = self._xs.get(sp.name)
+            ys_buf = self._ys.get(sp.name)
+            curve  = self._curves.get(sp.name)
+            if xs_buf is None or curve is None:
                 continue
 
             val = _raw_to_float(sp.value_raw, sp.datatype, self._byte_order)
@@ -218,15 +240,21 @@ class MeasurementView(QWidget):
             else:
                 t_s = time.perf_counter() - self._start_mono
 
-            buf.append((t_s, val))
+            xs_buf.append(t_s)
+            ys_buf.append(val)  # type: ignore[union-attr]
 
+        # Bước 2: vẽ lại những curve có điểm mới
+        # Fix 1: np.fromiter() + Fix 3: skip khi độ dài không đổi
         for name, curve in self._curves.items():
-            buf = self._data[name]
-            if not buf:
-                continue
-            xs = [p[0] for p in buf]
-            ys = [p[1] for p in buf]
-            curve.setData(xs, ys)
+            xs_buf = self._xs[name]
+            n = len(xs_buf)
+            if n == 0 or n == self._drawn_len.get(name, 0):
+                continue   # Fix 3: không có điểm mới, bỏ qua
+            # Fix 1: NumPy array — pyqtgraph nhận thẳng, không convert thêm
+            xs = np.fromiter(xs_buf, dtype=np.float64, count=n)
+            ys = np.fromiter(self._ys[name], dtype=np.float64, count=n)
+            curve.setData(x=xs, y=ys)
+            self._drawn_len[name] = n
 
     def set_busy(self, busy: bool) -> None:
         """MainWindow gọi khi bắt đầu / kết thúc một tác vụ nền."""
@@ -293,7 +321,9 @@ class MeasurementView(QWidget):
         for curve in self._curves.values():
             self._plot.removeItem(curve)
         self._curves.clear()
-        self._data.clear()
+        self._xs.clear()
+        self._ys.clear()
+        self._drawn_len.clear()
         self._t0_ns = 0
 
         if self._legend is not None:
@@ -307,4 +337,5 @@ class MeasurementView(QWidget):
                 pen = pg.mkPen(color=color, width=1.5)
                 curve = self._plot.plot([], [], name=sig.name, pen=pen)
                 self._curves[sig.name] = curve
-                self._data[sig.name] = deque(maxlen=_MAX_POINTS)
+                self._xs[sig.name] = deque(maxlen=_MAX_POINTS)
+                self._ys[sig.name] = deque(maxlen=_MAX_POINTS)
