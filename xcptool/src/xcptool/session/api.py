@@ -59,6 +59,7 @@ from ..a2l import A2LDatabase
 __all__ = [
     "ConnState", "PageMode", "Direction", "FrameKind",
     "DeviceInfo", "BusConfig", "DaqCaps", "SlaveCaps", "TraceEntry",
+    "DaqSignal", "DaqList", "SamplePoint",
     "XcpToolError", "TransportError", "DeviceNotFoundError", "DriverMissingError",
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
     "SlaveError", "WriteProtectedError", "OutOfRangeError", "SequenceError",
@@ -201,6 +202,43 @@ class TraceEntry:
     kind: FrameKind
     decoded: str                    # 'CONNECT mode=0' | 'ERR CRC_WRITE_PROTECTED' | '01 02 …'
     note: str | None = None         # 'timeout T1', 'retry', 'dropped 42 frames'…
+
+
+@dataclass(frozen=True)
+class DaqSignal:
+    """Một signal cần đưa vào DAQ list.
+
+    Tạo từ `A2LDatabase.measurements[name]`:
+        DaqSignal(name=m.name, address=m.address, ext=0, size=m.byte_size, datatype=m.datatype)
+    """
+    name: str
+    address: int
+    ext: int        # address extension, thường = 0 với ECU CAN
+    size: int       # byte — DATATYPE_SIZES[datatype] × array_size
+    datatype: str   # DataType literal ('UINT16', 'FLOAT32', ...)
+
+
+@dataclass
+class DaqList:
+    """Một DAQ list cần cấu hình trên ECU."""
+    signals: list[DaqSignal]
+    event: int                  # mã kênh event (từ A2L hoặc hardcode)
+    timestamp: bool = True      # bật timestamp trên ODT 0
+    prescaler: int = 1          # 1 = mỗi event một lần
+    priority: int = 0           # 0 = thấp nhất
+
+
+@dataclass(frozen=True)
+class SamplePoint:
+    """Một giá trị đo tại một thời điểm, decode từ DTO frame.
+
+    value_raw: bytes thô — UI tự decode theo datatype.
+    timestamp_ns: nanosecond tuyệt đối tính từ START_STOP_SYNCH, bù rollover.
+    """
+    name: str
+    timestamp_ns: int
+    value_raw: bytes
+    datatype: str
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -445,6 +483,31 @@ class Session(Protocol):
         trăm ms với file lớn.
 
         Raises: XcpToolError nếu file không đọc được hoặc lỗi parse nghiêm trọng
+        """
+
+    # ── DAQ (M4) ─────────────────────────────────────────────────────────────
+
+    def start_daq(self, lists: list[DaqList]) -> None:
+        """Cấu hình DAQ list trên ECU rồi gọi START_STOP_SYNCH. CHẶN.
+
+        Sau khi trả về, ECU bắt đầu phát DTO frame. Dùng `drain_daq()` để
+        lấy sample. Gọi `stop_daq()` để dừng.
+
+        Raises: NotConnectedError, UnsupportedByEcuError, SlaveError,
+                BusyError, XcpTimeoutError
+        """
+
+    def stop_daq(self) -> None:
+        """Dừng tất cả DAQ list. Idempotent. CHẶN.
+
+        Raises: NotConnectedError, BusyError, XcpTimeoutError
+        """
+
+    def drain_daq(self, n: int = 1000) -> list[SamplePoint]:
+        """Lấy và xoá tối đa `n` sample từ ring buffer. KHÔNG CHẶN, an toàn thread.
+
+        Gọi theo QTimer 40ms. Trả list rỗng khi không có gì mới. Ring buffer
+        có trần — khi đầy, sample CŨ nhất bị bỏ (real-time priority).
         """
 
     # ── lệnh thô (M1 — cửa sổ debug) ─────────────────────────────────────────

@@ -37,6 +37,7 @@ from qfluentwidgets import (
 from ..session.api import (
     BusConfig,
     ConnState,
+    DaqList,
     PageMode,
     SlaveCaps,
     WriteProtectedError,
@@ -51,6 +52,7 @@ from .console_view import ConsoleView
 from .device_dialog import DeviceDialog
 from .dock_manager import DockManager
 from .logging_setup import current_log_path
+from .measurement_view import MeasurementView
 from .memory_view import WORKING_PAGE, MemoryView, ask_switch_to_working_page
 from .theme import apply_theme
 from .trace_view import TraceView
@@ -126,6 +128,11 @@ class MainWindow(QMainWindow):
         )
         self.calibration_view.a2l_load_requested.connect(self._on_a2l_load_requested)
 
+        self.measurement_view = MeasurementView(parent=self)
+        self.measurement_view.a2l_load_requested.connect(self._on_a2l_load_requested)
+        self.measurement_view.daq_start_requested.connect(self.start_daq)
+        self.measurement_view.daq_stop_requested.connect(self.stop_daq)
+
     def _build_navigation(self) -> None:
         central = QWidget(self)
         central.setObjectName("chrome")
@@ -140,12 +147,20 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self.stack.addWidget(self.calibration_view)
+        self.stack.addWidget(self.measurement_view)
 
         self.nav.addItem(
             routeKey="calibration",
             icon=FluentIcon.EDIT,
             text="Hiệu chỉnh",
             onClick=lambda: self.switch_to(self.calibration_view),
+            position=NavigationItemPosition.SCROLL,
+        )
+        self.nav.addItem(
+            routeKey="measurement",
+            icon=FluentIcon.DEVELOPER_TOOLS,
+            text="Đo lường",
+            onClick=lambda: self.switch_to(self.measurement_view),
             position=NavigationItemPosition.SCROLL,
         )
         self.nav.addItem(
@@ -294,6 +309,7 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setVisible(cancellable)
         self.memory_view.set_busy(True)
         self.calibration_view.set_busy(True)
+        self.measurement_view.set_busy(True)
         self.act_connect.setEnabled(False)
 
     def _end_busy(self) -> None:
@@ -303,6 +319,7 @@ class MainWindow(QMainWindow):
         self.cancel_btn.hide()
         self.memory_view.set_busy(False)
         self.calibration_view.set_busy(False)
+        self.measurement_view.set_busy(False)
         self.act_connect.setEnabled(True)
         self._refresh_state()
 
@@ -402,6 +419,7 @@ class MainWindow(QMainWindow):
             self._connect_task = None
             self._end_busy()
             self.calibration_view.set_byte_order(caps.byte_order)
+            self.measurement_view.set_byte_order(caps.byte_order)
             self.notify("Đã kết nối", self._caps_summary(caps))
             self._refresh_pages_after_connect()
 
@@ -566,6 +584,7 @@ class MainWindow(QMainWindow):
     def _after_a2l_load(self) -> None:
         db = self.session.symbols
         self.calibration_view.set_database(db)
+        self.measurement_view.set_database(db)
         self.notify(
             "A2L đã nạp",
             f"{len(db.characteristics)} CHARACTERISTIC, {len(db.measurements)} MEASUREMENT",
@@ -689,6 +708,29 @@ class MainWindow(QMainWindow):
             on_ok=lambda _: self.cal_get_pages(dst_seg),
         )
 
+    # ── DAQ ──────────────────────────────────────────────────────────────────
+
+    def start_daq(self, lists: list[DaqList]) -> None:
+        """Gọi từ MeasurementView signal — chạy session.start_daq trên worker."""
+        if not self._guard():
+            return
+        self._call(
+            "Đang khởi động DAQ…",
+            self.session.start_daq, lists,
+            on_ok=lambda _: self.measurement_view.on_daq_started(),
+            on_err=lambda exc: errors.show_error(self, exc),
+        )
+
+    def stop_daq(self) -> None:
+        """Gọi từ MeasurementView signal — chạy session.stop_daq trên worker."""
+        if not self._guard():
+            return
+        self._call(
+            "Đang dừng DAQ…",
+            self.session.stop_daq,
+            on_ok=lambda _: self.measurement_view.on_daq_stopped(),
+        )
+
     # ── trace ────────────────────────────────────────────────────────────────
 
     def _poll_trace(self) -> None:
@@ -701,6 +743,15 @@ class MainWindow(QMainWindow):
             return
         self.trace_view.feed(entries, dropped)
         self.drop_label.setText(f"frame bị bỏ: {dropped}" if dropped else "")
+
+        # DAQ — drain trong cùng tick 40ms để giữ nguyên tắc "một nơi drain"
+        try:
+            samples = self.session.drain_daq()
+            if samples:
+                self.measurement_view.on_samples(samples)
+        except Exception:  # noqa: BLE001 — drain lỗi không được giết timer
+            log.exception("drain_daq() lỗi, bỏ qua")
+
         self._refresh_state()
 
     def _refresh_state(self) -> None:

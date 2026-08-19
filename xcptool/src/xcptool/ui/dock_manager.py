@@ -16,11 +16,12 @@ from PySide6.QtWidgets import (
 
 __all__ = ["DockManager"]
 
-_ARROW_COLLAPSE = "▲"  # ▲ — vùng debug đang mở, bấm để thu nhỏ
-_ARROW_EXPAND = "▼"    # ▼ — vùng debug đang thu nhỏ, bấm để mở lại
+_ARROW_COLLAPSE = "▼"  # ▼ — vùng debug đang mở, bấm để thu nhỏ (mũi tên xuống)
+_ARROW_EXPAND = "▲"    # ▲ — vùng debug đang thu nhỏ, bấm để mở lại (mũi tên lên)
 
 _TITLEBAR_HEIGHT = 28
 _DEFAULT_EXPANDED_HEIGHT = 220
+_WIDGET_HEIGHT_MAX = 16_777_215  # QWIDGETSIZE_MAX của Qt — không export qua PySide6
 
 
 class DockManager:
@@ -99,19 +100,23 @@ class DockManager:
         current_height = self.trace_dock.height()
         if current_height > _TITLEBAR_HEIGHT:
             self._expanded_height = current_height
-        # Ẩn nội dung (không phải ẩn dock) — bỏ ràng buộc minimum-height của
-        # trace_view/console_view, nếu không resizeDocks() sẽ không thu nhỏ
-        # được xuống dưới minimumSizeHint của chúng.
-        self.trace_dock.widget().hide()
-        self.console_dock.widget().hide()
+        # setMaximumHeight(0) thay vì hide(): hide() loại nội dung khỏi layout
+        # HOÀN TOÀN, kể cả chiều rộng nó đóng góp — QMainWindowLayout khi đó
+        # tính lại bề rộng cả dock/tab-group chỉ theo minimumSizeHint() của
+        # title bar (rất hẹp), để lại khoảng trống lớn bên phải (bug user báo
+        # cáo). Ép chiều cao tối đa = 0 vẫn loại bỏ được ràng buộc minimum-
+        # height (để resizeDocks() thu nhỏ được xuống dưới minimumSizeHint),
+        # nhưng KHÔNG đụng tới sizeHint bề rộng — dock vẫn full-width.
+        self.trace_dock.widget().setMaximumHeight(0)
+        self.console_dock.widget().setMaximumHeight(0)
         self._mw.resizeDocks(
             [self.trace_dock], [_TITLEBAR_HEIGHT], Qt.Orientation.Vertical
         )
         self._debug_collapsed = True
 
     def _expand_debug_area(self) -> None:
-        self.trace_dock.widget().show()
-        self.console_dock.widget().show()
+        self.trace_dock.widget().setMaximumHeight(_WIDGET_HEIGHT_MAX)
+        self.console_dock.widget().setMaximumHeight(_WIDGET_HEIGHT_MAX)
         height = self._expanded_height or _DEFAULT_EXPANDED_HEIGHT
         self._mw.resizeDocks([self.trace_dock], [height], Qt.Orientation.Vertical)
         self.trace_dock.raise_()
@@ -200,10 +205,15 @@ class DockManager:
         btn = QToolButton(bar)
         btn.setText(_ARROW_COLLAPSE)
         btn.setAutoRaise(True)
-        btn.setFixedSize(20, 20)
+        btn.setFixedSize(22, 22)
         btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(
+            "QToolButton { color: #0078d4; background: transparent;"
+            " border: none; font-size: 15px; font-weight: bold; }"
+            " QToolButton:hover { color: #0060a3; }"
+        )
         btn.clicked.connect(on_toggle)
-        layout.addWidget(btn)
+        layout.addWidget(btn, 0, Qt.AlignBottom)
         self._debug_arrow_btns.append(btn)
 
         return bar

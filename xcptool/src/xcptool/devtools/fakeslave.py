@@ -121,6 +121,20 @@ class FakeSlave:
         # test, không phải của sản phẩm. Đủ sâu cho mọi khẳng định trong test.
         self.commands_seen: deque[int] = deque(maxlen=10_000)
 
+        # DAQ state — được reset bởi FREE_DAQ
+        # _daq_lists[daq][odt] = list of (bit_offset, size, ext, addr)
+        self._daq_lists: list[list[list[tuple[int, int, int, int]]]] = []
+        self._daq_modes: list[dict[str, int]] = []
+        self._daq_first_pids: list[int] = []
+        self._daq_write_pos: tuple[int, int, int] = (0, 0, 0)  # (daq, odt, entry)
+        self._daq_next_pid: int = 0
+        self.daq_running: bool = False  # public — test kiểm tra trực tiếp
+
+        # DAQ send thread — gửi DTO frame 100 Hz khi daq_running=True
+        self._daq_thread: threading.Thread | None = None
+        self._daq_stop: threading.Event = threading.Event()
+        self._daq_t0: float = 0.0
+
     # ── vòng đời ─────────────────────────────────────────────────────────────
 
     def start(self) -> FakeSlave:
@@ -133,7 +147,8 @@ class FakeSlave:
 
     def stop(self) -> None:
         self._stop.set()
-        for t in (self._thread, self._flood_thread):
+        self._daq_stop.set()
+        for t in (self._thread, self._flood_thread, self._daq_thread):
             if t is not None and t.is_alive():
                 t.join(timeout=2.0)
         try:
@@ -201,6 +216,54 @@ class FakeSlave:
                     is_extended_id=self.cfg.extended_id))
             except Exception:  # noqa: BLE001
                 return
+
+    def _daq_send_loop(self) -> None:
+        """Gửi DTO frame 100 Hz cho mỗi DAQ list đang chạy."""
+        period = 0.01   # 10ms = 100 Hz
+        next_at = time.perf_counter()
+        while not self._daq_stop.is_set() and not self._stop.is_set():
+            now = time.perf_counter()
+            if now < next_at:
+                time.sleep(min(next_at - now, 0.005))
+                continue
+            next_at += period
+            elapsed_ns = (now - self._daq_t0) * 1e9
+            ts_ticks = int(elapsed_ns / 10) & 0xFFFF_FFFF  # 10ns/tick, 32-bit
+            self._send_daq_frames(ts_ticks)
+
+    def _send_daq_frames(self, ts_ticks: int) -> None:
+        """Đọc bộ nhớ ECU giả, đóng gói frame DTO và gửi lên bus."""
+        try:
+            snap = list(zip(self._daq_lists, self._daq_modes, self._daq_first_pids))
+        except Exception:  # noqa: BLE001
+            return
+        bo = self.cfg.byte_order
+        for odts, mode_info, first_pid in snap:
+            has_ts = bool(mode_info.get("mode", 0) & 0x10)
+            try:
+                odt_list = list(enumerate(odts))
+            except Exception:  # noqa: BLE001
+                continue
+            for odt_idx, entries in odt_list:
+                pid = (first_pid + odt_idx) & 0xFF
+                frame = bytearray([pid])
+                if odt_idx == 0 and has_ts:
+                    frame += ts_ticks.to_bytes(4, bo)  # type: ignore[arg-type]
+                for _bit_off, sz, _ext, addr in entries:
+                    off = addr - self.cfg.mem_base
+                    if 0 <= off and off + sz <= self.cfg.mem_size:
+                        frame += self.memory[off:off + sz]
+                    else:
+                        frame += bytes(sz)
+                if self.cfg.pad_dlc and len(frame) < 8:
+                    frame = frame.ljust(8, b"\x00")
+                payload = bytes(frame[:8])
+                try:
+                    self._bus.send(can.Message(
+                        arbitration_id=self.cfg.dto_id, data=payload,
+                        is_extended_id=self.cfg.extended_id))
+                except Exception:  # noqa: BLE001
+                    return
 
     # ── xử lý lệnh ───────────────────────────────────────────────────────────
 
@@ -430,6 +493,138 @@ class FakeSlave:
                     + self._u16(self.cfg.max_event_channel)
                     + bytes([self.cfg.min_daq, 0x00]))
 
+    def daq_entries(self, daq: int, odt: int) -> list[tuple[int, int, int, int]]:
+        """Trả về list entries (bit_off, sz, ext, addr) đã ghi qua WRITE_DAQ — cho test."""
+        try:
+            return list(self._daq_lists[daq][odt])
+        except IndexError:
+            return []
+
+    def _cmd_free_daq(self, data: bytes) -> None:
+        self._daq_stop.set()   # ngừng thread nếu đang chạy
+        self._daq_lists = []
+        self._daq_modes = []
+        self._daq_first_pids = []
+        self._daq_next_pid = 0
+        self._daq_write_pos = (0, 0, 0)
+        self.daq_running = False
+        self._reply(b"\xff")
+
+    def _cmd_alloc_daq(self, data: bytes) -> None:
+        if len(data) < 4:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        count = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        self._daq_lists = [[] for _ in range(count)]
+        self._daq_modes = [{"event": 0, "mode": 0, "prescaler": 1, "prio": 0}
+                           for _ in range(count)]
+        self._daq_first_pids = [0] * count
+        self._reply(b"\xff")
+
+    def _cmd_alloc_odt(self, data: bytes) -> None:
+        if len(data) < 5:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        daq = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        count = data[4]
+        if daq >= len(self._daq_lists):
+            self._err(ErrCode.OUT_OF_RANGE)
+            return
+        self._daq_lists[daq] = [[] for _ in range(count)]
+        self._reply(b"\xff")
+
+    def _cmd_alloc_odt_entry(self, data: bytes) -> None:
+        if len(data) < 6:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        daq = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        # Phần body chỉ kiểm tra bounds; entries tự WRITE_DAQ điền.
+        if daq >= len(self._daq_lists):
+            self._err(ErrCode.OUT_OF_RANGE)
+            return
+        self._reply(b"\xff")
+
+    def _cmd_set_daq_ptr(self, data: bytes) -> None:
+        if len(data) < 6:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        daq = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        odt, entry = data[4], data[5]
+        self._daq_write_pos = (daq, odt, entry)
+        self._reply(b"\xff")
+
+    def _cmd_write_daq(self, data: bytes) -> None:
+        if len(data) < 8:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        bit_off, sz, ext = data[1], data[2], data[3]
+        addr = int.from_bytes(data[4:8], self.cfg.byte_order)  # type: ignore[arg-type]
+        daq, odt, entry = self._daq_write_pos
+        if daq >= len(self._daq_lists) or odt >= len(self._daq_lists[daq]):
+            self._err(ErrCode.OUT_OF_RANGE)
+            return
+        entries = self._daq_lists[daq][odt]
+        # Điền hoặc thay thế tại vị trí entry, tự mở rộng nếu cần.
+        while len(entries) <= entry:
+            entries.append((0, 0, 0, 0))
+        entries[entry] = (bit_off, sz, ext, addr)
+        self._daq_write_pos = (daq, odt, entry + 1)
+        self._reply(b"\xff")
+
+    def _cmd_set_daq_list_mode(self, data: bytes) -> None:
+        if len(data) < 8:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        mode = data[1]
+        daq = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        event = int.from_bytes(data[4:6], self.cfg.byte_order)  # type: ignore[arg-type]
+        prescaler, prio = data[6], data[7]
+        if daq >= len(self._daq_lists):
+            self._err(ErrCode.OUT_OF_RANGE)
+            return
+        self._daq_modes[daq] = {"event": event, "mode": mode,
+                                 "prescaler": prescaler, "prio": prio}
+        self._reply(b"\xff")
+
+    def _cmd_start_stop_daq_list(self, data: bytes) -> None:
+        if len(data) < 4:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        mode = data[1]  # 0=stop, 1=start, 2=select
+        daq = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        if daq >= len(self._daq_lists):
+            self._err(ErrCode.OUT_OF_RANGE)
+            return
+        if mode == 2:  # select — assign firstPid
+            first_pid = self._daq_next_pid
+            self._daq_first_pids[daq] = first_pid
+            self._daq_next_pid += len(self._daq_lists[daq])
+            self._reply(bytes([0xFF, first_pid]))
+        else:
+            self._reply(b"\xff")
+
+    def _cmd_start_stop_synch(self, data: bytes) -> None:
+        if len(data) < 2:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        mode = data[1]
+        self.daq_running = mode == 1
+        if mode == 1:
+            # Trả lời TRƯỚC khi khởi động thread gửi DAQ — nếu làm ngược lại,
+            # thread gửi ngay frame đầu tiên (next_at = perf_counter() lúc
+            # start, không có độ trễ ban đầu) và có thể lên bus trước cả RES
+            # của chính START_STOP_SYNCH này, khiến Trace CAN đọc rất khó hiểu
+            # (bug user báo cáo qua screenshot: 2 frame DAQ đến trước RES).
+            self._daq_stop.clear()
+            self._daq_t0 = time.perf_counter()
+            self._reply(b"\xff")
+            self._daq_thread = threading.Thread(
+                target=self._daq_send_loop, name="fake-slave-daq-tx", daemon=True)
+            self._daq_thread.start()
+        else:
+            self._daq_stop.set()
+            self._reply(b"\xff")
+
     def _cmd_daq_resolution_info(self, data: bytes) -> None:
         if not (self.cfg.supports_daq and self.cfg.supports_daq_info):
             self._err(ErrCode.CMD_UNKNOWN)
@@ -458,4 +653,14 @@ _HANDLERS = {
     int(Cmd.COPY_CAL_PAGE): FakeSlave._cmd_copy_cal_page,
     int(Cmd.GET_DAQ_PROCESSOR_INFO): FakeSlave._cmd_daq_processor_info,
     int(Cmd.GET_DAQ_RESOLUTION_INFO): FakeSlave._cmd_daq_resolution_info,
+    # DAQ allocation (D4b)
+    int(Cmd.FREE_DAQ): FakeSlave._cmd_free_daq,
+    int(Cmd.ALLOC_DAQ): FakeSlave._cmd_alloc_daq,
+    int(Cmd.ALLOC_ODT): FakeSlave._cmd_alloc_odt,
+    int(Cmd.ALLOC_ODT_ENTRY): FakeSlave._cmd_alloc_odt_entry,
+    int(Cmd.SET_DAQ_PTR): FakeSlave._cmd_set_daq_ptr,
+    int(Cmd.WRITE_DAQ): FakeSlave._cmd_write_daq,
+    int(Cmd.SET_DAQ_LIST_MODE): FakeSlave._cmd_set_daq_list_mode,
+    int(Cmd.START_STOP_DAQ_LIST): FakeSlave._cmd_start_stop_daq_list,
+    int(Cmd.START_STOP_SYNCH): FakeSlave._cmd_start_stop_synch,
 }

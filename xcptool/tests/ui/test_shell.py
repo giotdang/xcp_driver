@@ -71,7 +71,7 @@ def test_dong_cua_so_goi_close(window: MainWindow, qtbot) -> None:
 
 def test_vung_debug_mo_mac_dinh(window: MainWindow) -> None:
     assert not window.dock_manager.is_debug_area_collapsed()
-    assert window.dock_manager.debug_toggle_symbol == "▲"
+    assert window.dock_manager.debug_toggle_symbol == "▼"
 
 
 def test_nut_toggle_nam_tren_titlebar_cua_dock_khong_phai_status_bar(
@@ -89,16 +89,17 @@ def test_nut_toggle_nam_tren_titlebar_cua_dock_khong_phai_status_bar(
 def test_toggle_vung_debug_thu_nho_khong_an_dock(window: MainWindow) -> None:
     """Bug đã sửa: trước đây toggle gọi hide() lên chính dock chứa nút — dock
     biến mất kéo theo nút, không còn cách nào bấm lại. Giờ dock LUÔN hiện
-    diện (title bar + nút luôn bấm được), chỉ nội dung bị ẩn + chiều cao co
-    lại bằng title bar, giống nút minimize."""
+    diện (title bar + nút luôn bấm được), chỉ nội dung bị co chiều cao về 0
+    (không dùng hide() nữa — xem dock_manager.py, hide() làm mất luôn chiều
+    rộng mà nội dung đóng góp, khiến cả dock co hẹp theo chiều ngang)."""
     dm = window.dock_manager
     window.toggle_debug_area()
     assert dm.is_debug_area_collapsed()
     assert not dm.trace_dock.isHidden(), "dock KHÔNG được hide() — nút title bar phải luôn bấm được"
     assert not dm.console_dock.isHidden()
-    assert dm.trace_dock.widget().isHidden(), "nội dung (không phải dock) mới là thứ bị ẩn"
-    assert dm.console_dock.widget().isHidden()
-    assert dm.debug_toggle_symbol == "▼"
+    assert dm.trace_dock.widget().maximumHeight() == 0, "nội dung phải co chiều cao về 0"
+    assert dm.console_dock.widget().maximumHeight() == 0
+    assert dm.debug_toggle_symbol == "▲"
 
 
 def test_toggle_vung_debug_khong_dung_memory_dock(window: MainWindow) -> None:
@@ -113,9 +114,9 @@ def test_toggle_vung_debug_bam_lai_thi_mo_lai(window: MainWindow) -> None:
     window.toggle_debug_area()
     window.toggle_debug_area()
     assert not dm.is_debug_area_collapsed()
-    assert not dm.trace_dock.widget().isHidden()
-    assert not dm.console_dock.widget().isHidden()
-    assert dm.debug_toggle_symbol == "▲"
+    assert dm.trace_dock.widget().maximumHeight() > 0
+    assert dm.console_dock.widget().maximumHeight() > 0
+    assert dm.debug_toggle_symbol == "▼"
 
 
 def test_toggle_qua_nut_that_su_tren_titlebar_van_hoat_dong(window: MainWindow) -> None:
@@ -132,12 +133,12 @@ def test_toggle_qua_nut_that_su_tren_titlebar_van_hoat_dong(window: MainWindow) 
 
 def test_switch_to_trace_mo_lai_vung_debug_da_thu_nho(window: MainWindow) -> None:
     window.toggle_debug_area()
-    assert window.dock_manager.debug_toggle_symbol == "▼"
+    assert window.dock_manager.debug_toggle_symbol == "▲"
     window.switch_to(window.trace_view)
-    assert window.dock_manager.debug_toggle_symbol == "▲", (
+    assert window.dock_manager.debug_toggle_symbol == "▼", (
         "switch_to phải tự mở lại vùng debug đã thu nhỏ, không chỉ raise() một tab rỗng"
     )
-    assert not window.dock_manager.trace_dock.widget().isHidden()
+    assert window.dock_manager.trace_dock.widget().maximumHeight() > 0
 
 
 def test_trace_table_row_height_thu_gon(window: MainWindow) -> None:

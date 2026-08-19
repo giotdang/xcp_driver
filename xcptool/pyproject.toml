@@ -17,9 +17,10 @@ dependencies = [
     "python-can>=4.3",
     "PySide6>=6.6",
     "PySide6-Fluent-Widgets>=1.11",
+    "pyqtgraph>=0.13",
 ]
 
-# pyqtgraph (scope) và asammdf (MDF4) để tới mốc sau, chưa cần cho M1/M2.
+# asammdf (MDF4) để tới mốc sau, chưa cần cho M1/M2–M4.
 # PySide6-Fluent-Widgets: dual license (GPLv3 non-commercial / thương mại cần mua) —
 # xem DESIGN.md QĐ5. Xác nhận điều khoản trước khi đóng gói bản phân phối ra ngoài.
 

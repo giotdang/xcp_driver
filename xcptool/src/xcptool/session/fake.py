@@ -25,11 +25,13 @@ from .api import (
     BusyError,
     ConnState,
     DaqCaps,
+    DaqList,
     DeviceInfo,
     MalformedResponseError,
     NotConnectedError,
     OutOfRangeError,
     PageMode,
+    SamplePoint,
     SlaveCaps,
     SlaveError,
     TraceEntry,
@@ -167,6 +169,10 @@ class FakeSession:
         self._flood_stop = threading.Event()
 
         self._a2l_db: A2LDatabase = A2LDatabase()
+
+        # DAQ stub state — FakeSession giả lập DAQ không có bus thật
+        self._daq_running: bool = False
+        self._daq_ring: deque[SamplePoint] = deque(maxlen=10_000)
 
     # ── nhóm không chặn, an toàn thread ──────────────────────────────────────
 
@@ -424,6 +430,35 @@ class FakeSession:
 
     def load_a2l(self, path: str | Path) -> None:
         self._a2l_db = _a2l_load(path)
+
+    # ── DAQ (stub) ───────────────────────────────────────────────────────────
+
+    def start_daq(self, lists: list[DaqList]) -> None:
+        """Stub — ghi nhận trạng thái; không phát frame thật."""
+        with self._command("START_DAQ"):
+            if not self.behavior.supports_daq:
+                raise UnsupportedByEcuError("DAQ")
+            self._daq_running = True
+            self._daq_ring.clear()
+            cfg = self._cfg
+            if cfg:
+                self._emit(cfg.cro_id, "tx", bytes([0xB6, 0x00]), "cmd",
+                           f"START_DAQ {len(lists)} list(s)")
+                self._emit(cfg.dto_id, "rx", bytes([0xFF]), "res", "START_DAQ ok")
+
+    def stop_daq(self) -> None:
+        """Stub — đặt trạng thái về không chạy."""
+        with self._command("STOP_DAQ"):
+            self._daq_running = False
+            cfg = self._cfg
+            if cfg:
+                self._emit(cfg.cro_id, "tx", bytes([0xDD, 0x00]), "cmd", "STOP_DAQ")
+                self._emit(cfg.dto_id, "rx", bytes([0xFF]), "res", "STOP_DAQ ok")
+
+    def drain_daq(self, n: int = 1000) -> list[SamplePoint]:
+        """Stub — trả list rỗng (FakeSession không phát frame thật)."""
+        count = min(n, len(self._daq_ring))
+        return [self._daq_ring.popleft() for _ in range(count)]
 
     # ── lệnh thô ─────────────────────────────────────────────────────────────
 

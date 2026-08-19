@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import functools
 import logging
+import threading
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -16,6 +18,16 @@ from typing import Any, TypeVar
 from ..a2l import A2LDatabase
 from ..a2l import load as _a2l_load
 from ..master.core import XcpMaster
+from ..master.daq import (
+    DaqListConfig,
+    DaqSignal as _MasterDaqSignal,
+    PidEntry,
+    SamplePoint as _MasterSamplePoint,
+    TimestampAccumulator,
+    configure_daq,
+    decode_dto,
+    stop_daq as _master_stop_daq,
+)
 from ..master.trace import DEFAULT_CAPACITY, TraceBuffer
 from ..transport import config as cfg_store
 from ..transport import registry
@@ -23,9 +35,12 @@ from ..transport.base import Transport
 from .api import (
     BusConfig,
     ConnState,
+    DaqList,
+    DaqSignal,
     DeviceInfo,
     NotConnectedError,
     PageMode,
+    SamplePoint,
     SlaveCaps,
     TraceEntry,
     UnsupportedByEcuError,
@@ -41,6 +56,28 @@ log = logging.getLogger("xcptool.session")
 _PROTECTION_BITS_WE_NEED = 0x01 | 0x04   # CAL/PAG | DAQ
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+_DAQ_RING_CAPACITY = 10_000
+
+
+def _to_master_sig(s: DaqSignal) -> _MasterDaqSignal:
+    return _MasterDaqSignal(name=s.name, address=s.address, ext=s.ext,
+                             size=s.size, datatype=s.datatype)
+
+
+def _to_master_cfg(dl: DaqList) -> DaqListConfig:
+    return DaqListConfig(
+        signals=[_to_master_sig(s) for s in dl.signals],
+        event=dl.event,
+        timestamp=dl.timestamp,
+        prescaler=dl.prescaler,
+        priority=dl.priority,
+    )
+
+
+def _from_master_sample(sp: _MasterSamplePoint) -> SamplePoint:
+    return SamplePoint(name=sp.name, timestamp_ns=sp.timestamp_ns,
+                       value_raw=sp.value_raw, datatype=sp.datatype)
 
 
 def _guarded(what: str) -> Callable[[F], F]:
@@ -70,6 +107,12 @@ class RealSession:
         self._transport: Transport | None = None
         self._last_state = ConnState.DISCONNECTED
         self._a2l_db: A2LDatabase = A2LDatabase()
+
+        # DAQ state — protected bởi _daq_lock khi cập nhật _daq_ring
+        self._daq_pid_table: dict[int, PidEntry] | None = None
+        self._daq_ts_accum: TimestampAccumulator = TimestampAccumulator()
+        self._daq_ring: deque[SamplePoint] = deque(maxlen=_DAQ_RING_CAPACITY)
+        self._daq_lock = threading.Lock()
 
     # ── không chặn, an toàn thread ───────────────────────────────────────────
 
@@ -161,7 +204,9 @@ class RealSession:
         master, transport = self._master, self._transport
         self._master = None
         self._transport = None
+        self._daq_pid_table = None   # huỷ DAQ state khi teardown
         if master is not None:
+            master.set_daq_callback(None)
             master.close()          # đã tự đóng link
         elif transport is not None:
             transport.close()
@@ -203,6 +248,52 @@ class RealSession:
     @_guarded("nạp A2L")
     def load_a2l(self, path: str | Path) -> None:
         self._a2l_db = _a2l_load(path)
+
+    # ── DAQ ──────────────────────────────────────────────────────────────────
+
+    @_guarded("cấu hình DAQ")
+    def start_daq(self, lists: list[DaqList]) -> None:
+        master = self._require_master()
+        caps = master.caps
+        byte_order = caps.byte_order if caps else "little"
+
+        # Reset trước khi configure để không trộn mẫu từ phiên cũ
+        master.set_daq_callback(None)
+        self._daq_pid_table = None
+        with self._daq_lock:
+            self._daq_ring.clear()
+        self._daq_ts_accum = TimestampAccumulator(byte_order=byte_order)
+
+        master_cfgs = [_to_master_cfg(dl) for dl in lists]
+        pid_table = configure_daq(master, master_cfgs)
+
+        self._daq_pid_table = pid_table
+        master.set_daq_callback(self._on_daq_frame)
+
+    @_guarded("dừng DAQ")
+    def stop_daq(self) -> None:
+        master = self._require_master()
+        master.set_daq_callback(None)
+        self._daq_pid_table = None
+        _master_stop_daq(master)
+
+    def drain_daq(self, n: int = 1000) -> list[SamplePoint]:
+        """KHÔNG CHẶN — pop tối đa n sample từ ring buffer."""
+        with self._daq_lock:
+            count = min(n, len(self._daq_ring))
+            return [self._daq_ring.popleft() for _ in range(count)]
+
+    def _on_daq_frame(self, frame: bytes) -> None:
+        """Callback từ XcpMaster RX thread — giải mã frame và đẩy vào ring."""
+        pid_table = self._daq_pid_table
+        if pid_table is None:
+            return
+        samples = decode_dto(frame, pid_table, self._daq_ts_accum)
+        if not samples:
+            return
+        with self._daq_lock:
+            for sp in samples:
+                self._daq_ring.append(_from_master_sample(sp))
 
     # ── lệnh thô ─────────────────────────────────────────────────────────────
 

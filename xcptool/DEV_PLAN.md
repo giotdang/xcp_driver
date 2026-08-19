@@ -1,363 +1,316 @@
-# Development Plan — M1 + M2, hai agent làm song song
+# xcptool — Kế hoạch phát triển
 
-Bản này thay cho lộ trình 7 ngày tuần tự trước đó. Ba thứ đã thay đổi *mục tiêu*,
-không chỉ thay đổi lịch:
-
-| | Trước | Bây giờ |
-|---|---|---|
-| Quan hệ với firmware trong repo | Biên dịch `Xcp_Handler.c` thành `xcp_sim.exe` để test | **Không dính gì tới `driver/`.** Công cụ độc lập, dùng lại được cho ECU khác |
-| Đặc tính ECU | Hardcode theo slave TC2xx trong repo | **Hỏi ECU lúc CONNECT.** Không hằng số nào của một ECU cụ thể nằm trong logic |
-| Đích của đợt này | GUI đầy đủ + DAQ + A2L | **M1 + M2**: chọn thiết bị → CONNECT → cửa sổ debug CAN → đọc/ghi theo địa chỉ. Chạy ổn định, không crash |
-
-Ra khỏi phạm vi đợt này: `driver/port/pc_sim/`, stub header iLLD, MinGW, A2L parser,
-DAQ engine, scope, MDF4, kiểm tra trên board thật.
-Hệ quả thực tế: **không cần trình biên dịch C nữa.**
-
-> **Cơ sở:** `DESIGN.md` (kiến trúc) · `src/xcptool/session/api.py` (contract, lead sở hữu)
+> **Trạng thái:** M1 ✅ M2 ✅ M3 ✅ M4 ✅ — 405 tests (2026-08-19, chưa commit)
+> **Kiến trúc & quyết định thiết kế:** xem [DESIGN.md](DESIGN.md)
+> **Contract chính thức:** `src/xcptool/session/api.py`
 
 ---
 
-## 0. Điều kiện tiên quyết — chưa xong thì chưa spawn agent
-
-| | Trạng thái |
-|---|---|
-| Python 3.12.10 tại `C:\Program Files\Python312\` | ✅ đã cài |
-| venv tại `xcptool/.venv/` | ✅ đã tạo |
-| `pip install -e ".[dev]"` — python-can 4.6.1, PySide6 6.11.1, pytest 9.1.1 | ✅ đã cài |
-| `pytest tests/test_boundaries.py` | ✅ 6 passed, và đã kiểm chứng nó **bắt được** vi phạm thật |
-| gcc / MinGW | ✅ **không cần nữa** |
-| Phần cứng CAN | ✅ không cần — dùng `virtual` bus |
-
-**Mọi lệnh phải chạy bằng interpreter của venv**, không phải `python` trên PATH:
+## 0. Prerequisites
 
 ```
-G:\@Autosar\xcp\xcp_driver\xcptool\.venv\Scripts\python.exe -m pytest -q
+xcptool/.venv/           Python 3.12 venv
+pip install -e ".[dev]"  # python-can, PySide6, pytest, pytest-qt, pytest-timeout
 ```
 
-Kích hoạt venv cho tiện: `.venv\Scripts\Activate.ps1`.
+Luôn chạy qua `xcptool\.venv\Scripts\python.exe` — không phải `python` trần.
+`QT_QPA_PLATFORM=offscreen` cho headless test.
 
 ---
 
-## 1. Hai nguyên tắc chi phối mọi quyết định
+## 1. Hai nguyên tắc cốt lõi
 
-### 1.1 Độc lập với firmware
+**Boundary enforcement bằng AST, không bằng kỷ luật.** `tests/test_boundaries.py` quét import ở mức AST mỗi lần chạy test. Vi phạm → test đỏ ngay, không cần review. Điều này có nghĩa: thêm import mới → test chạy lại.
 
-`xcptool/` không được import, đọc, hay giả định bất cứ thứ gì trong `driver/`.
-Ràng buộc duy nhất giữa hai bên là **giao thức XCP trên dây** — đúng như quan hệ
-với một ECU của hãng khác.
-
-Cưỡng chế bằng `tests/test_boundaries.py`, không bằng kỷ luật.
-
-### 1.2 Độc lập với một ECU cụ thể
-
-`DESIGN.md` §1 liệt kê đặc tính của slave trong repo này. Từ nay coi bảng đó là
-**giá trị kỳ vọng của ECU tham chiếu để đối chiếu khi test**, không phải hằng số
-để code theo. Mọi thứ trong bảng đều hỏi được:
-
-| Đặc tính | Lấy từ |
-|---|---|
-| MAX_CTO, MAX_DTO | byte 3 và 4–5 của response CONNECT |
-| Byte order, block mode | byte 2 (comm_mode_basic) |
-| CAL/PAG, DAQ, STIM, PGM, Seed&Key | byte 1 (resource) |
-| Phiên bản protocol / transport | byte 6, 7 |
-| DAQ dynamic/static, kiểu PID | `GET_DAQ_PROCESSOR_INFO` |
-| Kích thước và đơn vị timestamp | `GET_DAQ_RESOLUTION_INFO` |
-| CRO / DTO CAN ID, bitrate | `BusConfig` — user cấu hình, lưu ở `~/.xcptool/config.toml` |
-
-ECU không trả lời `GET_DAQ_*`? Bỏ qua êm, đặt `SlaveCaps.daq = None`. Không được
-văng lỗi — nhiều ECU tắt các lệnh này.
-
-ECU bật Seed & Key? Không được lặng lẽ hỏng: báo rõ *"ECU yêu cầu seed & key,
-công cụ chưa hỗ trợ"* rồi ngắt sạch.
+**FakeSession trước, RealSession sau.** Frontend và backend phát triển song song trên cùng contract. Frontend không bao giờ bị block chờ backend. Tích hợp chỉ là "đổi FakeSession lấy RealSession" — không có lần viết lại nào.
 
 ---
 
-## 2. Cây thư mục và quyền sở hữu
-
-Mỗi file có đúng **một** chủ. Đụng file của agent khác = xung đột, không phải giúp đỡ.
+## 2. Cây module (cập nhật sau M4)
 
 ```
 xcptool/
-├── DESIGN.md                          lead
-├── DEV_PLAN.md                        lead
-├── pyproject.toml                     lead   ← cần thêm dependency thì NHẮN LEAD
+├── src/xcptool/
+│   ├── session/
+│   │   ├── api.py          ← CONTRACT — chỉ lead sửa
+│   │   ├── fake.py         ← FakeSession (dùng cho test UI thuần, không cần bus)
+│   │   └── real.py         ← RealSession (dùng master/ + transport/)
+│   ├── a2l/                ← M3 ✅
+│   │   ├── types.py        ← DataType, RecordLayout, Measurement, Characteristic, A2LDatabase
+│   │   ├── parser.py       ← Block-tree parser (self-written, không dùng pya2l)
+│   │   └── database.py     ← load(path) → A2LDatabase, _resolve() liên kết RecordLayout
+│   ├── master/
+│   │   ├── core.py         ← CONNECT/UPLOAD/DOWNLOAD/GET_CAL_PAGE/SET_CAL_PAGE/COPY_CAL_PAGE
+│   │   └── daq.py          ← M4 ✅ pack_odts, configure_daq, decode_dto, TimestampAccumulator
+│   ├── transport/
+│   │   └── pycan.py        ← python-can bridge, pad DLC=8, detect_available_configs
+│   ├── devtools/
+│   │   ├── fakeslave.py    ← FakeSlave — ECU giả nói XCP thật qua virtual CAN bus
+│   │   └── pid_plant.py    ← M4 ✅ PidPlant — mô phỏng measurement tính từ calibration
+│   ├── ui/
+│   │   ├── main_window.py  ← MainWindow(QMainWindow), TaskRunner, _call()
+│   │   ├── calibration_view.py  ← M3 ✅ CalibrationView, decode/encode_value
+│   │   ├── measurement_view.py  ← M4 ✅ signal tree + pyqtgraph scope, start/stop DAQ
+│   │   ├── trace_view.py   ← Trace CAN
+│   │   ├── memory_view.py  ← Memory/Debug
+│   │   ├── dock_manager.py ← M3 ✅ DockManager, toggle collapse/expand
+│   │   ├── session_factory.py ← M4 ✅ create_session("fake"|"real") — fake = RealSession
+│   │   │                        + FakeSlave + PidPlant qua virtual bus (không phải stub)
+│   │   └── theme.py        ← Fluent dark/light
+│   └── cli/
+│       └── main.py         ← `xcptool` entrypoint
 ├── tests/
-│   ├── test_boundaries.py             lead
-│   ├── unit/                          backend
-│   ├── integration/                   backend
-│   └── ui/                            frontend
-└── src/xcptool/
-    ├── session/
-    │   ├── api.py                     lead   ← CONTRACT. Chỉ đọc.
-    │   ├── real.py                    backend
-    │   └── fake.py                    frontend
-    ├── transport/                     backend    registry, virtual, pcan,
-    │                                             vector, etas, slcan, replay,
-    │                                             config.py (đọc/ghi config.toml)
-    ├── master/                        backend    protocol core, capability
-    │                                             discovery, từ điển lỗi, codec
-    ├── devtools/                      backend    fake slave, script soak
-    ├── ui/                            frontend   cửa sổ chính, dialog thiết bị,
-    │                                             cửa sổ debug, console lệnh thô,
-    │                                             panel bộ nhớ
-    └── cli/                           frontend   lệnh `xcptool …`
+│   ├── test_boundaries.py  ← AST boundary enforcement
+│   ├── unit/                ← test_a2l_parser.py (M3), test_daq_packing.py / test_daq_decoder.py (M4 ✅)
+│   ├── integration/         ← test_daq.py, test_session_daq.py (M4 ✅) — RealSession + FakeSlave qua virtual bus
+│   └── ui/                  ← test_calibration_view.py, test_shell.py, test_console.py, test_measurement_view.py (M4 ✅)
+└── (examples/xcp_daq_example.a2l ở NGOÀI xcptool/, cùng cấp repo root — A2L demo cho
+     `--session fake`: CHARACTERISTIC speedPid_kp/_ki/_outMin/_outMax + MEASUREMENT liên quan)
 ```
-
-**Vì sao CLI thuộc frontend:** nó là *người tiêu thụ thứ hai* của cùng contract.
-Có hai người tiêu thụ độc lập sẽ lộ ngay chỗ contract thiết kế tệ, và cho frontend
-thứ chạy được từ giờ đầu — sớm hơn nhiều so với lúc GUI hoàn chỉnh.
 
 ---
 
-## 3. Contract — đọc `src/xcptool/session/api.py` trước khi viết dòng nào
+## 3. Contract tóm tắt
 
-Lead đã viết sẵn toàn bộ contract: kiểu dữ liệu, cây ngoại lệ, chữ ký hàm, luật
-thread. **Không agent nào được sửa file đó.** Cần đổi → nhắn lead, chờ duyệt;
-lead sửa và báo cả hai bên cùng lúc.
+`session/api.py` là ranh giới duy nhất giữa frontend và backend. Không file nào ở `ui/` hoặc `cli/` được import từ `master/`, `transport/`, hay `a2l/` trực tiếp.
 
-Ba luật quan trọng nhất, nhắc lại vì đây là chỗ hay hỏng:
+**Luồng chặn (chạy qua `TaskRunner`, không trên UI thread):**
 
-1. **Session không biết Qt tồn tại.** Nó không bao giờ gọi ngược lên UI.
-   Frontend gọi các phương thức chặn từ worker thread, đẩy kết quả về UI thread
-   bằng Qt signal.
-2. **Trace là pull-based.** `drain_trace()` không chặn, an toàn thread; frontend
-   gọi theo QTimer 30–50 ms. Không vẽ theo từng frame.
-3. **`close()` idempotent và không bao giờ ném.** Frontend gọi nó trong
-   `closeEvent()` kể cả khi bus đang lỗi.
-
-### Hai bản giả khác nhau — đừng nhầm
-
-| | `session/fake.py` — **FakeSession** | `devtools/fakeslave.py` — **fake slave** |
-|---|---|---|
-| Chủ | frontend | backend |
-| Là gì | Hiện thực `Session` bằng Python thuần, **không có bus nào** | Một node XCP trên `virtual` bus, trả lời như ECU thật |
-| Để làm gì | GUI + CLI chạy và test không cần python-can, không cần backend | Backend test protocol core; và là ECU trong bài test tích hợp |
-| Sinh dữ liệu | trace giả, giá trị bộ nhớ giả | frame CAN thật qua `can.Bus(interface='virtual')` |
-
-Cả hai đều phải **mô phỏng được hành vi tồi**, đó là lý do chúng tồn tại:
-timeout, response méo, ngắt kết nối giữa chừng, flood bus, mã lỗi lạ.
-
-### Mối lo xuyên suốt — mỗi thứ đúng một chủ
-
-| Mối lo | Chủ | Ghi chú |
-|---|---|---|
-| Contract, `pyproject.toml`, test ranh giới | lead | agent chỉ đọc |
-| Schema và đọc/ghi `~/.xcptool/config.toml` | backend | frontend chỉ gọi qua session |
-| Từ điển `CRC_*` → lớp ngoại lệ có tên | backend | frontend không bao giờ nhìn mã thô |
-| Chuỗi `TraceEntry.decoded` | backend | frontend **không tự giải mã byte** |
-| Ring buffer có trần + đếm `dropped_frames` | backend | bỏ entry cũ nhất, RAM không phình |
-| Marshal worker thread → Qt signal | frontend | |
-| `sys.excepthook` + `threading.excepthook` + log ra file | frontend | sở hữu entry point app |
-| Gọi `close()` khi thoát, kể cả khi thoát do lỗi | frontend | backend đảm bảo `close()` làm đúng |
-| Thông báo khi thiếu driver hãng | backend sinh `hint`, frontend hiển thị | |
-
----
-
-## 4. Hai nhánh mốc — chạy song song, không chặn nhau
-
-Điểm mấu chốt: **nhánh F không phụ thuộc nhánh B cho tới J1.** Frontend build trên
-`FakeSession` ngay từ F0.
-
-### Nhánh Backend
-
-| Mốc | Nội dung | Cổng — chứng minh bằng lệnh |
-|---|---|---|
-| **B0** | Khung package, `transport/virtual.py`, fake slave tối thiểu trả lời CONNECT | `pytest tests/integration/test_virtual_bus.py -q` xanh |
-| **B1** | Protocol core: CONNECT / DISCONNECT / GET_STATUS / SYNC, timeout T1, phát `TraceEntry`, từ điển lỗi, **capability discovery** | `pytest tests/unit -q` xanh; test khẳng định `SlaveCaps` khớp cấu hình fake slave, và đổi fake slave sang MAX_CTO=12 thì `SlaveCaps` đổi theo |
-| **B2** | `transport/registry.py` đa backend, `list_devices()`, `config.py` đọc/ghi `config.toml` | `list_devices()` liệt kê `virtual` là available và các backend chưa cài driver là unavailable **kèm `hint`**, không ném lỗi, và **không để lọt một dòng cảnh báo nào của python-can ra stderr** (xem §5.1) |
-| **B3** | `read()` / `write()` tự chia khối theo MAX_CTO thật; `get_page` / `set_page` / `copy_page` | ghi rồi đọc lại 64 byte khớp bit-for-bit qua fake slave; fake slave ở reference page → nhận đúng `WriteProtectedError` |
-| **B4** | Hardening: excepthook trong RX thread, `close()` idempotent, ring buffer có trần, `BusyError` khi gọi chồng | `pytest tests/integration/test_robustness.py -q` — xem §6 |
-
-### Nhánh Frontend
-
-| Mốc | Nội dung | Cổng — chứng minh bằng lệnh |
-|---|---|---|
-| **F0** | `session/fake.py` đầy đủ contract + khung app PySide6 (cửa sổ chính, status bar, menu) | `pytest tests/ui/test_shell.py -q` (offscreen) xanh; `python -m xcptool.ui.app --session fake` mở được cửa sổ |
-| **F1** | Dialog chọn thiết bị (list + nút Detect + nhớ lựa chọn), luồng CONNECT qua worker thread, status bar hiện `SlaveCaps` | click Connect khi FakeSession trễ 3 giây → **UI không đơ**, có spinner, huỷ được |
-| **F2** | **Cửa sổ debug CAN**: bảng trace, cột time/dir/ID/hex/decoded, lọc theo kind, tạm dừng, tự cuộn, xoá, xuất file | FakeSession bơm 2000 frame/s trong 60 s → UI vẫn mượt, RAM không tăng, số đếm khớp với `dropped_frames` |
-| **F3** | Console lệnh thô: gõ hex → `raw_command()` → hiện response thô | gửi `FF 00` thấy response `FF …` trong console và trong cửa sổ debug |
-| **F4** | Panel bộ nhớ: đọc/ghi theo địa chỉ (hex dump có sửa được), điều khiển trang CAL, chỉ báo trang ECU / trang XCP | ghi một vùng rồi đọc lại thấy đúng; FakeSession ném `WriteProtectedError` → hiện thông báo **kèm nút chuyển về working page** |
-| **F5** | Hardening: excepthook toàn cục + log file, `closeEvent` gọi `close()`, mọi `XcpToolError` thành thông báo | `pytest tests/ui/test_robustness.py -q` — xem §6 |
-
-### Mốc chung
-
-| Mốc | Nội dung | Cổng |
-|---|---|---|
-| **J1** | Đổi `FakeSession` → `RealSession` (một dòng), chạy lại toàn bộ kịch bản F1–F4 trên `virtual` bus với fake slave của backend | Mọi thao tác GUI cho kết quả giống hệt lúc chạy trên FakeSession |
-| **J2** | Soak 30 phút, đối chiếu contract, cross-review | §6 xanh hết; không dòng ERROR nào trong log |
-
-**Đối chiếu contract trước J1** (skill yêu cầu): backend in ra chữ ký thật của
-`RealSession`, frontend in ra danh sách lời gọi thật của mình — lead so hai bên
-trước khi ghép. Rẻ hơn debug lúc đã ghép.
-
----
-
-## 5. Lệnh validate — agent chạy trước khi báo done
-
-Không mốc nào được báo xong nếu còn một lệnh đỏ.
-
-**Backend:**
-```
-pytest tests/unit tests/integration -q
-pytest tests/test_boundaries.py -q
-python -m xcptool.devtools.soak --minutes 5 --rate 2000
-```
-
-**Frontend:**
-```
-pytest tests/ui -q                      # QT_QPA_PLATFORM=offscreen
-pytest tests/test_boundaries.py -q
-python -m xcptool.cli.main --session fake devices
-python -m xcptool.cli.main --session fake connect
-python -m xcptool.ui.app --session fake --selftest    # mở, thao tác, đóng, thoát 0
-```
-
-Test ranh giới chạy ở **cả hai bên** — nó bắt đúng loại lỗi mà agent tự tin nhất
-là mình không mắc.
-
-### 5.1 Ba thứ đã đo trên máy này, đừng phát hiện lại
-
-Lead đã chạy thử stack ngày 2026-08-16, kết quả:
-
-- ✅ `can.Bus(interface='virtual')` gửi/nhận được frame 8 byte trong cùng tiến trình.
-  Đây là nền của toàn bộ test backend — không cần UDP, không cần phần cứng.
-- ✅ PySide6 6.11.1 / Qt 6.11.1 chạy được headless với `QT_QPA_PLATFORM=offscreen`.
-  Test GUI tự động chạy được. Có cảnh báo *"Cannot find font directory"* — vô hại
-  với offscreen, đừng mất thời gian sửa.
-- ⚠️ **`can.detect_available_configs()` phun ~20 dòng cảnh báo ra stderr** cho mọi
-  backend chưa cài driver (Kvaser, IXXAT, NI-CAN, Vector, slcan, SYSTEC…). Đây
-  không phải lỗi, nhưng nếu để nguyên thì cửa sổ debug và log của công cụ sẽ ngập
-  rác ngay lần chạy đầu. Backend phải bắt các cảnh báo này (`logging` capture của
-  python-can) và **chuyển thành `DeviceInfo.hint`** đúng như contract yêu cầu —
-  đây chính là lý do trường `hint` tồn tại.
-- Trên máy này hiện chỉ dò ra `virtual`; chưa cắm PEAK/Vector/ETAS và chưa cài
-  driver hãng nào. Đường `available=False` + `hint` vì thế là đường **chính**, không
-  phải trường hợp biên.
-
----
-
-## 6. "Không crash" là tiêu chí nghiệm thu, không phải lời chúc
-
-Đây là yêu cầu ngang hàng với tính năng, nên nó phải kiểm tra được. Mỗi dòng dưới
-là một test có thật, không phải nguyên tắc chung chung.
-
-| Tình huống | Hành vi bắt buộc | Chủ |
-|---|---|---|
-| Exception trong RX thread | Ghi log, chuyển `state = ERROR`, **app vẫn sống** | backend |
-| Rút dây thiết bị giữa phiên | `BusError` nổi lên thành thông báo, không traceback | backend + frontend |
-| ECU không trả lời | Hết T1 → `XcpTimeoutError`, UI không đơ | backend |
-| Frame ngắn hơn dự kiến / méo | `MalformedResponseError`, **không** `struct.error` hay `IndexError` | backend |
-| Frame lạ trên CAN ID khác | Ghi trace `kind='other'`, không xử lý nhầm | backend |
-| Flood 5000 frame/s | Ring buffer chạm trần → bỏ entry cũ, tăng `dropped_frames`, RAM phẳng | backend |
-| Gọi lệnh chồng lên nhau | `BusyError` ngay, không xếp hàng, không deadlock | backend |
-| Đóng app khi đang bận | `close()` gửi DISCONNECT, join thread, không treo, không ném | backend |
-| Đụng widget từ thread khác | Không bao giờ xảy ra — mọi cập nhật UI qua Qt signal | frontend |
-| `XcpToolError` bất kỳ thoát lên UI | Thành hộp thoại có nội dung đọc được, không phải traceback | frontend |
-| Ngoại lệ ngoài dự kiến | `excepthook` bắt, ghi log kèm traceback, hiện lời xin lỗi, app không biến mất im lặng | frontend |
-| Soak 30 phút, 2000 frame/s | RAM không tăng đơn điệu, không dòng ERROR nào trong log | cả hai |
-
-Log ghi ra `~/.xcptool/logs/` kèm `faulthandler.enable()` — crash không tái hiện
-được vẫn phải để lại dấu vết.
-
----
-
-## 7. Bẫy còn nguyên giá trị
-
-Giữ lại từ bản trước, những cái vẫn đúng trong phạm vi M1/M2:
-
-| Bẫy | Cách tránh |
+| Method | Mô tả |
 |---|---|
-| **Demux nhầm DTO thành response** | CRM và DTO dùng chung CAN ID. Byte 0 ∈ `{0xFF,0xFE,0xFD,0xFC}` → CTO, còn lại → DAQ |
-| **Frame ngắn hơn 8 byte** | ECU có thể khai `MAX_DLC_REQUIRED`. `BusConfig.pad_dlc` điều khiển, mặc định bật |
-| **Bỏ qua DISCONNECT khi thoát** | Bắt cả trường hợp thoát do lỗi, không chỉ nút đóng |
-| **Vẽ theo từng frame** | Gom vào buffer, repaint theo timer 30–50 ms. Repaint 100 Hz làm GUI đứng và rất dễ đổ oan cho CAN chậm |
-| **Im lặng khi thiếu driver hãng** | Hiện đúng tên gói cần cài. Đây là lỗi user gặp nhiều nhất với công cụ loại này |
-| **Timestamp của thiết bị khác nhau về chất lượng** | PEAK/Vector có timestamp phần cứng, slcan do phần mềm sinh. Ghi rõ trong UI |
+| `connect(cfg: BusConfig)` | CONNECT, đọc SlaveCaps |
+| `disconnect()` | DISCONNECT |
+| `upload(addr, ext, size) → bytes` | SET_MTA + UPLOAD |
+| `download(addr, ext, data: bytes)` | SET_MTA + DOWNLOAD |
+| `get_cal_page(segment, mode) → int` | GET_CAL_PAGE |
+| `set_cal_page(segment, mode, page)` | SET_CAL_PAGE |
+| `copy_cal_page(src_seg, src_page, dst_seg, dst_page)` | COPY_CAL_PAGE |
+| `load_a2l(path: str \| Path)` | parse A2L, populate `symbols` |
+| `start_daq(lists: list[DaqList])` | M4: cấu hình + khởi động DAQ |
+| `stop_daq()` | M4: dừng DAQ |
+
+**Non-blocking (gọi được từ UI thread):**
+
+| Property/Method | Mô tả |
+|---|---|
+| `symbols: A2LDatabase` | Sau `load_a2l()` — dict CHAR/MEAS; `None` trước đó |
+| `caps: SlaveCaps` | Sau `connect()` — `None` trước đó |
+| `drain_trace(n) → list[TraceEntry]` | Pop tối đa n entry từ ring buffer |
+| `load_config() → BusConfig` | Đọc `~/.xcptool/config.toml` |
+
+Thread safety: mọi `Session.method()` chặn đều chạy trong `QRunnable` qua `TaskRunner`. Không gọi trực tiếp trên UI thread trừ `drain_trace()` và `load_config()`.
 
 ---
 
-## 8. Hoãn có chủ đích
+## 4. Milestone đã hoàn thành
 
-| Hoãn tới | Nội dung |
-|---|---|
-| M3 | **Đang triển khai** — xem §9 |
-| M4 | DAQ engine, scope pyqtgraph — **nhớ: ngân sách 3 byte của ODT 0, và bản `pack_odts` trong `DESIGN.md` §4.3 đang sinh ODT 0 rỗng, phải sửa cùng test** |
-| M5 | MDF4, xuất/nhập bộ tham số, XCP on Ethernet, đóng gói .exe |
-| Chưa xếp mốc | **Multi-window kiểu INCA** — mỗi loại object A2L (CHARACTERISTIC, MEASUREMENT, sau này CURVE/MAP) có cửa sổ con riêng, nổi/kéo-thả được, nhiều thực thể cùng loại mở song song, thay vì một cây phẳng duy nhất trong Calibration panel. Ý tưởng do user đề xuất (2026-08-18), tham chiếu INCA "Measure window"/"Calibration window". Đánh đổi: cần `QMdiArea` hoặc nhiều `QDockWidget` động + đồng bộ nhiều view cùng đọc/ghi một CHARACTERISTIC. Khuyến nghị: làm sau khi có layout 2-panel Calibration + Measurement (DESIGN.md §6, M4) — đừng nhảy thẳng vào MDI khi mới có một loại object hiển thị. |
-| Giai đoạn sau | Kiểm tra trên board thật; `driver/port/pc_sim/` nếu vẫn còn muốn |
+### M1 + M2 (2026-08-16)
+
+Backend (B0–B4): transport PEAK/Vector/slcan/virtual, master protocol core, RealSession, FakeSession contract, cfg_store.
+Frontend (F0–F5): DeviceDialog, MainWindow Fluent shell, TraceView, MemoryView, ConsoleView, theme.
+Tích hợp: J1 pass 10/10, 265 test xanh → 266 sau fix `load_config()` bug (hai cơ chế nhớ device độc lập, không đồng bộ).
+Tài liệu: `ARCHITECTURE.md`, `USER_MANUAL.md`, `docs/*.html`.
+
+### M3 (2026-08-17 → commit 2026-08-18, `672f530`)
+
+**A3a** — A2L parser: `a2l/parser.py` block-tree, `a2l/types.py` dataclass, `a2l/database.py` load + resolve.
+**A3b** — Session contract: `load_a2l(path)` + `symbols: A2LDatabase` property vào `api.py`, `fake.py`, `real.py`.
+**A3c** — CalibrationView: 7-column QTreeWidget, `decode/encode_value`, dirty indicator, page model Working/Reference, WriteProtectedError flow.
+**A3d** — DockManager + tích hợp: collapse/expand dock bottom bằng `resizeDocks()` (không dùng `hide()` — nút arrow biến mất theo), `main_window.py` kết nối tất cả.
+
+346 test pass. Race condition connect (`_refresh_pages_after_connect` gọi hai lần worker song song) đã sửa — gom thành một worker call.
+
+### M4 (2026-08-18 → 2026-08-19, chưa commit)
+
+**D4a** — `pack_odts()`: tách small/large theo `first_budget`, ODT 0 riêng, ODT 1+
+first-fit-decreasing. `master/daq.py`, `tests/unit/test_daq_packing.py`.
+
+**D4b** — DAQ allocation: `configure_daq()` chạy đúng trình tự
+`FREE_DAQ → ALLOC_DAQ → ALLOC_ODT → ALLOC_ODT_ENTRY → SET_DAQ_PTR → WRITE_DAQ →
+SET_DAQ_LIST_MODE → START_STOP_DAQ_LIST(select) → START_STOP_SYNCH`. Dựng bảng
+`pid → PidEntry` từ `first_pid` trả về ở bước select. `master/core.py` thêm các
+lệnh DAQ nguyên tố (`free_daq`, `alloc_daq`, `alloc_odt`, `alloc_odt_entry`,
+`set_daq_ptr`, `write_daq`, `set_daq_list_mode`, `start_stop_daq_list`,
+`start_stop_synch`).
+
+**D4c** — `decode_dto()` + `TimestampAccumulator`: mask `PID & 0x7F`, timestamp
+4 byte @ offset 1 chỉ ở ODT 0, rollover 32-bit cộng dồn epoch không reset về 0.
+`tests/unit/test_daq_decoder.py`.
+
+**D4d** — Session contract: `start_daq`/`stop_daq`/`drain_daq` (non-blocking,
+ring buffer 10 000 sample) vào `api.py`, `fake.py` (stub), `real.py` (dùng
+`XcpMaster.set_daq_callback()` từ RX thread). `tests/integration/test_daq.py`,
+`test_session_daq.py`.
+
+**D4e** — `MeasurementView`: checkbox tree từ `session.symbols.measurements`,
+pyqtgraph scope nhiều đường, nút Start/Stop, `QTimer 40ms` → `drain_daq()` cùng
+nhịp với `drain_trace()` (một nơi drain duy nhất, theo luật đã có từ M1).
+Nav sidebar thêm tab "Đo lường". `tests/ui/test_measurement_view.py`.
+
+**Ngoài kế hoạch ban đầu, phát sinh khi test bằng tay:**
+
+- **Kiến trúc `--session fake` đổi hẳn.** Bản kế hoạch D4d chỉ định "cập nhật
+  `fake.py` cho phù hợp" — thực tế `FakeSession` (Python thuần, tự chế
+  trạng thái) không đủ giá trị cho DAQ: nó chỉ gửi 1 frame giả `START_DAQ`,
+  không chạy `configure_daq()` thật, `drain_daq()` luôn rỗng. Theo yêu cầu
+  người dùng ("Master vẫn phải gửi đủ lệnh như thật, Slave phải phản hồi
+  tương đương"), `ui/session_factory.py::create_session("fake")` đổi sang
+  trả về `_FakeEcuSession` — wrapper `RealSession` thật nối với `FakeSlave`
+  qua virtual CAN bus nội bộ. `FakeSession` (`session/fake.py`) giữ nguyên,
+  vẫn dùng cho test UI không liên quan DAQ.
+- **`FakeSlave` phải trung thực khi địa chỉ ngoài vùng nhớ.** Thử nghiệm đầu
+  tiên thêm cờ `daq_synthetic` (sóng sine giả cho địa chỉ ngoài
+  `mem_base`/`mem_size`) đã bị bác bỏ và revert — một ECU giả bịa dữ liệu
+  hợp lý cho địa chỉ sai thì che giấu đúng loại lỗi nó nên phơi ra. Giờ trả
+  `0x00` cho ngoài vùng, đúng ECU thật (uninitialized RAM).
+- **Race condition thật trong `FakeSlave._cmd_start_stop_synch()`**: thread
+  gửi DAQ được start trước khi gửi RES cho chính START_STOP_SYNCH, khiến
+  đôi khi frame DAQ đến trước RES trong Trace CAN — đã sửa thứ tự.
+- **`devtools/pid_plant.py` (`PidPlant`)**: measurement tính TỪ calibration
+  thật (không phải bịa) — đọc `speedPid_kp/_ki/_outMin/_outMax` qua
+  `FakeSlave.peek()`, chạy PID + mô hình vật lý xe đơn giản 50Hz, ghi
+  `vehicleSpeedKph`/`engineRpm`/`speedPidTelemetry_*`/`torqueSamples` qua
+  `poke()`. `coolantTempC` = trung bình cộng CHARACTERISTIC `tempCompTable`
+  (công thức đơn giản, dễ verify tay). Đặt trong `devtools/`, không đụng
+  `fakeslave.py` (core vẫn ECU-agnostic) — chỉ `session_factory.py` biết cụ
+  thể về `examples/xcp_daq_example.a2l`.
+- **Bug UI đã sửa cùng đợt (không thuộc DAQ)**: nút toggle vùng debug
+  (`dock_manager.py`) — mũi tên ngược chiều trực quan, và `hide()` nội dung
+  lúc collapse làm co luôn CHIỀU RỘNG dock (để trống khoảng lớn bên phải,
+  không phải chỉ chiều cao) — đổi sang `setMaximumHeight(0)`.
+
+405 test pass (404 + 1 flaky độc lập với M4, xanh khi chạy riêng —
+`test_console.py::test_nut_lenh_nhanh_dien_vao_o_nhap`). `--selftest` qua
+GUI thật (`--session fake`) xanh toàn bộ 15 bước.
 
 ---
 
-## 9. M3 — A2L Parser + Calibration Panel + UI Dock *(2026-08-17)*
+## 5. Validate trước khi merge
 
-### Phạm vi
+Chạy trong venv sau mỗi PR:
 
-Ba việc được làm trong cùng một milestone vì chúng kết nối nhau: A2L parser vô nghĩa nếu không có UI dùng nó; UI cần được tổ chức lại để Calibration panel có chỗ; tổ chức lại UI là thời điểm đúng để di chuyển Trace/Console sang dock widget.
-
-### Quyết định kiến trúc đã chốt (2026-08-17)
-
-| Quyết định | Nội dung |
-|---|---|
-| **Trace CAN + Lệnh thô → QDockWidget** | Mặc định dock đáy, tab chung nhau, collapsible. User có thể float, tab, dock sang cạnh. Layout nhớ giữa phiên qua `saveState/restoreState`. Title bar dùng QSS tùy chỉnh để khớp Fluent theme. |
-| **Memory panel → Debug dock** | Phần hex dump thu về dock widget, mặc định ẩn, mở từ menu View. Phần quản lý trang (segment/page/copy) chuyển vào Calibration panel. |
-| **Calibration panel → panel chính** | Tree/list CHARACTERISTIC từ A2L, đọc/ghi giá trị có scaling + unit, inline edit, highlight hàng chưa ghi, "Ghi tất" cho nhiều hàng cùng lúc. Tham khảo `DESIGN.md §6` (Calibration panel — thiết kế chi tiết). |
-| **A2L parser — thư viện nào** | Tự viết parser tối giản cho subset cần thiết (không dùng `pya2l`/`python-a2l` vì quá nặng và khó debug). Chỉ parse: `MEASUREMENT`, `CHARACTERISTIC`, `COMPU_METHOD`, `RECORD_LAYOUT`, `IF_DATA XCP`. Bỏ qua block không nhận ra thay vì ném lỗi. |
-| **session/api.py** | Thêm `load_a2l(path: str | Path) -> None` và `symbols: A2LDatabase` vào `Session` Protocol. Lead sửa contract; cả `RealSession` và `FakeSession` phải implement. |
-
-### Cây thư mục mới
-
-```
-xcptool/
-└── src/xcptool/
-    ├── a2l/                   ← MỚI
-    │   ├── __init__.py
-    │   ├── parser.py          parse text → raw block dict
-    │   ├── database.py        A2LDatabase: lookup theo tên, nhóm theo category
-    │   └── types.py           dataclass: Measurement, Characteristic, CompuMethod, RecordLayout
-    ├── session/
-    │   ├── api.py             ← thêm load_a2l() + symbols vào Protocol (lead)
-    │   ├── real.py            ← implement load_a2l
-    │   └── fake.py            ← implement load_a2l (dùng file a2l thật hoặc hardcode)
-    └── ui/
-        ├── calibration_view.py  ← MỚI: Calibration panel
-        ├── dock_manager.py      ← MỚI: tạo + quản lý QDockWidget
-        ├── main_window.py       ← sửa: chuyển trace/console sang dock
-        ├── memory_view.py       ← sửa: bỏ phần page management (chuyển sang calibration)
-        ├── trace_view.py        ← không sửa logic, chỉ wrap vào QDockWidget
-        └── console_view.py      ← không sửa logic, chỉ wrap vào QDockWidget
+```bash
+python -m pytest tests/ -x -q
 ```
 
-### Mốc và cổng kiểm chứng
+`tests/integration/` tự khởi động `FakeSlave` trong từng test (context manager
+trên virtual bus, xem fixture `connected` trong `test_daq.py`) — không cần chạy
+`fakeslave.py` như một tiến trình nền riêng.
 
-| Mốc | Nội dung | Cổng |
+Tất cả phải xanh. Không merge khi test đỏ, kể cả nếu là test ngoài scope thay đổi.
+`tests/ui/test_console.py::test_nut_lenh_nhanh_dien_vao_o_nhap` có tiền sử flaky
+khi chạy CHUNG cả suite (pass 100% khi chạy riêng) — nếu chỉ mỗi test này đỏ, chạy
+lại riêng file đó trước khi kết luận có regression thật.
+
+---
+
+## 6. Tiêu chí "không crash" (áp dụng cho mọi milestone)
+
+Test này không tự động — chạy thủ công trước release:
+
+1. Rút dây CAN giữa chừng (trong khi đang CONNECT)
+2. Cắm lại dây — app vẫn cho reconnect mà không cần restart
+3. Flood bus 1000 frame/s liên tục 5 phút — RAM không tăng, `dropped_frames` tăng monoton, không crash
+4. Đóng cửa sổ trong khi đang upload — `closeEvent()` gọi `disconnect()` trước
+5. Nạp file A2L không hợp lệ — hiện thông báo, app tiếp tục dùng được
+6. Kết nối ECU không có CAL page — không crash, ẩn/disable tính năng calibration
+7. Ghi giá trị vượt range (trên Reference page) — `WriteProtectedError` flow
+8. Timestamp rollover (giả lập bằng fakeslave) — elapsed time không reset về 0 hoặc nhảy âm
+9. Mở/đóng connection nhanh 10 lần liên tiếp — không deadlock, không leak thread
+10. `Ctrl+C` trong terminal khi app đang chạy — thoát clean
+
+---
+
+## 7. M4 — DAQ engine + Measurement scope (kế hoạch gốc, ĐÃ XONG — xem §4)
+
+Giữ lại nguyên văn bản kế hoạch gốc (D4a–D4e) làm tài liệu tham chiếu thiết kế —
+kết quả thực tế, kể cả những gì phát sinh ngoài kế hoạch, nằm ở §4.
+
+**Mục tiêu:** Người dùng chọn signals từ A2L → xcptool cấu hình DAQ list trên ECU → hiển thị real-time trên pyqtgraph scope.
+
+**Thứ tự bắt buộc: D4a phải xong + test xanh trước khi bắt đầu D4b.**
+
+<details>
+<summary>D4a–D4e (bấm để xem chi tiết kế hoạch gốc)</summary>
+
+### D4a — `pack_odts()` + unit tests (backend)
+
+File: `master/daq.py` (mới) — chỉ logic packing, không đụng bus.
+
+Implement thuật toán đã fix trong `DESIGN.md §4.3` — tách `small/large`, ODT 0 riêng, ODT 1+ first-fit-decreasing. Không copy thuật toán cũ trong DESIGN.md — cái đó có bug (ODT 0 rỗng hệ thống).
+
+Unit test bắt buộc trước khi viết gì thêm:
+- Hai signal 1B+2B, timestamp bật → ODT 0 = `[2B, 1B]` (tổng 3B ≤ budget)
+- Signal 4B, timestamp bật → ODT 0 rỗng, signal 4B ở ODT 1 — KHÔNG raise
+- Signal 8B → `ValueError`
+- Timestamp tắt → first_budget = rest_budget = 7
+- Mix: signal 4B + 2B + 1B, timestamp bật → ODT 0: `[2B,1B]`, ODT 1: `[4B]`
+
+### D4b — DAQ allocation + `start_daq` / `stop_daq` (backend)
+
+File: `master/daq.py` — thêm `alloc_daq`, `configure_daq`, `start_daq`, `stop_daq`.
+
+Trình tự cấu hình: `FREE_DAQ → ALLOC_DAQ → ALLOC_ODT → ALLOC_ODT_ENTRY → WRITE_DAQ → SET_DAQ_LIST_MODE → START_STOP_DAQ_LIST(select) → START_STOP_SYNCH`. Sai thứ tự → `CRC_SEQUENCE` từ slave.
+
+Thu thập `first_pid` từ `START_STOP_DAQ_LIST(mode=2)`. Dựng bảng phẳng `pid → (daq_list, odt_idx, signals, frame_offset)` — tra bảng O(1) trong RX loop.
+
+Integration test với fakeslave.
+
+### D4c — DTO decoder + timestamp rollover (backend)
+
+File: `master/daq.py` — `decode_dto(frame, pid_table) → list[SamplePoint]`.
+
+- Mask `PID & 0x7F` (bit 7 = overrun).
+- Timestamp chỉ có trong ODT 0 — đọc 4 byte @ offset 1, unit 10ns/tick.
+- Rollover 32-bit sau 42,9 giây: cộng dồn số lần tràn, không để `elapsed` reset.
+- `SamplePoint(name, timestamp_ns, value_raw: bytes, datatype)` — UI tự decode hiển thị.
+
+### D4d — Session contract additions (lead)
+
+File: `session/api.py` (lead-owned).
+
+Thêm:
+- `start_daq(lists: list[DaqList])` — chặn, cấu hình + START_STOP_SYNCH
+- `stop_daq()` — chặn, STOP_SYNCH
+- `drain_daq(n) → list[SamplePoint]` — non-blocking, pop từ DAQ ring buffer
+
+Cập nhật `fake.py`, `real.py` cho phù hợp.
+
+### D4e — MeasurementView + tích hợp UI
+
+File: `ui/measurement_view.py` (mới).
+
+- Signal tree: checkbox chọn signals từ `session.symbols.measurements`
+- pyqtgraph `PlotWidget`, nhiều đường (mỗi signal 1 màu)
+- `QTimer 40ms` → `drain_daq()` → append điểm → `update()`
+- Nút Start/Stop DAQ trong MainWindow (hoặc trong MeasurementView toolbar)
+- Navigation sidebar: tab "Đo lường" cạnh "Hiệu chỉnh"
+
+</details>
+
+---
+
+## 8. Milestone tiếp theo: M5 — chưa lên kế hoạch chi tiết
+
+Chưa có D5a/D5b... — chỉ mới liệt kê ứng viên ở bảng Deferred dưới đây. Việc dở
+dang từ M4 cần xử lý trước hoặc đầu M5:
+
+- Zoom trục thời gian (X) trong scope `measurement_view.py` (pyqtgraph) — hiện
+  chỉ zoom được trục giá trị (Y). Người dùng hỏi, chưa điều tra/sửa.
+- `speed_pid_kd` trong `PidPlant` mới seed giá trị, chưa thực sự dùng trong công
+  thức (chưa có D-term thật) — biết trước, chưa cần sửa trừ khi có nhu cầu demo cụ thể.
+- Toàn bộ M4 vẫn CHƯA COMMIT — cân nhắc commit trước khi bắt đầu việc mới, để
+  không trộn lẫn diff M4 với M5.
+
+## 9. Deferred (ứng viên cho M5+, chưa ưu tiên)
+
+| Hạng mục | Lý do hoãn | Ghi chú |
 |---|---|---|
-| **A3a** | `a2l/` parser: parse `xcp_daq_example.a2l` thành `A2LDatabase` | `pytest tests/unit/test_a2l_parser.py -q` — xanh; in ra đủ số MEASUREMENT/CHARACTERISTIC đúng địa chỉ và kiểu |
-| **A3b** | `session/api.py` cập nhật contract; `RealSession.load_a2l()` + `FakeSession.load_a2l()` | `pytest tests/unit/test_capabilities.py tests/ui/test_fake_session.py -q` vẫn xanh; `FakeSession` expose đúng symbols sau load |
-| **A3c** | Trace CAN + Lệnh thô → QDockWidget; Memory panel → Debug dock; layout lưu/phục hồi | `pytest tests/ui/ -q` xanh; khởi động app → collapse trace → restart → trace vẫn collapse |
-| **A3d** | Calibration panel: load A2L từ UI, hiển thị tree CHARACTERISTIC, đọc giá trị qua `FakeSession`, inline edit + ghi | `pytest tests/ui/test_calibration.py -q` xanh; selftest: load A2L → sửa `systemGain` → giá trị đổi trong panel |
-
-### Lệnh validate M3
-
-```
-pytest tests/unit/test_a2l_parser.py -q
-pytest tests/unit tests/integration tests/ui -q
-pytest tests/test_boundaries.py -q
-python -m xcptool.ui.app --session fake --selftest
-```
-
-### Thứ tự làm
-
-A3a → A3b (cùng lúc: backend viết parser, lead cập nhật contract) → A3c → A3d. A3c và A3d có thể song song nếu contract A3b đã xong.
-
----
-
-## 9. Vì sao chia đúng hai agent như thế này
-
-| Anti-pattern của skill | Bản này tránh bằng cách |
-|---|---|
-| Spawn song song mà không có contract | Lead viết xong `session/api.py` **trước** khi spawn |
-| Agent B chờ agent A mãi mãi | Nhánh F chạy trên `FakeSession`, không chặn tới J1 |
-| Ranh giới mơ hồ ("giúp phần backend") | §2 liệt kê từng thư mục kèm chủ sở hữu |
-| Mối lo xuyên suốt không ai nhận | §3 gán từng thứ cho đúng một agent |
-| Contract ngầm ("API trả về session") | `api.py` là dataclass và chữ ký thật, không phải văn xuôi |
-| Hai agent cùng sửa file dùng chung | `pyproject.toml` và `api.py` do lead sở hữu |
+| MDF4 export | Cần thư viện asammdf (~10MB), không cần cho demo | M5 |
+| Scripting / automation | Scope mở rộng, cần thiết kế API riêng | M5 |
+| XCP on Ethernet | Transport khác, không ảnh hưởng core | M5 |
+| Multi-window INCA style | Cần QMdiArea hoặc multiple MainWindow | Sau M5 |
+| Test trên board AURIX thật | Cần hardware, CI không có | Manual |
+| CLI xcptool command | Low priority, FakeSession test đủ | M5 |
+| Soak 30 phút đầy đủ (J2) | Đã có 5 phút sạch, đủ cho M1–M3 | Trước release |
+| PySide6-Fluent-Widgets license | Dual GPLv3/thương mại | Xác nhận trước M5 nếu dùng thương mại |

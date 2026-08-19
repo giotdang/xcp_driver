@@ -12,6 +12,7 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Callable
 from typing import Protocol
 
 from ..session.api import (
@@ -92,6 +93,10 @@ class XcpMaster:
         self._cmd_lock = threading.Lock()
         self._pending_cmd: int | None = None
 
+        # DAQ callback — được gọi từ RX thread khi nhận DAO frame (byte0 < 0xFC).
+        # Phải là hàm nhanh, không chặn; set_daq_callback() để đăng ký/huỷ.
+        self._daq_callback: Callable[[bytes], None] | None = None
+
         self._stop = threading.Event()
         self._rx_thread = threading.Thread(
             target=self._rx_loop, name="xcp-rx", daemon=True)
@@ -117,6 +122,15 @@ class XcpMaster:
 
     def drain_trace(self, max_items: int = 5000) -> list[TraceEntry]:
         return self._trace.drain(max_items)
+
+    def set_daq_callback(self, callback: Callable[[bytes], None] | None) -> None:
+        """Đăng ký (hoặc huỷ) callback nhận DAO frame.
+
+        Callback được gọi từ RX thread khi frame có byte0 < 0xFC (DAO/event).
+        Phải trả về ngay — không được gọi transact() hay chặn trong callback.
+        Truyền None để tắt.
+        """
+        self._daq_callback = callback
 
     # ── RX thread ────────────────────────────────────────────────────────────
 
@@ -165,6 +179,13 @@ class XcpMaster:
                     self._responses.put_nowait(data)
                 except (queue.Empty, queue.Full):
                     pass
+        elif kind == "daq":
+            cb = self._daq_callback
+            if cb is not None:
+                try:
+                    cb(data)
+                except Exception:  # noqa: BLE001 — callback không được làm chết RX thread
+                    log.exception("Lỗi trong DAQ callback, đã nuốt")
 
     # ── giao dịch lệnh ───────────────────────────────────────────────────────
 
@@ -588,6 +609,98 @@ class XcpMaster:
             bytes([Cmd.COPY_CAL_PAGE, src_segment & 0xFF, src_page & 0xFF,
                    dst_segment & 0xFF, dst_page & 0xFF]),
             raise_on_error=True, timeout=None, retry=True)
+
+    # ── DAQ ──────────────────────────────────────────────────────────────────
+
+    def _require_daq(self) -> SlaveCaps:
+        caps = self._require_caps()
+        if not caps.supports_daq:
+            raise UnsupportedByEcuError("DAQ")
+        return caps
+
+    def free_daq(self) -> None:
+        """FREE_DAQ — xoá sạch cấu hình DAQ trên ECU. Bắt buộc trước ALLOC_DAQ."""
+        self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.FREE_DAQ, 0x00]),
+            raise_on_error=True, timeout=None, retry=False)
+
+    def alloc_daq(self, count: int) -> None:
+        """ALLOC_DAQ — cấp phát `count` DAQ list."""
+        caps = self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.ALLOC_DAQ, 0x00]) + count.to_bytes(2, caps.byte_order),
+            raise_on_error=True, timeout=None, retry=False)
+
+    def alloc_odt(self, daq: int, count: int) -> None:
+        """ALLOC_ODT — cấp phát `count` ODT cho DAQ list `daq`."""
+        caps = self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.ALLOC_ODT, 0x00]) + daq.to_bytes(2, caps.byte_order) + bytes([count]),
+            raise_on_error=True, timeout=None, retry=False)
+
+    def alloc_odt_entry(self, daq: int, odt: int, count: int) -> None:
+        """ALLOC_ODT_ENTRY — cấp phát `count` entry cho ODT `odt` của list `daq`."""
+        caps = self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.ALLOC_ODT_ENTRY, 0x00])
+            + daq.to_bytes(2, caps.byte_order)
+            + bytes([odt, count]),
+            raise_on_error=True, timeout=None, retry=False)
+
+    def set_daq_ptr(self, daq: int, odt: int, entry: int) -> None:
+        """SET_DAQ_PTR — đặt con trỏ ghi cho chuỗi WRITE_DAQ tiếp theo."""
+        caps = self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.SET_DAQ_PTR, 0x00])
+            + daq.to_bytes(2, caps.byte_order)
+            + bytes([odt, entry]),
+            raise_on_error=True, timeout=None, retry=False)
+
+    def write_daq(self, bit_offset: int, size: int, ext: int, addr: int) -> None:
+        """WRITE_DAQ — ghi một entry vào ODT tại con trỏ hiện tại rồi tự tăng.
+
+        bit_offset: 0xFF = không dùng bit masking (đọc toàn byte).
+        """
+        caps = self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.WRITE_DAQ, bit_offset & 0xFF, size & 0xFF, ext & 0xFF])
+            + pack_u32(addr, caps.byte_order),
+            raise_on_error=True, timeout=None, retry=False)
+
+    def set_daq_list_mode(
+        self, daq: int, event: int,
+        mode: int = 0x10, prescaler: int = 1, prio: int = 0
+    ) -> None:
+        """SET_DAQ_LIST_MODE — cấu hình event/mode/prescaler cho DAQ list.
+
+        mode bits: bit4=0x10 bật timestamp; bit0=0 là DAQ (không phải STIM).
+        """
+        caps = self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.SET_DAQ_LIST_MODE, mode & 0xFF])
+            + daq.to_bytes(2, caps.byte_order)
+            + event.to_bytes(2, caps.byte_order)
+            + bytes([prescaler & 0xFF, prio & 0xFF]),
+            raise_on_error=True, timeout=None, retry=False)
+
+    def start_stop_daq_list(self, mode: int, daq: int) -> int:
+        """START_STOP_DAQ_LIST — mode 2 = select (trả firstPid); 1=start; 0=stop."""
+        caps = self._require_daq()
+        resp = self._locked_transact(
+            bytes([Cmd.START_STOP_DAQ_LIST, mode & 0xFF]) + daq.to_bytes(2, caps.byte_order),
+            raise_on_error=True, timeout=None, retry=False)
+        if len(resp) < 2:
+            raise MalformedResponseError(
+                f"Response START_STOP_DAQ_LIST cần ≥2 byte, ECU trả {len(resp)}: {hexs(resp)}")
+        return resp[1]
+
+    def start_stop_synch(self, mode: int) -> None:
+        """START_STOP_SYNCH — mode 1 = khởi động đồng loạt; 0 = dừng tất cả."""
+        self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.START_STOP_SYNCH, mode & 0xFF]),
+            raise_on_error=True, timeout=None, retry=False)
 
     # ── lệnh thô ─────────────────────────────────────────────────────────────
 
