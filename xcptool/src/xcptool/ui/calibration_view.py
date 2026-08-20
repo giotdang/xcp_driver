@@ -50,6 +50,14 @@ _DTYPE_FMT: dict[str, str] = {
     "FLOAT32_IEEE": "f", "FLOAT64_IEEE": "d",
 }
 
+# Tên thân thiện cho kiểu dữ liệu A2L → kiểu C quen thuộc
+_FRIENDLY_DTYPE: dict[str, str] = {
+    "UBYTE": "UINT8", "SBYTE": "INT8",
+    "UWORD": "UINT16", "SWORD": "INT16",
+    "ULONG": "UINT32", "SLONG": "INT32",
+    "FLOAT32_IEEE": "FLOAT32", "FLOAT64_IEEE": "FLOAT64",
+}
+
 # Chỉ số cột trong QTreeWidget
 COL_NAME = 0
 COL_TYPE = 1
@@ -359,19 +367,22 @@ class CalibrationView(QWidget):
         text = decode_value(data, char.datatype, self._byte_order)
         self._suspend_signals = True
         try:
-            item.setText(COL_VALUE, text)
-            item.setForeground(COL_VALUE, self.tree.palette().text())
-
-            # Cập nhật các dòng con nếu là array
             if char.array_size > 1 and item.childCount() > 0:
+                # Array: cha giữ "—", từng con hiện giá trị riêng
+                item.setText(COL_VALUE, "—")
+                item.setForeground(COL_VALUE, self.tree.palette().text())
                 parts = [p.strip() for p in text.split(",")]
                 for i in range(min(item.childCount(), len(parts))):
                     child = item.child(i)
                     child.setText(COL_VALUE, parts[i])
                     child.setForeground(COL_VALUE, self.tree.palette().text())
+            else:
+                # Scalar
+                item.setText(COL_VALUE, text)
+                item.setForeground(COL_VALUE, self.tree.palette().text())
         finally:
             self._suspend_signals = False
-        self._original[name] = text
+        self._original[name] = text  # aggregated string — dùng cho dirty tracking
         self._dirty.discard(name)
         self._update_write_btn()
 
@@ -486,6 +497,12 @@ class CalibrationView(QWidget):
             return
         text = item.text(COL_VALUE).strip()
         try:
+            if char.array_size > 1 and item.childCount() > 0:
+                # Array: đọc từ từng con thay vì cha (cha hiển thị "—")
+                parts = [item.child(i).text(COL_VALUE) for i in range(item.childCount())]
+                text = ", ".join(parts)
+            else:
+                text = item.text(COL_VALUE).strip()
             data = encode_value(text, char.datatype, self._byte_order, char.array_size)
         except (ValueError, struct.error) as exc:
             self.status_label.setText(f"Giá trị không hợp lệ: {exc}")
@@ -527,7 +544,10 @@ class CalibrationView(QWidget):
         item = QTreeWidgetItem()
         item.setData(COL_NAME, Qt.UserRole, name)
         item.setText(COL_NAME, display_name or name)
-        item.setText(COL_TYPE, char.char_type)
+        dtype_str = _FRIENDLY_DTYPE.get(char.datatype or "", char.datatype or char.char_type)
+        if char.array_size > 1:
+            dtype_str = f"{dtype_str}[{char.array_size}]"
+        item.setText(COL_TYPE, dtype_str)
         item.setText(COL_ADDR, f"0x{char.address:08X}")
 
         item.setText(COL_SIZE, str(char.byte_size))
@@ -546,7 +566,7 @@ class CalibrationView(QWidget):
             child = QTreeWidgetItem()
             child.setData(COL_NAME, Qt.UserRole, ("array_elem", char.name, i))
             child.setText(COL_NAME, f"[{i}]")
-            child.setText(COL_TYPE, char.datatype or "ELEMENT")
+            child.setText(COL_TYPE, _FRIENDLY_DTYPE.get(char.datatype or "", char.datatype or "ELEMENT"))
             child.setText(COL_ADDR, f"0x{(char.address + i * elem_size):08X}")
             child.setText(COL_SIZE, str(elem_size))
             child.setText(COL_VALUE, "—")
@@ -560,7 +580,7 @@ class CalibrationView(QWidget):
         """Cho phép sửa inline khi double-click đúng cột Giá trị."""
         if column != COL_VALUE:
             return
-        if "STRUCT" in item.text(COL_TYPE):
+        if item.text(COL_TYPE).startswith("STRUCT"):
             return   # Không sửa trực tiếp dòng cha STRUCT
         item.setFlags(item.flags() | Qt.ItemIsEditable)
         self.tree.editItem(item, COL_VALUE)
@@ -594,7 +614,6 @@ class CalibrationView(QWidget):
 
             self._suspend_signals = True
             try:
-                parent_item.setText(COL_VALUE, parent_text)
                 parent_item.setForeground(COL_VALUE, dirty_color if is_dirty else neutral)
                 item.setForeground(COL_VALUE, dirty_color if is_dirty else neutral)
             finally:

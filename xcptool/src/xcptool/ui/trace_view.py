@@ -247,7 +247,7 @@ class TraceView(QWidget):
         filter_row.addWidget(BodyLabel("Lọc:", self))
         for kind in ALL_KINDS:
             cb = CheckBox(_KIND_LABEL[kind], self)
-            cb.setChecked(True)
+            cb.setChecked(kind != "daq")  # DAQ tắt mặc định — DTO flood 50–100Hz
             cb.toggled.connect(self._on_filter)
             self.kind_boxes[kind] = cb
             filter_row.addWidget(cb)
@@ -292,7 +292,7 @@ class TraceView(QWidget):
             self.model.set_capacity(self.cap_spin.value())
             at_bottom = self.autoscroll_cb.isChecked()
             self.model.append(entries)
-            if at_bottom and entries:
+            if at_bottom and entries and self.isVisible():
                 self.table.scrollToBottom()
         self._update_counters(dropped)
 

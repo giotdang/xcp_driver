@@ -53,6 +53,14 @@ _ENDIAN: dict[str, str] = {"little": "<", "big": ">"}
 # Số điểm tối đa mỗi signal trong bộ đệm (~30s tại 100 Hz)
 _MAX_POINTS = 3000
 
+# Tên thân thiện cho kiểu dữ liệu A2L → kiểu C quen thuộc
+_FRIENDLY_DTYPE: dict[str, str] = {
+    "UBYTE": "UINT8", "SBYTE": "INT8",
+    "UWORD": "UINT16", "SWORD": "INT16",
+    "ULONG": "UINT32", "SLONG": "INT32",
+    "FLOAT32_IEEE": "FLOAT32", "FLOAT64_IEEE": "FLOAT64",
+}
+
 # Index cột trong QTreeWidget
 COL_NAME  = 0
 COL_DTYPE = 1
@@ -262,7 +270,7 @@ class MeasurementView(QWidget):
                     child.setData(COL_NAME, Qt.UserRole, m.name)
                     disp_name = m.name[len(group_name):].lstrip("._") or m.name
                     child.setText(COL_NAME, disp_name)
-                    child.setText(COL_DTYPE, m.datatype)
+                    child.setText(COL_DTYPE, _FRIENDLY_DTYPE.get(m.datatype, m.datatype))
                     child.setText(COL_ADDR, f"0x{m.address:08X}")
                     child.setText(COL_VALUE, "-")
                     child.setToolTip(COL_NAME, m.description)
@@ -277,9 +285,10 @@ class MeasurementView(QWidget):
                 item.setData(COL_NAME, Qt.UserRole, name)
                 item.setText(COL_NAME, name)
                 item.setCheckState(COL_NAME, Qt.Unchecked)
+                friendly = _FRIENDLY_DTYPE.get(meas.datatype, meas.datatype)
                 item.setText(
                     COL_DTYPE,
-                    meas.datatype if meas.array_size == 1 else f"{meas.datatype}[{meas.array_size}]"
+                    friendly if meas.array_size == 1 else f"{friendly}[{meas.array_size}]"
                 )
                 item.setText(COL_ADDR, f"0x{meas.address:08X}")
                 item.setText(COL_VALUE, "-")
@@ -295,7 +304,7 @@ class MeasurementView(QWidget):
                         child = QTreeWidgetItem()
                         child.setData(COL_NAME, Qt.UserRole, child_name)
                         child.setText(COL_NAME, f"[{i}]")
-                        child.setText(COL_DTYPE, meas.datatype)
+                        child.setText(COL_DTYPE, _FRIENDLY_DTYPE.get(meas.datatype, meas.datatype))
                         child.setText(COL_ADDR, f"0x{(meas.address + i * elem_size):08X}")
                         child.setText(COL_VALUE, "-")
                         item.addChild(child)
@@ -335,6 +344,7 @@ class MeasurementView(QWidget):
             return
 
         # Bước 1: Cập nhật giá trị hiển thị thời gian thực (Live Value) trên Tree
+        # Chỉ cập nhật các item lá (con của array hoặc scalar) — dòng cha giữ nguyên "-"
         for sp in samples:
             val = _raw_to_float(sp.value_raw, sp.datatype, self._byte_order)
             if val is not None:

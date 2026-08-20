@@ -735,7 +735,7 @@ class MainWindow(QMainWindow):
 
     def _poll_trace(self) -> None:
         try:
-            entries = self.session.drain_trace()
+            entries = self.session.drain_trace(200)  # throttle: tránh spike khi DAQ vừa start
             dropped = self.session.dropped_frames
         except Exception:  # noqa: BLE001 — timer không được chết vì một lần lỗi
             log.exception("drain_trace() lỗi")
