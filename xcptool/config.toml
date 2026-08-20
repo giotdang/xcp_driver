@@ -1,0 +1,22 @@
+# xcptool configuration file
+
+# xcptool — cấu hình bus. File này do công cụ ghi, sửa tay được.
+[bus]
+backend = "virtual"
+channel = "xcptool"
+bitrate = 500000
+cro_id = 0x7E0
+dto_id = 0x7E1
+extended_id = false
+pad_dlc = true
+t1_timeout_s = 1.0
+is_fd = false
+data_bitrate = 2000000
+
+[session]
+last_a2l_path = "G:/@Autosar/xcp/xcp_driver/examples/xcp_daq_example.a2l"
+
+[ui]
+scope_enabled = false
+trace_row_limit = 20000
+trace_visible_kinds = ["cmd", "res", "err", "ev", "serv", "other"]
