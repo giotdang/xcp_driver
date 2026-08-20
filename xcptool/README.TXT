@@ -38,7 +38,7 @@ B. Simulation Mode (Virtual Bus / No Hardware Required):
      with a built-in virtual FakeSlave simulator.
    - Open Command Prompt (cmd) or PowerShell in this folder and run:
      
-     run.bat --session fake
+     	run.bat --session fake
 
 --------------------------------------------------------------------------------
 ADDITIONAL TIPS & FEATURES
@@ -46,10 +46,4 @@ ADDITIONAL TIPS & FEATURES
 - CAN Configuration:
   You can configure CAN bitrates, CAN FD data rates, CAN IDs, and padding in the
   "Select CAN Interface" dialog upon opening the app or connecting.
-- Resizable Tables:
-  Columns in the Trace, Measurement, and Calibration views can be manually resized
-  by clicking and dragging the header boundaries.
-- Trace View:
-  Scrollbars are available horizontally and vertically to comfortably inspect
-  full 64-byte CAN FD frames.
 ================================================================================
