@@ -1,4 +1,4 @@
-"""Đọc/ghi `~/.xcptool/config.toml`.
+"""Đọc/ghi `config.toml`.
 
 Đây là module DUY NHẤT (cùng `session/api.py`) được phép chứa giá trị mặc định
 mang đặc tính ECU — CAN ID, bitrate. Chúng là *điểm khởi đầu tiện tay cho user*,
@@ -49,9 +49,9 @@ _ENV_DIR = "XCPTOOL_HOME"
 
 
 def config_dir() -> Path:
-    """`~/.xcptool`, hoặc `$XCPTOOL_HOME` khi được đặt (test dùng lối này)."""
+    """`thư mục hiện tại`, hoặc `$XCPTOOL_HOME` khi được đặt (test dùng lối này)."""
     override = os.environ.get(_ENV_DIR)
-    return Path(override) if override else Path.home() / ".xcptool"
+    return Path(override) if override else Path.cwd()
 
 
 def config_path() -> Path:

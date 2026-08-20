@@ -1,4 +1,4 @@
-"""B2 — schema và đọc/ghi `~/.xcptool/config.toml`.
+"""B2 — schema và đọc/ghi `config.toml`.
 
 File hỏng hay thiếu KHÔNG được làm chết app: user sẽ gặp chuyện đó sau một lần
 tắt máy giữa chừng, và mất cấu hình còn đỡ hơn không mở nổi công cụ.

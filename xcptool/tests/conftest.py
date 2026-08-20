@@ -21,7 +21,7 @@ _counter = itertools.count()
 
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch) -> None:
-    """RealSession lưu lựa chọn vào ~/.xcptool sau mỗi lần connect thành công.
+    """RealSession lưu lựa chọn vào thư mục hiện tại sau mỗi lần connect thành công.
     Test không được đụng vào thư mục thật của user."""
     monkeypatch.setenv("XCPTOOL_HOME", str(tmp_path / "xcptool-home"))
 
