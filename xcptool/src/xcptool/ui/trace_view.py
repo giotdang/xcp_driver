@@ -213,12 +213,14 @@ class TraceView(QWidget):
         # qfluentwidgets.TableBase khoá sẵn 38px/dòng (đủ cho control cảm ứng)
         # — quá cao cho bảng log dày đặc muốn nhìn nhiều dòng cùng lúc.
         self.table.verticalHeader().setDefaultSectionSize(22)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
+        
         header = self.table.horizontalHeader()
         for i, mode in enumerate((
             QHeaderView.Interactive, QHeaderView.Interactive,
             QHeaderView.Interactive, QHeaderView.Interactive,
-            QHeaderView.Interactive, QHeaderView.ResizeToContents,
-            QHeaderView.ResizeToContents,
+            QHeaderView.Interactive, QHeaderView.Interactive,
+            QHeaderView.Interactive,
         )):
             header.setSectionResizeMode(i, mode)
         header.setStretchLastSection(False)
@@ -227,6 +229,8 @@ class TraceView(QWidget):
         self.table.setColumnWidth(2, 40)
         self.table.setColumnWidth(3, 80)
         self.table.setColumnWidth(4, 40)
+        self.table.setColumnWidth(5, 1400)
+        self.table.setColumnWidth(6, 800)
 
         self.pause_btn = PushButton("Pause", self)
         self.pause_btn.setCheckable(True)
