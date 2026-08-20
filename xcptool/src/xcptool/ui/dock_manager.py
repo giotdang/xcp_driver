@@ -44,10 +44,10 @@ class DockManager:
     ) -> None:
         """Tạo dock widgets và add vào main window."""
         self.trace_dock = self._make_dock(
-            "Trace CAN", trace_widget, closable=False, on_toggle=self.toggle_debug_area
+            "CAN Trace", trace_widget, closable=False, on_toggle=self.toggle_debug_area
         )
         self.console_dock = self._make_dock(
-            "Lệnh thô", console_widget, closable=False, on_toggle=self.toggle_debug_area
+            "Raw Commands", console_widget, closable=False, on_toggle=self.toggle_debug_area
         )
         self.memory_dock = self._make_dock("Memory / Debug", memory_widget, closable=True)
 
@@ -57,7 +57,7 @@ class DockManager:
         self._mw.addDockWidget(Qt.BottomDockWidgetArea, self.memory_dock)
         self._mw.tabifyDockWidget(self.console_dock, self.memory_dock)
 
-        # Trace CAN là tab mặc định hiển thị
+        # CAN Trace là tab mặc định hiển thị
         self.trace_dock.raise_()
         # Memory dock mặc định ẩn
         self.memory_dock.hide()
@@ -68,24 +68,13 @@ class DockManager:
     def restore_state(self, state: bytes) -> bool:
         return self._mw.restoreState(state)
 
-    # ── vùng debug (Trace CAN + Lệnh thô) ────────────────────────────────────
+    # ── vùng debug (CAN Trace + Raw Commands) ─────────────────────────────────
 
     def is_debug_area_collapsed(self) -> bool:
         return self._debug_collapsed
 
     def toggle_debug_area(self) -> bool:
-        """Thu nhỏ/mở rộng Trace CAN + Lệnh thô để nhường chỗ cho panel chính
-        (Calibration). Memory/Debug dock không đụng tới — nó có toggle riêng
-        qua View menu.
-
-        KHÔNG dùng `hide()` — nút mũi tên nằm ngay trên title bar của chính
-        dock này, ẩn cả dock thì nút cũng biến mất theo, không còn cách nào
-        bấm lại để mở ra (bug user báo cáo). Thay vào đó thu nhỏ chiều cao
-        dock xuống đúng bằng title bar, giống nút minimize — dock vẫn "hiện
-        diện" nên title bar (và nút) luôn bấm được.
-
-        Trả về True nếu đang MỞ RỘNG sau khi gọi.
-        """
+        """Thu nhỏ/mở rộng CAN Trace + Raw Commands để nhường chỗ cho panel chính."""
         if self._debug_collapsed:
             self._expand_debug_area()
         else:
@@ -94,19 +83,9 @@ class DockManager:
         return not self._debug_collapsed
 
     def _collapse_debug_area(self) -> None:
-        # Chỉ nhớ chiều cao hiện tại nếu nó có nghĩa (đã qua layout thật) —
-        # gọi collapse ngay lúc khởi động (khôi phục trạng thái đã lưu) thì
-        # trace_dock.height() có thể còn là giá trị tạm trước khi layout chạy.
         current_height = self.trace_dock.height()
         if current_height > _TITLEBAR_HEIGHT:
             self._expanded_height = current_height
-        # setMaximumHeight(0) thay vì hide(): hide() loại nội dung khỏi layout
-        # HOÀN TOÀN, kể cả chiều rộng nó đóng góp — QMainWindowLayout khi đó
-        # tính lại bề rộng cả dock/tab-group chỉ theo minimumSizeHint() của
-        # title bar (rất hẹp), để lại khoảng trống lớn bên phải (bug user báo
-        # cáo). Ép chiều cao tối đa = 0 vẫn loại bỏ được ràng buộc minimum-
-        # height (để resizeDocks() thu nhỏ được xuống dưới minimumSizeHint),
-        # nhưng KHÔNG đụng tới sizeHint bề rộng — dock vẫn full-width.
         self.trace_dock.widget().setMaximumHeight(0)
         self.console_dock.widget().setMaximumHeight(0)
         self._mw.resizeDocks(
@@ -123,26 +102,23 @@ class DockManager:
         self._debug_collapsed = False
 
     def ensure_debug_area_expanded(self) -> None:
-        """Mở lại nếu đang thu nhỏ — gọi khi user chủ động điều hướng tới
-        Trace CAN/Lệnh thô (Ctrl+1/2, `MainWindow.switch_to()`), vì lúc đó họ
-        rõ ràng muốn NHÌN THẤY nội dung chứ không chỉ raise() một tab rỗng."""
+        """Mở lại nếu đang thu nhỏ."""
         if self._debug_collapsed:
             self._expand_debug_area()
         self.sync_toggle_buttons()
 
     @property
     def debug_toggle_symbol(self) -> str:
-        """Mũi tên hiện đang hiện trên title bar của Trace CAN/Lệnh thô."""
+        """Mũi tên hiện đang hiện trên title bar của CAN Trace/Raw Commands."""
         return _ARROW_EXPAND if self._debug_collapsed else _ARROW_COLLAPSE
 
     def sync_toggle_buttons(self) -> None:
-        """Đồng bộ mũi tên + tooltip trên title bar của Trace CAN/Lệnh thô với
-        trạng thái thu nhỏ/mở thật."""
+        """Đồng bộ mũi tên + tooltip trên title bar của CAN Trace/Raw Commands."""
         arrow = self.debug_toggle_symbol
         tooltip = (
-            "Mở lại Trace CAN + Lệnh thô"
-            if self._debug_collapsed else
-            "Thu nhỏ Trace CAN + Lệnh thô để nhường chỗ cho panel Hiệu chỉnh"
+            "Expand CAN Trace + Raw Commands"
+            if self._debug_collapsed
+            else "Collapse CAN Trace + Raw Commands to make room for main view"
         )
         for btn in self._debug_arrow_btns:
             btn.setText(arrow)

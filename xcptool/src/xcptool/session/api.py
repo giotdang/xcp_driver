@@ -58,7 +58,7 @@ from ..a2l import A2LDatabase
 
 __all__ = [
     "ConnState", "PageMode", "Direction", "FrameKind",
-    "DeviceInfo", "BusConfig", "DaqCaps", "SlaveCaps", "TraceEntry",
+    "DeviceInfo", "BusConfig", "AppConfig", "DaqCaps", "SlaveCaps", "TraceEntry",
     "DaqSignal", "DaqList", "SamplePoint",
     "XcpToolError", "TransportError", "DeviceNotFoundError", "DriverMissingError",
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
@@ -135,6 +135,20 @@ class BusConfig:
     extended_id: bool = False       # False = 11-bit
     pad_dlc: bool = True            # A2L MAX_DLC_REQUIRED → luôn đệm đủ 8 byte
     t1_timeout_s: float = 1.0       # timeout chờ response của một lệnh
+    is_fd: bool = False             # CAN FD mode
+    data_bitrate: int = 2_000_000   # Data phase bitrate (CAN FD only)
+
+
+@dataclass
+class AppConfig:
+    """Toàn bộ cấu hình ứng dụng được lưu lại giữa các phiên làm việc."""
+    bus: BusConfig
+    last_a2l_path: str = ""
+    scope_enabled: bool = True
+    trace_row_limit: int = 20_000
+    trace_visible_kinds: list[str] = field(
+        default_factory=lambda: ["cmd", "res", "err", "ev", "serv", "other"]
+    )
 
 
 @dataclass(frozen=True)
@@ -401,6 +415,12 @@ class Session(Protocol):
         công); `FakeSession` trả lại `BusConfig` của lần `connect()` gần nhất
         trong tiến trình, hoặc giá trị mặc định nếu chưa từng connect.
         """
+
+    def load_app_config(self) -> AppConfig:
+        """Đọc toàn bộ cấu hình ứng dụng bao gồm bus, session và ui."""
+
+    def save_app_config(self, cfg: AppConfig) -> None:
+        """Lưu toàn bộ cấu hình ứng dụng."""
 
     @property
     def symbols(self) -> A2LDatabase:

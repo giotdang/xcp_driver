@@ -1,7 +1,7 @@
-"""Ngoại lệ → thông báo người đọc được.
+"""Exception → human-readable message mapping.
 
-Không bao giờ hiện traceback hay mã lỗi thô cho user. `XcpToolError` đã mang sẵn
-`user_message`; phần thêm ở đây là *gợi ý phải làm gì tiếp theo*.
+Never show tracebacks or raw error codes to the user. `XcpToolError` already
+carries a `user_message`; this module adds actionable hints about what to do next.
 """
 
 from __future__ import annotations
@@ -32,70 +32,73 @@ __all__ = ["describe", "show_error", "show_unexpected"]
 
 
 def describe(exc: BaseException) -> tuple[str, str]:
-    """(tiêu đề, nội dung) — cả hai đều là câu tiếng Việt cho user đọc."""
+    """(title, body) — both are English sentences intended for the end user."""
     if isinstance(exc, DriverMissingError):
         return (
-            "Thiếu driver của hãng",
+            "Interface driver not found",
             f"{exc.user_message}\n\n"
-            f"Cài gói sau rồi bấm Dò lại: {exc.package_hint}",
+            f"Install the following package, then click Scan Devices: {exc.package_hint}",
         )
     if isinstance(exc, DeviceNotFoundError):
         return (
-            "Không tìm thấy thiết bị",
+            "Interface not found",
             f"{exc.user_message}\n\n"
-            "Kiểm tra dây USB và cổng cắm, sau đó dò lại danh sách thiết bị.",
+            "Check the USB cable and port, then scan for devices again.",
         )
     if isinstance(exc, BusError):
         return (
-            "Lỗi bus CAN",
+            "CAN bus error",
             f"{exc.user_message}\n\n"
-            "Kiểm tra bitrate, điện trở đầu cuối 120Ω và xem ECU có đang cấp nguồn không.",
+            "Verify the bitrate, 120 Ω termination resistors, and ECU power supply.",
         )
     if isinstance(exc, XcpTimeoutError):
         return (
-            "ECU không trả lời",
+            "ECU not responding",
             f"{exc.user_message}\n\n"
-            "Kiểm tra CAN ID của CRO/DTO và bitrate — đây là hai thứ hay đặt sai nhất.",
+            "Check the CRO/DTO CAN IDs and bitrate — these are the most common "
+            "misconfiguration points.",
         )
     if isinstance(exc, MalformedResponseError):
         return (
-            "Response không hợp lệ",
+            "Invalid response",
             f"{exc.user_message}\n\n"
-            "Xem cửa sổ debug CAN để đối chiếu byte thô mà ECU gửi về.",
+            "Open the CAN Trace window to inspect the raw bytes returned by the ECU.",
         )
     if isinstance(exc, WriteProtectedError):
         return (
-            "Vùng nhớ đang được bảo vệ ghi",
+            "Memory write protected",
             f"{exc.user_message}\n\n"
-            "Thường là do XCP đang trỏ vào reference page (ROM). "
-            "Chuyển XCP về working page (RAM) rồi ghi lại.",
+            "The XCP tool is likely pointing at the reference page (ROM). "
+            "Switch XCP to the working page (RAM) and retry.",
         )
     if isinstance(exc, SlaveError):
         return (
-            f"ECU từ chối lệnh — {exc.name}",
-            f"{exc.description}\n\nMã lỗi thô: 0x{exc.code:02X}",
+            f"ECU rejected command — {exc.name}",
+            f"{exc.description}\n\nRaw error code: 0x{exc.code:02X}",
         )
     if isinstance(exc, NotConnectedError):
-        return ("Chưa kết nối", f"{exc.user_message}\n\nBấm Kết nối trước đã.")
+        return ("Not connected", f"{exc.user_message}\n\nClick Connect first.")
     if isinstance(exc, BusyError):
         return (
-            "Bus đang bận",
+            "Bus busy",
             f"{exc.user_message}\n\n"
-            "Mỗi lúc chỉ chạy được một lệnh XCP. Chờ lệnh hiện tại xong rồi thử lại.",
+            "Only one XCP command can run at a time. Wait for the current "
+            "operation to finish and try again.",
         )
     if isinstance(exc, UnsupportedByEcuError):
-        return ("ECU không hỗ trợ", exc.user_message)
+        return ("Feature not supported by ECU", exc.user_message)
     if isinstance(exc, XcpToolError):
-        return ("Lỗi", exc.user_message)
+        return ("Error", exc.user_message)
     return (
-        "Lỗi ngoài dự kiến",
+        "Unexpected error",
         f"{type(exc).__name__}: {exc}\n\n"
-        "Đây là lỗi của công cụ, không phải của bạn. Chi tiết đã ghi vào file log.",
+        "This is a tool-level error, not a user mistake. "
+        "Details have been written to the log file.",
     )
 
 
 def show_error(parent: QWidget | None, exc: BaseException) -> None:
-    """Hộp thoại một nút. Luôn ghi log trước khi hiện."""
+    """Single-button error dialog. Always logs before displaying."""
     title, body = describe(exc)
     if isinstance(exc, XcpToolError):
         log.warning("%s: %s", title, exc)
@@ -104,19 +107,19 @@ def show_error(parent: QWidget | None, exc: BaseException) -> None:
     box = MessageBox(title, body, parent)
     box.cancelButton.hide()
     box.buttonLayout.insertStretch(1)
-    box.yesButton.setText("Đã hiểu")
+    box.yesButton.setText("OK")
     box.exec()
 
 
 def show_unexpected(parent: QWidget | None, exc: BaseException, log_path: str) -> None:
-    """Dành cho excepthook: xin lỗi, chỉ chỗ xem log, KHÔNG hiện traceback."""
+    """For the excepthook: apologize, point to the log, never show a traceback."""
     box = MessageBox(
-        "Công cụ gặp lỗi ngoài dự kiến",
+        "Unexpected tool error",
         f"{type(exc).__name__}: {exc}\n\n"
-        f"Công cụ vẫn đang chạy. Toàn bộ chi tiết đã ghi vào:\n{log_path}",
+        f"The tool is still running. Full details have been written to:\n{log_path}",
         parent,
     )
     box.cancelButton.hide()
     box.buttonLayout.insertStretch(1)
-    box.yesButton.setText("Đóng")
+    box.yesButton.setText("Close")
     box.exec()

@@ -166,24 +166,24 @@ class MeasurementView(QWidget):
 
     def _build_ui(self) -> None:
         # toolbar
-        self.load_btn = PushButton("Nạp A2L…", self)
+        self.load_btn = PushButton("Load A2L…", self)
         self.load_btn.clicked.connect(self._on_load_click)
 
-        self.start_btn = PrimaryPushButton("Bắt đầu đo", self)
+        self.start_btn = PrimaryPushButton("Start Acquisition", self)
         self.start_btn.clicked.connect(self._on_start)
 
-        self.stop_btn = PushButton("Dừng", self)
+        self.stop_btn = PushButton("Stop", self)
         self.stop_btn.clicked.connect(self._on_stop)
         self.stop_btn.setEnabled(False)
 
-        # Switch bật / tắt vẽ đồ thị
+        # Switch to enable/disable scope plotting
         self.scope_switch = SwitchButton(self)
-        self.scope_switch.setOnText("Đồ thị: Bật")
-        self.scope_switch.setOffText("Đồ thị: Tắt")
+        self.scope_switch.setOnText("Scope: On")
+        self.scope_switch.setOffText("Scope: Off")
         self.scope_switch.setChecked(True)
         self.scope_switch.checkedChanged.connect(self._on_scope_toggled)
 
-        self.count_label = BodyLabel("Chưa nạp A2L.", self)
+        self.count_label = BodyLabel("No A2L loaded.", self)
 
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.load_btn)
@@ -193,10 +193,10 @@ class MeasurementView(QWidget):
         toolbar.addWidget(self.count_label)
         toolbar.addStretch(1)
 
-        # cây signal (trái) — hiển thị dạng bảng thông số & live values
+        # signal tree (left) — parameter table & live values
         self.tree = QTreeWidget(self)
         self.tree.setColumnCount(4)
-        self.tree.setHeaderLabels(["Signal", "Kiểu", "Địa chỉ", "Giá trị"])
+        self.tree.setHeaderLabels(["Signal", "Type", "Address", "Value"])
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         hdr = self.tree.header()
@@ -218,8 +218,8 @@ class MeasurementView(QWidget):
             )
             pg.setConfigOptions(antialias=False, useOpenGL=False)
         self._plot = pg.PlotWidget(background=None)
-        self._plot.setLabel("left",   "Giá trị")
-        self._plot.setLabel("bottom", "Thời gian (s)")
+        self._plot.setLabel("left",   "Value")
+        self._plot.setLabel("bottom", "Time (s)")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
         self._legend = self._plot.addLegend(offset=(10, 10))
 
@@ -312,10 +312,10 @@ class MeasurementView(QWidget):
                     item.setExpanded(True)
 
         n = len(db.measurements)
-        self.count_label.setText(f"{n} MEASUREMENT")
+        self.count_label.setText(f"{n} MEASUREMENT(s)")
         self.status_label.setText(
-            "Chọn signals (tick ô vuông) rồi bấm 'Bắt đầu đo'."
-            if n > 0 else "File A2L không có MEASUREMENT nào."
+            "Select signals (check boxes) then click 'Start Acquisition'."
+            if n > 0 else "A2L file contains no MEASUREMENTs."
         )
 
 
@@ -323,20 +323,20 @@ class MeasurementView(QWidget):
         self._byte_order = byte_order
 
     def on_daq_started(self) -> None:
-        """Gọi từ MainWindow sau khi start_daq() thành công."""
+        """Called from MainWindow after start_daq() succeeds."""
         self._daq_running = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.status_label.setText("Đang đo…")
+        self.status_label.setText("Acquiring DAQ data…")
         self._t0_ns = 0
         self._start_mono = time.perf_counter()
 
     def on_daq_stopped(self) -> None:
-        """Gọi từ MainWindow sau khi stop_daq() thành công."""
+        """Called from MainWindow after stop_daq() succeeds."""
         self._daq_running = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.status_label.setText("Đã dừng.")
+        self.status_label.setText("Stopped.")
 
     def on_samples(self, samples: list[SamplePoint]) -> None:
         """Gọi từ timer 40ms trong MainWindow — cập nhật live value & scope."""
@@ -409,7 +409,7 @@ class MeasurementView(QWidget):
 
     def _on_load_click(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn file A2L", "", "A2L files (*.a2l);;All files (*)"
+            self, "Select A2L File", "", "A2L files (*.a2l);;All files (*)"
         )
         if path:
             self.a2l_load_requested.emit(path)
@@ -418,7 +418,7 @@ class MeasurementView(QWidget):
         lists = self._build_daq_lists()
         if not lists:
             self.status_label.setText(
-                "Tick ít nhất một ô vuông trong danh sách signal trước."
+                "Select at least one signal before starting acquisition."
             )
             return
         self._setup_curves(lists)

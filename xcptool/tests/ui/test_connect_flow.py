@@ -165,7 +165,7 @@ def test_status_bar_hien_caps_sau_khi_connect(qtbot, connected_window: MainWindo
     assert f"MAX_CTO {caps.max_cto}" in text
     assert f"MAX_DTO {caps.max_dto}" in text
     assert "CAL" in text and "DAQ" in text
-    assert "Đã kết nối" in connected_window.state_label.text()
+    assert "Connected" in connected_window.state_label.text()
 
 
 def test_caps_khong_hardcode_ma_lay_tu_ecu(qtbot, cfg: BusConfig) -> None:

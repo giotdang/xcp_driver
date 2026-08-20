@@ -66,7 +66,7 @@ COL_SIZE = 3
 COL_VALUE = 4
 COL_RANGE = 5
 COL_DESC = 6
-_HEADERS = ["Tên", "Loại", "Địa chỉ", "Byte", "Giá trị", "Khoảng", "Mô tả"]
+_HEADERS = ["Name", "Type", "Address", "Size", "Value", "Range", "Description"]
 
 
 def decode_value(data: bytes, datatype: str, byte_order: str) -> str:
@@ -100,13 +100,13 @@ def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> 
     """
     fmt_char = _DTYPE_FMT.get(datatype)
     if fmt_char is None:
-        raise ValueError(f"Kiểu dữ liệu không hỗ trợ: {datatype}")
+        raise ValueError(f"Unsupported datatype: {datatype}")
     endian = _ENDIAN.get(byte_order, "<")
     raw = [p.strip() for p in text.split(",")]
     if len(raw) == 1 and array_size > 1:
         raw = raw * array_size
     if len(raw) != array_size:
-        raise ValueError(f"Cần {array_size} giá trị, nhận {len(raw)}")
+        raise ValueError(f"Expected {array_size} values, received {len(raw)}")
     is_float = datatype.startswith("FLOAT")
     buf = bytearray()
     for part in raw:
@@ -195,17 +195,17 @@ class CalibrationView(QWidget):
 
     def _build_ui(self) -> None:
         # ── toolbar ──────────────────────────────────────────────────────────
-        self.load_btn = PushButton("Nạp A2L…", self)
+        self.load_btn = PushButton("Load A2L…", self)
         self.load_btn.clicked.connect(self._on_load_click)
 
-        self.read_all_btn = PrimaryPushButton("Đọc tất cả", self)
+        self.read_all_btn = PrimaryPushButton("Read All", self)
         self.read_all_btn.clicked.connect(self._on_read_all)
 
-        self.write_btn = PushButton("Ghi thay đổi", self)
+        self.write_btn = PushButton("Write Changes", self)
         self.write_btn.clicked.connect(self._on_write)
         self.write_btn.setEnabled(False)
 
-        self.count_label = BodyLabel("Chưa nạp A2L.", self)
+        self.count_label = BodyLabel("No A2L loaded.", self)
 
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.load_btn)
@@ -253,12 +253,12 @@ class CalibrationView(QWidget):
             routeKey=_ROUTE_REFERENCE, text="Reference (ROM)", onClick=self._on_toggle_reference
         )
 
-        self.refresh_pages_btn = PushButton("Đọc trạng thái trang", self)
+        self.refresh_pages_btn = PushButton("Read Page Status", self)
         self.refresh_pages_btn.clicked.connect(self._on_refresh_pages)
 
         self.copy_ref_btn = PushButton("Copy Ref→Working", self)
         self.copy_ref_btn.setToolTip(
-            "Copy reference page → working page (đặt lại tất cả về giá trị mặc định ROM)"
+            "Copy reference page → working page (reset all to ROM defaults)"
         )
         self.copy_ref_btn.clicked.connect(self._on_copy_ref_to_working)
 
@@ -270,11 +270,10 @@ class CalibrationView(QWidget):
         page_row.addWidget(self.copy_ref_btn)
         page_row.addStretch(1)
 
-        # Chỉ hiện khi GET_CAL_PAGE trả về ECU ≠ XCP (§5: "trường hợp trang
-        # không đồng bộ") — bình thường ẩn, không chiếm chỗ trên layout.
+        # Only shown when GET_CAL_PAGE reports ECU ≠ XCP
         self.sync_warning_label = CaptionLabel("", self)
         self.sync_warning_label.hide()
-        self.sync_btn = PushButton("Đồng bộ lại", self)
+        self.sync_btn = PushButton("Re-synchronize", self)
         self.sync_btn.clicked.connect(self._on_sync_click)
         self.sync_btn.hide()
 
@@ -322,7 +321,7 @@ class CalibrationView(QWidget):
                     parent.setText(COL_SIZE, str(total_size))
                     parent.setText(COL_VALUE, "—")
                     parent.setText(COL_RANGE, "")
-                    parent.setText(COL_DESC, f"Nhóm {len(members)} tham số")
+                    parent.setText(COL_DESC, f"Group of {len(members)} parameters")
                     parent.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                     self.tree.addTopLevelItem(parent)
 
@@ -347,10 +346,10 @@ class CalibrationView(QWidget):
             self._suspend_signals = False
 
         n = len(db.characteristics)
-        self.count_label.setText(f"{n} CHARACTERISTIC")
+        self.count_label.setText(f"{n} CHARACTERISTIC(s)")
         self.status_label.setText(
-            "A2L đã nạp. Kết nối ECU rồi bấm 'Đọc tất cả' để xem giá trị hiện tại."
-            if n > 0 else "File A2L không có CHARACTERISTIC nào."
+            "A2L loaded. Connect to ECU and click 'Read All' to fetch current values."
+            if n > 0 else "A2L file contains no CHARACTERISTICs."
         )
         self.write_btn.setEnabled(False)
 
@@ -387,7 +386,7 @@ class CalibrationView(QWidget):
         self._update_write_btn()
 
     def on_batch_read_done(self, results: dict[str, bytes | None]) -> None:
-        """Cập nhật toàn bộ CHARACTERISTIC sau batch read."""
+        """Update all CHARACTERISTICs after a batch read."""
         ok = sum(1 for data in results.values() if data is not None)
         for name, data in results.items():
             if data is not None:
@@ -395,12 +394,12 @@ class CalibrationView(QWidget):
         total = len(results)
         fail = total - ok
         self.status_label.setText(
-            f"Đã đọc {ok}/{total} tham số."
-            + (f" {fail} tham số lỗi (địa chỉ ngoài vùng hoặc ECU từ chối)." if fail else "")
+            f"Read {ok}/{total} parameters."
+            + (f" {fail} failed (out of range or ECU rejected)." if fail else "")
         )
 
     def on_write_done(self, name: str) -> None:
-        """Xoá dirty indicator sau khi ghi thành công."""
+        """Clear dirty indicator after successful write."""
         item = self._char_items.get(name)
         if item is None:
             return
@@ -414,21 +413,16 @@ class CalibrationView(QWidget):
         self._original[name] = item.text(COL_VALUE)
         self._dirty.discard(name)
         self._update_write_btn()
-        self.status_label.setText(f"Đã ghi '{name}' xuống ECU thành công.")
+        self.status_label.setText(f"Successfully wrote '{name}' to ECU.")
 
     def on_pages(self, segment: int, ecu_page: int | None, xcp_page: int | None) -> None:
-        """Cập nhật chỉ báo trang từ GET_CAL_PAGE response.
-
-        UI chỉ hiện MỘT trạng thái (Working/Reference). Nếu ECU và XCP lệch
-        nhau — do tool ngoài set hoặc sequence bị gián đoạn — hiện cảnh báo
-        kèm nút Đồng bộ lại thay vì âm thầm chọn một trong hai (DESIGN.md §5).
-        """
+        """Update page indicator from GET_CAL_PAGE response."""
         self._last_ecu_page = ecu_page
         self._last_xcp_page = xcp_page
 
         if ecu_page is None or xcp_page is None:
             self._set_sync_warning(None)
-            self.status_label.setText("Không đọc được trạng thái trang.")
+            self.status_label.setText("Failed to read page status.")
             return
 
         route = _ROUTE_BY_PAGE.get(xcp_page)
@@ -438,12 +432,12 @@ class CalibrationView(QWidget):
         if ecu_page == xcp_page:
             self._set_sync_warning(None)
             self.status_label.setText(
-                "Đang ở Reference (ROM) — chỉ đọc, ghi sẽ bị từ chối."
+                "Active on Reference (ROM) — read-only, write operations will be rejected."
                 if xcp_page == REFERENCE_PAGE
-                else "Đang ở Working (RAM) — sẵn sàng ghi."
+                else "Active on Working (RAM) — ready to write."
             )
         else:
-            self._set_sync_warning(f"⚠ Trang không đồng bộ (ECU: {ecu_page}, XCP: {xcp_page})")
+            self._set_sync_warning(f"⚠ Pages desynchronized (ECU: {ecu_page}, XCP: {xcp_page})")
 
     def set_page_indicator(self, page: int) -> None:
         """Cập nhật chỉ báo sau khi ECU ack cả hai SET_CAL_PAGE, không cần đọc lại.
@@ -473,39 +467,39 @@ class CalibrationView(QWidget):
 
     def _on_load_click(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn file A2L", "", "A2L files (*.a2l);;All files (*)"
+            self, "Select A2L File", "", "A2L files (*.a2l);;All files (*)"
         )
         if path:
             self.a2l_load_requested.emit(path)
 
     def _on_read_all(self) -> None:
         if not self._db.characteristics:
-            self.status_label.setText("Chưa nạp A2L — bấm 'Nạp A2L…' trước.")
+            self.status_label.setText("No A2L loaded — click 'Load A2L…' first.")
             return
-        self.status_label.setText("Đang đọc tất cả tham số…")
+        self.status_label.setText("Reading all parameters…")
         self._read_all_cb()
 
     def _on_write(self) -> None:
         name = self._selected_char_name()
         if name is None or name not in self._dirty:
-            self.status_label.setText("Chọn một CHARACTERISTIC đã chỉnh sửa để ghi.")
+            self.status_label.setText("Select a modified CHARACTERISTIC to write.")
             return
         item = self._char_items[name]
         char = self._db.characteristics[name]
         if char.datatype is None:
-            self.status_label.setText(f"'{name}' chưa resolve được datatype (kiểm tra A2L).")
+            self.status_label.setText(f"'{name}' datatype not resolved (check A2L).")
             return
         text = item.text(COL_VALUE).strip()
         try:
             if char.array_size > 1 and item.childCount() > 0:
-                # Array: đọc từ từng con thay vì cha (cha hiển thị "—")
+                # Array: read from children instead of parent (parent shows "—")
                 parts = [item.child(i).text(COL_VALUE) for i in range(item.childCount())]
                 text = ", ".join(parts)
             else:
                 text = item.text(COL_VALUE).strip()
             data = encode_value(text, char.datatype, self._byte_order, char.array_size)
         except (ValueError, struct.error) as exc:
-            self.status_label.setText(f"Giá trị không hợp lệ: {exc}")
+            self.status_label.setText(f"Invalid value: {exc}")
             return
         self._write_cb(name, char.address, data)
 

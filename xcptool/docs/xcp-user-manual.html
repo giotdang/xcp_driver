@@ -1,4 +1,9 @@
-<title>Hướng dẫn xcptool</title>
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hướng dẫn sử dụng xcptool</title>
 <style>
   :root{
     --ground:#FAFBFB;
@@ -81,8 +86,6 @@
   .wrap{max-width:var(--wide);margin:0 auto;}
   .col{max-width:var(--measure);}
 
-  /* ---------- masthead ---------- */
-
   header.masthead{
     padding:72px 0 40px;
     border-bottom:1px solid var(--line);
@@ -103,7 +106,6 @@
     font-weight:700;
     margin:0 0 22px;
     text-wrap:balance;
-    max-width:16ch;
   }
   .standfirst{
     font-size:19px;
@@ -120,8 +122,6 @@
     margin:18px 0 0;
   }
   .xref a{color:var(--accent);}
-
-  /* ---------- sections ---------- */
 
   section{padding:52px 0 8px;}
   section + section{border-top:1px solid var(--line-soft);}
@@ -168,14 +168,27 @@
   li::marker{color:var(--ink-3);}
   ol li::marker{font-family:var(--mono);color:var(--accent);font-weight:600;}
 
-  code{
+  code, pre{
     font-family:var(--mono);
     font-size:.875em;
+  }
+  code{
     background:var(--surface-2);
     padding:1px 5px;
     border-radius:3px;
   }
-  a{color:var(--accent);}
+  pre{
+    background:var(--surface);
+    border:1px solid var(--line-soft);
+    border-radius:6px;
+    padding:14px 18px;
+    overflow-x:auto;
+    line-height:1.5;
+    margin:0 0 20px;
+  }
+  pre code{background:transparent;padding:0;}
+  a{color:var(--accent);text-decoration:none;}
+  a:hover{text-decoration:underline;}
 
   strong{font-weight:640;}
   kbd{
@@ -188,13 +201,11 @@
     padding:1px 6px;
   }
 
-  /* ---------- tables ---------- */
-
   .scroll{overflow-x:auto;margin:0 0 24px;}
   table{
     border-collapse:collapse;
     width:100%;
-    min-width:560px;
+    min-width:600px;
     font-size:14.5px;
     font-variant-numeric:tabular-nums;
   }
@@ -220,214 +231,100 @@
   td.m,th.m{font-family:var(--mono);font-size:13px;}
   tr:last-child td{border-bottom:none;}
 
-  .tag{
-    font-family:var(--mono);
-    font-size:11px;
-    letter-spacing:.05em;
-    padding:2px 7px;
-    border-radius:3px;
-    white-space:nowrap;
-    display:inline-block;
-  }
-  .tag.on{background:var(--ok-soft);color:var(--ok);}
-  .tag.off{background:var(--surface-2);color:var(--ink-3);}
-
-  /* ---------- feature grid (có/chưa có) ---------- */
-
-  .feats{
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
-    gap:2px;
-    margin:14px 0 28px;
-  }
-  .feat{
-    background:var(--surface);
-    border-radius:4px;
-    padding:14px 18px;
-    display:flex;
-    flex-direction:column;
-    gap:5px;
-  }
-  .feat .row{display:flex;align-items:center;gap:9px;}
-  .feat .t{font-weight:620;font-size:14.5px;}
-  .feat .d{font-size:13.5px;color:var(--ink-2);line-height:1.5;}
-
-  /* ---------- code panels ---------- */
-
-  .figpair{
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
-    gap:28px;
-    margin:22px 0 26px;
-  }
-  .panel h4{margin-top:0;}
-
-  /* ---------- callouts ---------- */
-
   .note{
-    border-radius:5px;
-    padding:18px 20px;
-    margin:24px 0;
+    background:var(--surface);
+    border-left:3px solid var(--ink-3);
+    border-radius:0 4px 4px 0;
+    padding:14px 18px;
+    margin:22px 0 26px;
     max-width:var(--measure);
-    font-size:15px;
-    line-height:1.6;
   }
-  .note p{margin:0 0 10px;max-width:none;}
   .note p:last-child{margin-bottom:0;}
+  .note.warn{border-color:var(--warn);background:var(--warn-soft);color:var(--ink);}
+  .note.danger{border-color:var(--danger);background:var(--danger-soft);color:var(--ink);}
+  .note.pick{border-color:var(--accent);background:var(--accent-soft);color:var(--ink);}
   .note .label{
     font-family:var(--mono);
     font-size:11.5px;
-    letter-spacing:.1em;
+    letter-spacing:.09em;
     text-transform:uppercase;
     font-weight:600;
     display:block;
-    margin-bottom:8px;
+    margin-bottom:6px;
   }
-  .note.danger{background:var(--danger-soft);border:1px solid var(--danger);}
-  .note.danger .label{color:var(--danger);}
-  .note.pick{background:var(--accent-soft);border:1px solid var(--accent);}
-  .note.pick .label{color:var(--accent);}
-  .note.warn{background:var(--warn-soft);border:1px solid var(--warn);}
-  .note.warn .label{color:var(--warn);}
-
-  /* ---------- code ---------- */
-
-  pre{
-    background:var(--surface);
-    border:1px solid var(--line-soft);
-    border-radius:5px;
-    padding:16px 18px;
-    overflow-x:auto;
-    margin:0 0 24px;
-    font-size:13px;
-    line-height:1.62;
-  }
-  pre code{background:none;padding:0;font-size:inherit;}
-  .cmt{color:var(--ink-3);}
-  .kw{color:var(--accent);}
-
-  /* ---------- roadmap / phase ---------- */
-
-  .phase{
-    display:grid;
-    grid-template-columns:56px 1fr;
-    gap:20px;
-    padding:20px 0;
-    border-bottom:1px solid var(--line-soft);
-    max-width:820px;
-  }
-  .phase:last-child{border-bottom:none;}
-  .phase .pnum{
-    font-family:var(--mono);
-    font-size:13px;
-    font-weight:600;
-    color:var(--accent);
-    letter-spacing:.04em;
-    padding-top:2px;
-  }
-  .phase h3{margin:0 0 4px;font-size:16.5px;}
-  .phase .meta{
-    font-family:var(--mono);
-    font-size:11.5px;
-    letter-spacing:.06em;
-    text-transform:uppercase;
-    color:var(--ink-3);
-    margin:0 0 8px;
-  }
-  .phase p{font-size:14.5px;color:var(--ink-2);margin:0;max-width:60ch;}
 
   footer{
-    margin-top:56px;
-    padding-top:22px;
+    margin-top:72px;
+    padding-top:24px;
     border-top:1px solid var(--line);
     font-family:var(--mono);
-    font-size:12px;
-    letter-spacing:.05em;
+    font-size:12.5px;
     color:var(--ink-3);
   }
-
-  @media (max-width:640px){
-    body{padding:0 18px 80px;}
-    .phase{grid-template-columns:1fr;gap:5px;}
-  }
 </style>
-
+</head>
+<body>
 <div class="wrap">
 
 <header class="masthead">
-  <p class="eyebrow">User Manual · M1 + M2</p>
-  <h1>xcptool — Hướng dẫn sử dụng</h1>
+  <div class="eyebrow">Tài liệu người dùng · xcptool</div>
+  <h1>Hướng dẫn sử dụng</h1>
   <p class="standfirst">
-    Công cụ PC thay thế CANape/INCA để kết nối ECU qua <strong>XCP-on-CAN</strong>: chọn thiết bị,
-    CONNECT, xem mọi frame trên bus theo thời gian thực, gửi lệnh XCP thô, đọc/ghi bộ nhớ theo địa chỉ,
-    và điều khiển trang calibration. Không cần biên dịch, không cần phần cứng CAN thật để dùng thử.
+    Công cụ PC mã nguồn mở thay thế CANape/INCA cho việc <strong>đo lường thời gian thực (DAQ)</strong>,
+    <strong>vẽ đồ thị scope</strong>, <strong>hiệu chỉnh tham số A2L</strong>, quản lý trang nhớ calibration
+    (Working/Reference), đọc/ghi bộ nhớ hex và theo dõi bus CAN qua giao thức <strong>XCP-on-CAN</strong>.
   </p>
-  <p class="xref">Viết cho người dùng xcptool (kỹ sư đo lường/hiệu chỉnh, đã quen CANape/XCP) · muốn hiểu code, xem <code>ARCHITECTURE.md</code></p>
+  <div class="xref">
+    Xem thêm: <a href="xcp-architecture.html">Kiến trúc hệ thống (ARCHITECTURE)</a> · <a href="xcp-dev-plan.html">Kế hoạch phát triển (DEV_PLAN)</a>
+  </div>
 </header>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">01 — Phạm vi</span>Đang hỗ trợ gì / chưa hỗ trợ gì</h2>
+  <h2><span class="num">01 — Tổng quan</span>Tính năng đang hỗ trợ</h2>
 
-  <p class="lede">
-    xcptool hiện ở giai đoạn <strong>M1 + M2</strong> — nền tảng kết nối và thao tác bộ nhớ.
-    Đọc kỹ mục này trước khi dùng để khỏi kỳ vọng nhầm.
-  </p>
+  <p class="lede">xcptool hiện đã hoàn thiện đầy đủ các tính năng từ <strong>M1 đến M6</strong>:</p>
 
-  <h4>Đã có, dùng được ngay</h4>
-  <div class="feats">
-    <div class="feat"><div class="row"><span class="tag on">CÓ</span><span class="t">Kết nối ECU qua CAN</span></div><div class="d">Đa hãng: PEAK, Vector, ETAS, CANable/slcan, bus ảo để test</div></div>
-    <div class="feat"><div class="row"><span class="tag on">CÓ</span><span class="t">Dò năng lực ECU lúc CONNECT</span></div><div class="d">MAX_CTO/MAX_DTO, byte order, resource CAL/PAG/DAQ/STIM/PGM — không hardcode theo một ECU cụ thể</div></div>
-    <div class="feat"><div class="row"><span class="tag on">CÓ</span><span class="t">Cửa sổ debug CAN (trace)</span></div><div class="d">Mọi frame đi qua bus, kể cả frame không thuộc phiên xcptool</div></div>
-    <div class="feat"><div class="row"><span class="tag on">CÓ</span><span class="t">Console lệnh XCP thô</span></div><div class="d">Gõ tay CTO dạng hex, xem byte thô ECU trả về</div></div>
-    <div class="feat"><div class="row"><span class="tag on">CÓ</span><span class="t">Đọc/ghi bộ nhớ theo địa chỉ</span></div><div class="d">Hex dump sửa trực tiếp, ghi trọn khối</div></div>
-    <div class="feat"><div class="row"><span class="tag on">CÓ</span><span class="t">Điều khiển trang calibration</span></div><div class="d">Xem/đổi trang ECU (đang chạy) và trang XCP (đang nhìn), copy trang</div></div>
-  </div>
-
-  <h4>Chưa có — đừng tìm, chưa được viết</h4>
-  <div class="feats">
-    <div class="feat"><div class="row"><span class="tag off">CHƯA</span><span class="t">Đo tín hiệu theo thời gian (DAQ), scope</span></div><div class="d">Dự kiến M4</div></div>
-    <div class="feat"><div class="row"><span class="tag off">CHƯA</span><span class="t">Đọc A2L, làm việc theo tên tín hiệu</span></div><div class="d">Dự kiến M3, thay vì địa chỉ thô</div></div>
-    <div class="feat"><div class="row"><span class="tag off">CHƯA</span><span class="t">Ghi log ra MDF4</span></div><div class="d">Dự kiến M5</div></div>
-    <div class="feat"><div class="row"><span class="tag off">CHƯA</span><span class="t">Nạp chương trình vào flash (PGM)</span></div><div class="d">Chưa có kế hoạch</div></div>
-    <div class="feat"><div class="row"><span class="tag off">CHƯA</span><span class="t">STIM (bơm dữ liệu vào ECU)</span></div><div class="d">Chưa có kế hoạch</div></div>
-    <div class="feat"><div class="row"><span class="tag off">CHƯA</span><span class="t">Seed &amp; Key</span></div><div class="d">Không bypass được. ECU đòi khoá sẽ CONNECT được nhưng bị chặn đúng resource cần khoá, xcptool báo rõ</div></div>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Tính năng</th><th>Chi tiết</th></tr></thead>
+    <tbody>
+      <tr><td>Kết nối ECU đa hãng</td><td>Hỗ trợ PEAK PCAN, Vector VN16xx, ETAS ES58x, CANable/slcan và bus ảo nội bộ (Virtual) để chạy thử nghiệm.</td></tr>
+      <tr><td>Dò năng lực tự động</td><td>Đọc MAX_CTO, MAX_DTO, Endianness, và trạng thái bảo vệ CAL/PAG/DAQ/STIM/PGM từ ECU lúc CONNECT.</td></tr>
+      <tr><td>Nạp file A2L</td><td>Tự động phân tích file A2L (ASAM MCD-2 MC), nhận diện toàn bộ CHARACTERISTIC, MEASUREMENT, RECORD_LAYOUT.</td></tr>
+      <tr><td>Hiệu chỉnh tham số (Calibration)</td><td>Phân cấp Struct &amp; Array <code>[0..N-1]</code>, sửa trực tiếp inline (double-click), dirty indicator màu cam, chống ghi đè trang ROM.</td></tr>
+      <tr><td>Quản lý trang Working/Reference</td><td>Chuyển đổi trang Working (RAM) và Reference (ROM), hỗ trợ Copy Ref $\rightarrow$ Working 1-click.</td></tr>
+      <tr><td>Đo lường thời gian thực (DAQ)</td><td>Chọn tín hiệu đo theo tên, tự động cấu hình DAQ list trên ECU, cột Live Value số thực cập nhật 40ms.</td></tr>
+      <tr><td>Đồ thị Scope GPU (pyqtgraph)</td><td>Vẽ đồ thị Scope nhiều đường mượt mà (tăng tốc phần cứng OpenGL + NumPy), switch bật/tắt đồ thị siêu tiết kiệm tài nguyên.</td></tr>
+      <tr><td>Trace CAN</td><td>Bảng hiển thị mọi frame CAN thời gian thực, bộ lọc thông minh (mặc định ẩn DTO để tránh nghẽn UI), xuất CSV.</td></tr>
+      <tr><td>Debug Console &amp; Memory</td><td>Gửi lệnh CTO thô dạng hex, hex dump đọc/ghi bộ nhớ theo địa chỉ tuyệt đối.</td></tr>
+      <tr><td>Chế độ Demo (<code>--session fake</code>)</td><td>Tích hợp ECU giả lập (<code>FakeSlave</code>) và mô hình động lực học xe PID (<code>PidPlant</code>) mô phỏng các giá trị đo thực tế.</td></tr>
+    </tbody>
+  </table>
   </div>
 </section>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">02 — Bắt đầu</span>Cài đặt</h2>
+  <h2><span class="num">02 — Thiết lập</span>Cài đặt môi trường</h2>
 
-  <p>Yêu cầu Python ≥ 3.11.</p>
+  <p class="lede">Yêu cầu Python &ge; 3.11 (khuyến nghị Python 3.12).</p>
 
-  <pre><code><span class="cmt"># trong thư mục xcptool/</span>
+  <pre><code>cd xcptool
 python -m venv .venv
-.venv\Scripts\pip install -e ".[dev]"</code></pre>
+.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\pip install PyOpenGL   # Khuyến nghị: bật tăng tốc phần cứng GPU cho Scope</code></pre>
 
-  <p>
-    <code>pip install -e ".[dev]"</code> cài <code>python-can</code>, <code>PySide6</code>,
-    <code>PySide6-Fluent-Widgets</code> (giao diện), và bộ công cụ test. Dùng
-    <strong>đúng interpreter trong venv</strong> (<code>.venv\Scripts\python.exe</code>),
-    không dùng <code>python</code> hệ thống.
-  </p>
-
-  <h3>Driver hãng CAN — cài riêng theo thiết bị bạn có</h3>
-  <p>
-    xcptool không tự cài được driver hãng (phần mềm của nhà sản xuất, không phải gói Python).
-    Không có driver, backend đó vẫn hiện trong danh sách thiết bị nhưng đánh dấu "chưa dùng được"
-    kèm gợi ý cần cài gì.
-  </p>
-
+  <h3>Driver thiết bị phần cứng CAN</h3>
   <div class="scroll">
   <table>
-    <thead><tr><th>Hãng</th><th>Cần cài</th><th>Nền tảng</th></tr></thead>
+    <thead><tr><th>Hãng thiết bị</th><th>Driver cần cài đặt</th><th>Hệ điều hành</th></tr></thead>
     <tbody>
-      <tr><td>PEAK PCAN-USB</td><td>Driver <strong>PCAN-Basic</strong> (PCANBasic.dll / libpcanbasic.so)</td><td>Windows / Linux</td></tr>
-      <tr><td>Vector VN16xx</td><td><strong>Vector XL Driver Library</strong> (cài kèm Vector Driver Setup)</td><td>chỉ Windows</td></tr>
-      <tr><td>ETAS ES58x/ES5xx</td><td><strong>ETAS Distribution Package (BOA)</strong></td><td>chỉ Windows</td></tr>
-      <tr><td>CANable / slcan</td><td>Gói Python <code>pyserial</code> (<code>pip install xcptool[slcan]</code>) + driver COM ảo</td><td>Windows / Linux</td></tr>
-      <tr><td>Bus ảo (test)</td><td>Không cần gì</td><td>mọi nơi</td></tr>
+      <tr><td>PEAK PCAN-USB</td><td>Driver <b>PCAN-Basic</b> (<code>PCANBasic.dll</code> / <code>libpcanbasic.so</code>)</td><td>Windows / Linux</td></tr>
+      <tr><td>Vector VN16xx</td><td><b>Vector XL Driver Library</b> (kèm Vector Driver Setup)</td><td>Windows</td></tr>
+      <tr><td>ETAS ES58x/ES5xx</td><td><b>ETAS Distribution Package (BOA)</b></td><td>Windows</td></tr>
+      <tr><td>CANable / slcan</td><td>Gói Python <code>pyserial</code> + cổng COM ảo</td><td>Windows / Linux</td></tr>
+      <tr><td>Bus ảo (Virtual)</td><td>Có sẵn trong <code>python-can</code>, không cần cài gì thêm</td><td>Mọi nền tảng</td></tr>
     </tbody>
   </table>
   </div>
@@ -435,273 +332,119 @@ python -m venv .venv
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">03 — Chạy thử</span>Khởi động nhanh</h2>
+  <h2><span class="num">03 — Khởi động</span>Chạy ứng dụng</h2>
 
-  <p class="lede">Hai cách chạy: dòng lệnh (<code>xcptool ...</code>) hoặc giao diện đồ hoạ.</p>
+  <h3>1. Chạy thử nghiệm không cần phần cứng (Demo Mode)</h3>
+  <pre><code>.venv\Scripts\python.exe -m xcptool.ui.app --session fake
+# hoặc chạy: run.bat</code></pre>
 
-  <div class="figpair">
-    <div class="panel">
-      <h4>Không cần phần cứng</h4>
-      <pre><code>.venv\Scripts\python.exe -m xcptool.cli.main --session fake devices
-.venv\Scripts\python.exe -m xcptool.ui.app --session fake</code></pre>
-      <p style="font-size:14px;color:var(--ink-2);">
-        <code>--session fake</code> dùng một ECU giả lập hoàn toàn trong Python — không đụng
-        <code>python-can</code>, không cần bus thật. Tiện để làm quen giao diện trước khi có phần cứng.
-      </p>
-    </div>
-    <div class="panel">
-      <h4>Có bus CAN thật</h4>
-      <pre><code>.venv\Scripts\python.exe -m xcptool.cli.main devices
-.venv\Scripts\python.exe -m xcptool.ui.app</code></pre>
-      <p style="font-size:14px;color:var(--ink-2);">
-        Bỏ hẳn <code>--session fake</code> — mặc định là <code>real</code>, nói chuyện qua
-        <code>python-can</code> với thiết bị đã cắm.
-      </p>
-    </div>
-  </div>
+  <h3>2. Kết nối phần cứng CAN thật</h3>
+  <pre><code>.venv\Scripts\python.exe -m xcptool.ui.app</code></pre>
 </section>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">04 — Kết nối</span>Kết nối ECU</h2>
+  <h2><span class="num">04 — Hiệu chỉnh</span>Panel Hiệu chỉnh (CalibrationView)</h2>
 
-  <p>Trong GUI: menu <strong>Phiên → Kết nối…</strong> (<kbd>Ctrl+K</kbd>) hoặc nút <strong>Kết nối…</strong> ở cuối thanh điều hướng trái.</p>
-
-  <h3>Dialog chọn thiết bị</h3>
-  <ul>
-    <li>Danh sách liệt kê <strong>mọi</strong> backend đã biết, kể cả cái chưa dùng được (hiện màu xám, kèm dòng gợi ý cần cài gì — mục 02). Đây là nguyên nhân phổ biến nhất khi "không thấy thiết bị nào".</li>
-    <li>Nút <strong>Dò lại thiết bị</strong> — quét lại (có thể mất vài giây, có spinner).</li>
-    <li>Lựa chọn lần kết nối thành công gần nhất được <strong>tự nhớ</strong> và chọn sẵn ở lần mở dialog kế tiếp.</li>
-    <li>Tham số bus (bitrate, CAN ID của CRO/DTO, ID 29-bit hay không, đệm đủ 8 byte, timeout T1) điều chỉnh được ngay trong dialog — mặc định 0x7E0/0x7E1, 500 kbps, nhưng <strong>ECU khác có thể dùng ID khác</strong>.</li>
-    <li>CRO và DTO thường dùng chung một CAN ID cho cả response lẫn dữ liệu DAQ — xcptool tự phân loại theo byte đầu, không cần khai riêng.</li>
-  </ul>
-
-  <p>
-    Bấm <strong>Kết nối</strong> → có thể mất vài giây (spinner hiện, nút <strong>Huỷ</strong> nếu đợi
-    quá lâu — huỷ nghĩa là đóng hẳn bus, không phải tạm dừng). Thành công thì thanh trạng thái dưới
-    cùng hiện tóm tắt năng lực ECU: MAX_CTO/MAX_DTO, byte order, version XCP, resource nào ECU hỗ trợ
-    (CAL/DAQ/STIM/PGM), có đòi seed &amp; key không.
-  </p>
-  <p>Ngắt kết nối: menu <strong>Phiên → Ngắt kết nối</strong> (giữ bus mở) hoặc đóng cửa sổ (đóng hẳn bus).</p>
-</section>
-
-<!-- ============================================================ -->
-<section>
-  <h2><span class="num">05 — Trace</span>Cửa sổ debug CAN</h2>
-
-  <p class="lede">Tab <strong>Trace CAN</strong> — bảng liệt kê mọi frame đi qua bus theo thời gian thực, kể cả frame không thuộc phiên xcptool.</p>
-
-  <div class="scroll">
-  <table>
-    <thead><tr><th>Cột</th><th>Ý nghĩa</th></tr></thead>
-    <tbody>
-      <tr><td class="m">#</td><td>Số thứ tự, tăng dần trong phiên</td></tr>
-      <tr><td class="m">t (s)</td><td>Thời điểm tương đối so với frame đầu tiên</td></tr>
-      <tr><td class="m">Hướng</td><td>→ gửi đi, ← nhận về</td></tr>
-      <tr><td class="m">CAN ID</td><td>Hệ hex</td></tr>
-      <tr><td class="m">DLC</td><td>Số byte</td></tr>
-      <tr><td class="m">Dữ liệu</td><td>Toàn bộ byte, hex</td></tr>
-      <tr><td class="m">Giải mã</td><td>Diễn giải người đọc được (<code>CONNECT mode=0</code>, <code>ERR CRC_WRITE_PROTECTED</code>...), không giải mã được thì hiện hex thô</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <h4>Công cụ trên thanh phía trên bảng</h4>
-  <ul>
-    <li><strong>Tạm dừng / Tiếp tục</strong> — dừng vẽ (frame vẫn đếm ở "bỏ khi tạm dừng", không lưu lại để phân tích).</li>
-    <li><strong>Tự cuộn</strong> — tự trôi xuống dòng mới nhất.</li>
-    <li><strong>Xoá</strong> — xoá sạch bảng.</li>
-    <li><strong>Xuất CSV…</strong> — xuất các dòng đang hiển thị (theo bộ lọc hiện tại) ra file.</li>
-    <li><strong>Lọc theo loại frame</strong> — CMD (lệnh gửi), RES (phản hồi OK), ERR (phản hồi lỗi), EV (event), SERV (service request), DAQ, khác (frame không thuộc phiên).</li>
-    <li><strong>Trần dòng</strong> — mặc định 20.000, vượt trần thì tự bỏ dòng cũ nhất, RAM không phình dù bus chạy hàng giờ.</li>
-  </ul>
-
-  <p>
-    Bộ đếm góc phải: nhận / đang giữ / hiện / <strong>session bỏ</strong> (frame bị ring buffer phía
-    backend bỏ vì UI rút không kịp — số này tăng liên tục nghĩa là bus quá tải so với tốc độ vẽ,
-    không phải lỗi kết nối) / bỏ khi tạm dừng.
-  </p>
-
-  <div class="note warn">
-    <span class="label">Lưu ý timestamp</span>
-    <p>PEAK/Vector lấy timestamp từ phần cứng, còn slcan và bus giả lập sinh bằng phần mềm nên có jitter — đừng dùng slcan để đo độ trễ chính xác của ECU.</p>
-  </div>
-</section>
-
-<!-- ============================================================ -->
-<section>
-  <h2><span class="num">06 — Debug tay</span>Console lệnh thô</h2>
-
-  <p class="lede">
-    Tab <strong>Lệnh thô</strong> — dành cho khi bạn muốn tự tay gửi một CTO không qua panel nào khác
-    (debug protocol, thử lệnh ECU chưa được xcptool hỗ trợ sẵn).
-  </p>
+  <p class="lede">Tab <strong>Hiệu chỉnh</strong> (biểu tượng cây bút trên thanh điều hướng bên trái) cho phép xem và sửa toàn bộ tham số hiệu chỉnh từ file A2L.</p>
 
   <ul>
-    <li>Gõ hex vào ô nhập, ví dụ <code>FF 00</code> (CONNECT mode 0), Enter hoặc bấm <strong>Gửi</strong>. Chấp nhận cả <code>ff00</code>, <code>FF,00</code>, <code>0xFF 0x00</code>.</li>
-    <li>Nút bấm nhanh có sẵn: CONNECT, GET_STATUS, SYNCH, GET_ID, DISCONNECT.</li>
-    <li>Phím <kbd>↑</kbd>/<kbd>↓</kbd> trong ô nhập để lướt lại lịch sử lệnh (tối đa 50 lệnh gần nhất).</li>
-    <li>Byte đầu response: <code>0xFF</code> = OK, <code>0xFE</code> = ECU báo lỗi (vẫn <strong>in ra</strong>, không tự thành hộp thoại — bạn tự đọc byte). Tick <strong>"Coi response lỗi là ngoại lệ"</strong> nếu muốn lỗi ECU hiện thành hộp thoại như các thao tác khác.</li>
-    <li>Mọi lệnh gửi qua đây cũng xuất hiện đồng thời trong tab Trace CAN.</li>
+    <li><strong>Nạp A2L:</strong> Bấm nút <code>Nạp A2L…</code> (phím tắt <kbd>Ctrl+O</kbd>) để nạp file mô tả (ví dụ <code>examples/xcp_daq_example.a2l</code>).</li>
+    <li><strong>Đọc tất cả:</strong> Bấm <code>Đọc tất cả</code> để đọc toàn bộ tham số từ ECU vào bảng.</li>
+    <li><strong>Phân cấp Struct &amp; Array:</strong>
+      <ul>
+        <li>Các biến thuộc cùng struct (như <code>speedPid_kp</code>, <code>speedPid_ki</code>) được gom nhóm thành node cha <code>STRUCT (N)</code>.</li>
+        <li>Các mảng (Array) được phân rã thành các dòng con <code>[0]</code>, <code>[1]</code>... Dòng cha hiển thị dấu <code>—</code>, từng dòng con hiển thị giá trị riêng.</li>
+      </ul>
+    </li>
+    <li><strong>Sửa inline &amp; Dirty Indicator:</strong> Nhấp đúp chuột vào ô ở cột <strong>Giá trị</strong> để chỉnh sửa. Sau khi sửa, dòng tham số sẽ đổi sang <strong>màu cam</strong> (chưa lưu).</li>
+    <li><strong>Ghi thay đổi:</strong> Chọn dòng tham số rồi bấm <code>Ghi thay đổi</code>. Khi ghi mảng, ứng dụng tự động đọc dữ liệu từ các con để đóng gói gửi xuống ECU.</li>
+    <li><strong>Chống ghi Reference page:</strong> Nếu bạn ghi khi đang ở trang ROM (Reference), ứng dụng sẽ hiện hộp thoại thông báo kèm nút <strong>"Chuyển sang trang Working và ghi lại"</strong> 1-click.</li>
   </ul>
 </section>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">07 — Bộ nhớ</span>Panel bộ nhớ</h2>
+  <h2><span class="num">05 — Đo lường</span>Panel Đo lường &amp; Scope (MeasurementView)</h2>
 
-  <p class="lede">Tab <strong>Bộ nhớ</strong> — đọc/ghi ECU theo địa chỉ tuyệt đối, và điều khiển trang calibration.</p>
+  <p class="lede">Tab <strong>Đo lường</strong> (biểu tượng công cụ trên thanh điều hướng) cho phép chọn tín hiệu đo DAQ và hiển thị đồ thị scope thời gian thực.</p>
 
-  <h3>Đọc/ghi</h3>
-  <ol>
-    <li>Nhập địa chỉ (hex, có hoặc không tiền tố <code>0x</code>), số byte cần đọc, <code>ext</code> (address extension — hầu hết ECU dùng <code>0</code>).</li>
-    <li>Bấm <strong>Đọc</strong> → hiện hex dump, mỗi ô 1 byte, nhấp đúp để sửa trực tiếp (ô sửa đổi màu cam để phân biệt).</li>
-    <li>Bấm <strong>Ghi vùng này</strong> → ghi <em>toàn bộ khối</em> xuống ECU trong một lượt — không ghi rời từng byte, tránh ECU chạy qua trạng thái nửa cũ nửa mới (đặc biệt quan trọng với struct/mảng như bộ hệ số PID).</li>
-    <li><strong>Bỏ sửa</strong> — hoàn tác về giá trị vừa đọc, chưa ghi gì.</li>
-    <li>Tick <strong>"Đọc lại sau khi ghi để đối chiếu"</strong> (mặc định bật) — tự đọc lại ngay sau khi ghi để xác nhận giá trị đã lên ECU đúng như ý.</li>
-  </ol>
-
-  <h3>Trang calibration (working / reference)</h3>
-  <p>
-    ECU phân biệt <em>trang nó đang chạy</em> (trang ECU) và <em>trang XCP đang nhìn vào</em> (trang
-    XCP) — hai khái niệm độc lập nhau. Địa chỉ bạn nhập luôn hiểu theo vùng ROM (reference); khi XCP
-    trỏ working page, ECU tự đổi hướng sang RAM tương ứng.
-  </p>
   <ul>
-    <li><strong>Segment / Đọc lại trạng thái trang</strong> — xem trang ECU và trang XCP hiện tại.</li>
-    <li><strong>Đặt trang</strong> — đổi trang cho một trong hai mode (XCP hoặc ECU).</li>
-    <li><strong>Copy trang</strong> — copy nội dung từ trang nguồn sang trang đích trong cùng segment.</li>
+    <li><strong>Chọn tín hiệu:</strong> Tick chọn các ô vuông Checkbox cạnh các tín hiệu muốn đo. Đối với Struct hoặc Array, chỉ cần tick 1 ô ở dòng cha là toàn bộ các tín hiệu con sẽ tự động được chọn.</li>
+    <li><strong>Bắt đầu đo:</strong> Bấm <code>Bắt đầu đo</code>. Ứng dụng tự động đóng gói ODT, gửi chuỗi lệnh cấu hình DAQ xuống ECU và bắt đầu đọc dữ liệu.</li>
+    <li><strong>Cột Giá trị thời gian thực (Live Value):</strong> Cập nhật số thực liên tục ở chu kỳ 40ms trên cây tín hiệu.</li>
+    <li><strong>Đồ thị Scope GPU:</strong> Bên phải là đồ thị scope đa đường (mỗi tín hiệu một màu) được vẽ bằng <code>pyqtgraph</code> tăng tốc OpenGL.</li>
+    <li><strong>Switch bật/tắt Đồ thị:</strong> Gạt công tắc <code>Đồ thị: Tắt</code> để ẩn đồ thị và ngắt 100% việc vẽ curve — giúp tiết kiệm tối đa CPU/GPU khi chỉ cần quan sát bảng giá trị.</li>
+    <li><strong>Dừng đo:</strong> Bấm <code>Dừng</code>.</li>
   </ul>
-
-  <div class="note pick">
-    <span class="label">Khi ghi bị từ chối — trường hợp thường gặp nhất</span>
-    <p>
-      Hộp thoại "Không ghi được — vùng nhớ đang được bảo vệ" hiện ra kèm nút
-      <strong>"Chuyển sang trang 0 và ghi lại"</strong>. Nguyên nhân gần như luôn là XCP đang trỏ
-      reference page (ROM, chỉ đọc) thay vì working page (RAM) — bấm nút đó, xcptool tự đổi trang rồi
-      ghi lại đúng dữ liệu bạn vừa sửa, không cần làm lại từ đầu.
-    </p>
-  </div>
-
-  <p style="font-size:14px;color:var(--ink-3);">
-    Quy ước "trang 0 = working" là của slave tham chiếu trong dự án này (XcpBasic), <strong>không
-    phải chuẩn chung của XCP</strong> — ECU khác có thể đánh số trang khác.
-  </p>
 </section>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">08 — CLI</span>Tham chiếu dòng lệnh</h2>
+  <h2><span class="num">06 — Trace &amp; Debug</span>Trace CAN, Console &amp; Bộ nhớ</h2>
+
+  <h3>1. Cửa sổ Trace CAN (<kbd>Ctrl+1</kbd>)</h3>
+  <ul>
+    <li>Ghi nhận toàn bộ frame CAN gửi/nhận theo thời gian thực kèm diễn giải lệnh.</li>
+    <li><strong>Bộ lọc DAQ tắt mặc định:</strong> DTO frame (50–100Hz) được ẩn mặc định để tránh nghẽn giao diện. Bạn có thể bật lại checkbox <code>DAQ</code> khi cần kiểm tra frame.</li>
+    <li><strong>Lazy Auto-scroll:</strong> Chỉ tự cuộn bảng khi tab Trace đang thực sự hiển thị trên màn hình.</li>
+    <li><strong>Xuất CSV:</strong> Bấm <code>Xuất CSV…</code> để lưu trace ra file.</li>
+  </ul>
+
+  <h3>2. Console lệnh thô (<kbd>Ctrl+2</kbd>)</h3>
+  <p>Gõ byte hex trực tiếp (ví dụ <code>FF 00</code> cho CONNECT), có các nút lệnh nhanh và lịch sử phím mũi tên &uarr;/&darr;.</p>
+
+  <h3>3. Panel bộ nhớ Hex (<kbd>Ctrl+3</kbd>)</h3>
+  <p>Đọc/ghi bộ nhớ theo địa chỉ tuyệt đối, hex dump trực quan, hỗ trợ ghi trọn khối an toàn.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2><span class="num">07 — Dòng lệnh</span>Tham chiếu CLI</h2>
 
   <pre><code>xcptool [--session fake|real] [--backend TÊN] [--channel KÊNH]
         [--bitrate SỐ] [--cro 0xHEX] [--dto 0xHEX] [--timeout GIÂY]
         &lt;lệnh con&gt; [tham số]</code></pre>
 
-  <p>Không truyền <code>--backend</code>/<code>--channel</code> thì xcptool tự lấy kênh khả dụng đầu tiên dò được.</p>
-
   <div class="scroll">
   <table>
     <thead><tr><th>Lệnh con</th><th>Tham số</th><th>Ý nghĩa</th><th class="m">Ví dụ</th></tr></thead>
     <tbody>
-      <tr><td class="m">devices</td><td>—</td><td>Liệt kê kênh CAN dò được, kèm hint nếu thiếu driver</td><td class="m">xcptool devices</td></tr>
+      <tr><td class="m">devices</td><td>—</td><td>Liệt kê kênh CAN dò được</td><td class="m">xcptool devices</td></tr>
       <tr><td class="m">connect</td><td>—</td><td>CONNECT rồi in năng lực ECU</td><td class="m">xcptool --session fake connect</td></tr>
-      <tr><td class="m">read</td><td>&lt;địa_chỉ_hex&gt; &lt;số_byte&gt;</td><td>Đọc bộ nhớ, in hex dump</td><td class="m">xcptool read 80000000 64</td></tr>
-      <tr><td class="m">write</td><td>&lt;địa_chỉ_hex&gt; &lt;chuỗi_hex&gt;</td><td>Ghi bộ nhớ rồi đọc lại để xác nhận</td><td class="m">xcptool write 80000000 "DE AD BE EF"</td></tr>
-      <tr><td class="m">pages</td><td>[--segment N]</td><td>In trang ECU và trang XCP hiện tại</td><td class="m">xcptool pages --segment 0</td></tr>
-      <tr><td class="m">set-page</td><td>&lt;trang&gt; [--segment N] [--mode ecu|xcp]</td><td>Đổi trang calibration</td><td class="m">xcptool set-page 0 --mode xcp</td></tr>
-      <tr><td class="m">raw</td><td>&lt;chuỗi_hex&gt;</td><td>Gửi CTO thô, in response</td><td class="m">xcptool raw "FF 00"</td></tr>
-      <tr><td class="m">trace</td><td>[--seconds N]</td><td>Nghe bus N giây rồi in mọi frame và thoát</td><td class="m">xcptool trace --seconds 10</td></tr>
+      <tr><td class="m">read</td><td>&lt;địa_chỉ&gt; &lt;byte&gt;</td><td>Đọc bộ nhớ hex</td><td class="m">xcptool read 80100000 16</td></tr>
+      <tr><td class="m">write</td><td>&lt;địa_chỉ&gt; &lt;hex&gt;</td><td>Ghi bộ nhớ hex</td><td class="m">xcptool write 80100000 "00 00 80 3F"</td></tr>
+      <tr><td class="m">pages</td><td>[--segment N]</td><td>Xem trạng thái trang</td><td class="m">xcptool pages --segment 0</td></tr>
+      <tr><td class="m">set-page</td><td>&lt;trang&gt;</td><td>Đổi trang calibration</td><td class="m">xcptool set-page 0 --mode xcp</td></tr>
+      <tr><td class="m">raw</td><td>&lt;hex&gt;</td><td>Gửi CTO thô</td><td class="m">xcptool raw "FF 00"</td></tr>
+      <tr><td class="m">trace</td><td>[--seconds N]</td><td>Nghe bus N giây</td><td class="m">xcptool trace --seconds 5</td></tr>
     </tbody>
   </table>
   </div>
-
-  <p style="font-size:14px;color:var(--ink-3);">Mọi lệnh con (trừ <code>devices</code>) tự CONNECT trước khi chạy và in trace của phiên khi kết thúc.</p>
 </section>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">09 — Vết tích</span>File cấu hình &amp; log</h2>
-
-  <div class="scroll">
-  <table>
-    <thead><tr><th>File</th><th>Nội dung</th></tr></thead>
-    <tbody>
-      <tr><td class="m">~/.xcptool/config.toml</td><td>Tự lưu lại <code>BusConfig</code> (backend, channel, bitrate, CAN ID, timeout...) sau lần CONNECT thành công qua <code>--session real</code>. Sửa tay được — file text thường, có comment.</td></tr>
-      <tr><td class="m">~/.xcptool/logs/xcptool-YYYYMMDD-HHMMSS.log</td><td>Log đầy đủ của từng phiên GUI — xem đường dẫn qua menu <strong>Trợ giúp → Đường dẫn file log</strong>. Rất hữu ích khi báo lỗi cho người phát triển.</td></tr>
-      <tr><td class="m">~/.xcptool/logs/faulthandler.log</td><td>Bắt cả những lỗi Python không kịp dựng traceback (ví dụ crash trong tầng Qt) — vết tích cuối cùng nếu app biến mất đột ngột.</td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <p style="font-size:14px;color:var(--ink-3);">Đường dẫn <code>~/.xcptool</code> đổi được qua biến môi trường <code>XCPTOOL_HOME</code>, chủ yếu dùng khi test.</p>
-</section>
-
-<!-- ============================================================ -->
-<section>
-  <h2><span class="num">10 — Khi có sự cố</span>Xử lý sự cố thường gặp</h2>
+  <h2><span class="num">08 — Sự cố</span>Xử lý sự cố thường gặp</h2>
 
   <div class="scroll">
   <table>
     <thead><tr><th>Triệu chứng</th><th>Nguyên nhân</th><th>Cách xử lý</th></tr></thead>
     <tbody>
-      <tr><td>Thiết bị hiện màu xám, "chưa dùng được"</td><td>Chưa cài driver hãng</td><td>Đọc dòng gợi ý ngay dưới tên thiết bị (mục 02), cài xong bấm Dò lại</td></tr>
-      <tr><td>"Không tìm thấy thiết bị" khi CONNECT</td><td>Thiết bị bị rút / đổi cổng USB giữa chừng</td><td>Kiểm tra dây, cổng USB, dò lại danh sách</td></tr>
-      <tr><td>Lỗi bus CAN</td><td>Bus-off, sai bitrate, thiếu điện trở đầu cuối</td><td>Kiểm tra bitrate khớp ECU, điện trở đầu cuối 120Ω, ECU có đang cấp nguồn không</td></tr>
-      <tr><td>"ECU không trả lời" (timeout)</td><td>Sai CAN ID của CRO/DTO, hoặc ECU không chạy</td><td>Hai thứ hay đặt sai nhất — đối chiếu lại CRO/DTO với tài liệu ECU</td></tr>
-      <tr><td>"Response không hợp lệ"</td><td>ECU trả frame ngắn/sai định dạng</td><td>Xem tab Trace CAN, đối chiếu byte thô ECU thực sự gửi về</td></tr>
-      <tr><td>Ghi bộ nhớ bị từ chối, "vùng nhớ đang được bảo vệ"</td><td>XCP đang trỏ reference page (ROM, chỉ đọc)</td><td>Bấm nút "Chuyển sang trang 0 và ghi lại" trong hộp thoại hiện ra</td></tr>
-      <tr><td>"Bus đang bận"</td><td>Đã có một lệnh XCP khác đang chờ phản hồi</td><td>Mỗi lúc chỉ chạy được một lệnh — chờ lệnh hiện tại xong</td></tr>
-      <tr><td>"ECU không hỗ trợ"</td><td>Yêu cầu tính năng ECU không khai hỗ trợ lúc CONNECT (vd. đổi trang trên ECU không có CAL/PAG)</td><td>Không có cách bypass — đúng theo năng lực ECU đã khai báo</td></tr>
-      <tr><td>ECU đòi seed &amp; key</td><td>xcptool chưa hỗ trợ unlock</td><td>Không có đường vòng ở bản này — cần chờ tính năng Seed &amp; Key được thêm</td></tr>
-      <tr><td>Số "session bỏ" trong tab Trace tăng liên tục</td><td>Bus bắn frame nhanh hơn tốc độ UI rút được</td><td>Không phải lỗi kết nối — tăng "Trần dòng" hoặc lọc bớt loại frame không cần xem</td></tr>
-      <tr><td>App đóng đột ngột / lỗi ngoài dự kiến</td><td>Bug của công cụ</td><td>Xem <code>~/.xcptool/logs/</code> — app đã ghi traceback đầy đủ trước khi hộp thoại xin lỗi hiện ra</td></tr>
+      <tr><td>Thiết bị CAN hiện màu xám</td><td>Chưa cài driver hãng</td><td>Đọc dòng gợi ý dưới tên thiết bị để cài đúng driver tương ứng.</td></tr>
+      <tr><td>"ECU không trả lời" (timeout)</td><td>Sai CAN ID CRO/DTO hoặc sai Bitrate</td><td>Kiểm tra lại Bitrate (500k, 250k...) và cặp CAN ID trong hộp thoại Kết nối.</td></tr>
+      <tr><td>Ghi tham số bị từ chối</td><td>Đang ở Reference page (ROM)</td><td>Bấm nút "Chuyển sang trang Working và ghi lại" trong hộp thoại thông báo.</td></tr>
+      <tr><td>Scope đồ thị bị giật</td><td>Đang dùng software rendering</td><td>Cài <code>PyOpenGL</code> để kích hoạt tăng tốc GPU: <code>pip install PyOpenGL</code>.</td></tr>
+      <tr><td>Nghẽn frame khi đo DAQ</td><td>Đang bật hiển thị DAQ trong Trace</td><td>Tắt checkbox lọc <code>DAQ</code> trong tab Trace CAN.</td></tr>
     </tbody>
   </table>
   </div>
-
-  <div class="note danger">
-    <span class="label">Nếu thấy traceback thô trong hộp thoại</span>
-    <p>Mọi lỗi lường trước được đều hiện thành hộp thoại có nội dung đọc được kèm gợi ý xử lý — không bao giờ là traceback thô. Nếu bạn thấy traceback trong hộp thoại, đó là bug, báo lại kèm file log.</p>
-  </div>
-</section>
-
-<!-- ============================================================ -->
-<section>
-  <h2><span class="num">11 — Sắp tới</span>Giới hạn &amp; lộ trình</h2>
-
-  <p class="lede">
-    Nhắc lại mục 01: xcptool ở bản này <strong>chưa</strong> đo tín hiệu theo thời gian (DAQ/scope),
-    <strong>chưa</strong> đọc A2L để làm việc theo tên tín hiệu, <strong>chưa</strong> ghi MDF4,
-    <strong>chưa</strong> nạp flash, <strong>chưa</strong> hỗ trợ ECU đòi Seed &amp; Key.
-  </p>
-
-  <div class="phase">
-    <div class="pnum">M3</div>
-    <div>
-      <h3>A2L</h3>
-      <p>Đọc file A2L, cho phép làm việc theo tên tín hiệu (<code>engineRpm</code> thay vì địa chỉ hex) và bảng calibration theo tên.</p>
-    </div>
-  </div>
-  <div class="phase">
-    <div class="pnum">M4</div>
-    <div>
-      <h3>DAQ + scope</h3>
-      <p>DAQ engine thật và scope thời gian thực (đồ thị <code>pyqtgraph</code>).</p>
-    </div>
-  </div>
-  <div class="phase">
-    <div class="pnum">M5</div>
-    <div>
-      <h3>Mở rộng</h3>
-      <p>Xuất log ra MDF4, xuất/nhập bộ tham số, hỗ trợ XCP-on-Ethernet, đóng gói thành file <code>.exe</code> độc lập.</p>
-    </div>
-  </div>
-
-  <p style="font-size:14px;color:var(--ink-3);margin-top:20px;">Chi tiết kỹ thuật từng mốc: xem <code>DEV_PLAN.md</code>.</p>
 </section>
 
 <footer>
-  xcptool User Manual · giai đoạn M1 + M2 · xem ARCHITECTURE.md để hiểu kiến trúc code
+  xcptool User Manual · Phiên bản M1 → M6 · Hỗ trợ XCP-on-CAN Measurement &amp; Calibration
 </footer>
 
 </div>
+</body>
+</html>

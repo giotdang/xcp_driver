@@ -71,7 +71,19 @@ class Characteristic:
 
 
 @dataclass
+class XcpProtocolInfo:
+    max_cto: int = 8
+    max_dto: int = 8
+    is_fd: bool = False
+    can_fd_max_dlc: int = 8
+    max_dlc_required: bool = False
+    byte_order: str = "little"
+    protocol_version: str = "1.0"
+
+
+@dataclass
 class A2LDatabase:
     measurements: dict[str, Measurement] = field(default_factory=dict)
     characteristics: dict[str, Characteristic] = field(default_factory=dict)
     record_layouts: dict[str, RecordLayout] = field(default_factory=dict)
+    protocol_info: XcpProtocolInfo | None = None

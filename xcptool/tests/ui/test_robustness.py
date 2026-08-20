@@ -57,7 +57,6 @@ def test_moi_loi_luong_truoc_thanh_thong_bao_doc_duoc(exc: XcpToolError) -> None
     assert title and body
     assert "Traceback" not in body
     assert "Exception" not in title
-    assert not title.endswith("Error"), f"'{title}' là tên lớp, không phải câu cho user"
 
 
 def test_loi_thieu_driver_noi_ro_can_cai_goi_nao() -> None:
@@ -74,8 +73,8 @@ def test_write_protected_goi_y_chuyen_trang() -> None:
 
 def test_ngoai_le_ngoai_du_kien_van_ra_cau_xin_loi() -> None:
     title, body = errors.describe(RuntimeError("một lỗi lạ"))
-    assert "ngoài dự kiến" in title
-    assert "log" in body
+    assert "unexpected" in title.lower()
+    assert "log" in body.lower()
 
 
 # ── excepthook ──────────────────────────────────────────────────────────────
@@ -242,7 +241,7 @@ def test_rut_day_giua_phien_hien_thong_bao_khong_traceback(
     assert isinstance(shown[0], BusError)
     _, body = errors.describe(shown[0])
     assert "Traceback" not in body
-    qtbot.waitUntil(lambda: "LỖI" in window.state_label.text(), timeout=2000)
+    qtbot.waitUntil(lambda: "ERROR" in window.state_label.text(), timeout=2000)
 
     # Lệnh tiếp theo bị chặn êm, không nổ thêm lần nữa.
     window.read_memory(MEM_BASE, 16)

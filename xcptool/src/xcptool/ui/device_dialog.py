@@ -1,11 +1,12 @@
-"""Dialog chọn thiết bị CAN + tham số bus.
+"""CAN device selection dialog + bus parameter configuration.
 
-Hai điểm không được cắt bớt:
+Two things that must not be silently dropped:
 
-  * Thiết bị `available=False` VẪN hiện, kèm `hint` nói rõ phải cài gói nào.
-    Im lặng bỏ qua là lỗi user gặp nhiều nhất với công cụ loại này.
-  * `list_devices()` là lời gọi CHẶN → chạy trên worker, dialog hiện spinner
-    trong lúc chờ.
+  * Devices with `available=False` are still shown with a `hint` indicating
+    which package to install. Silent omission is the most common UX failure
+    for tools of this type.
+  * `list_devices()` is a BLOCKING call → runs on a worker; the dialog shows
+    a spinner while waiting.
 """
 
 from __future__ import annotations
@@ -33,17 +34,22 @@ from ..session.api import BusConfig, DeviceInfo
 
 __all__ = ["DeviceDialog"]
 
-# Giá trị mặc định của ô nhập, lấy thẳng từ contract thay vì gõ lại hằng số.
+# Backends known to support CAN FD (python-can interface names)
+_FD_CAPABLE_BACKENDS: frozenset[str] = frozenset({
+    "pcan", "vector", "kvaser", "ixxat", "socketcan", "virtual",
+})
+
+# Default values for input fields come directly from the contract, not hardcoded.
 _BUS_DEFAULTS = BusConfig(backend="", channel="")
 
 
 class DeviceDialog(MessageBoxBase):
-    """Trả về `BusConfig` qua `selected_config` sau khi user bấm Kết nối.
+    """Returns a `BusConfig` via `selected_config` after the user clicks Connect.
 
-    `initial` là lựa chọn để tự điền sẵn — lấy từ `session.load_config()` phía
-    gọi (thường là `MainWindow`). Dialog không tự đọc/ghi file cấu hình nào;
-    việc "nhớ lựa chọn" là trách nhiệm của `Session` (xem `session/api.py`),
-    không phải của UI.
+    `initial` is used to pre-fill fields — typically loaded via
+    `session.load_config()` in `MainWindow`. The dialog does not read or write
+    any config file; session persistence is the responsibility of `Session`
+    (see `session/api.py`), not the UI layer.
     """
 
     detect_requested = Signal()
@@ -56,7 +62,7 @@ class DeviceDialog(MessageBoxBase):
         self._devices: list[DeviceInfo] = []
         self._initial = initial or _BUS_DEFAULTS
 
-        self.titleLabel = SubtitleLabel("Chọn thiết bị CAN", self)
+        self.titleLabel = SubtitleLabel("Select CAN Interface", self)
 
         self.list = ListWidget(self)
         self.list.setMinimumHeight(200)
@@ -66,7 +72,7 @@ class DeviceDialog(MessageBoxBase):
         self.spinner.setFixedSize(24, 24)
         self.spinner.hide()
 
-        self.detect_btn = PushButton("Dò lại thiết bị", self)
+        self.detect_btn = PushButton("Scan Devices", self)
         self.detect_btn.clicked.connect(self._on_detect_clicked)
 
         self.hint_label = CaptionLabel("", self)
@@ -82,75 +88,102 @@ class DeviceDialog(MessageBoxBase):
         mono = QFont("Consolas")
         mono.setStyleHint(QFont.Monospace)
 
+        # ── Arbitration bitrate ──────────────────────────────────────────────
         self.bitrate_combo = ComboBox(self)
         for b in (125_000, 250_000, 500_000, 800_000, 1_000_000):
             self.bitrate_combo.addItem(f"{b // 1000} kbps", userData=b)
-        self.bitrate_combo.setCurrentIndex(2)
+        self.bitrate_combo.setCurrentIndex(2)   # 500 kbps default
 
+        # ── CAN ID fields ────────────────────────────────────────────────────
         self.cro_edit = LineEdit(self)
         self.cro_edit.setFont(mono)
         self.dto_edit = LineEdit(self)
         self.dto_edit.setFont(mono)
-        self.ext_cb = CheckBox("CAN ID 29-bit", self)
-        self.pad_cb = CheckBox("Đệm đủ 8 byte (MAX_DLC_REQUIRED)", self)
+
+        # ── Flags ────────────────────────────────────────────────────────────
+        self.ext_cb = CheckBox("29-bit CAN ID", self)
+        self.pad_cb = CheckBox("Pad to 8 bytes (MAX_DLC_REQUIRED)", self)
         self.pad_cb.setChecked(True)
+
+        # ── Timeout ──────────────────────────────────────────────────────────
         self.t1_spin = SpinBox(self)
         self.t1_spin.setRange(100, 10_000)
         self.t1_spin.setSingleStep(100)
         self.t1_spin.setValue(1000)
         self.t1_spin.setSuffix(" ms")
 
+        # ── CAN FD ───────────────────────────────────────────────────────────
+        self.fd_cb = CheckBox("CAN FD", self)
+        self.fd_cb.setToolTip(
+            "Enable CAN Flexible Data-Rate (ISO 11898-7).\n"
+            "MAX_DTO can be up to 64 bytes; requires a CAN FD-capable interface."
+        )
+        self.fd_cb.stateChanged.connect(self._on_fd_changed)
+
+        self.data_bitrate_combo = ComboBox(self)
+        for b in (1_000_000, 2_000_000, 4_000_000, 5_000_000, 8_000_000):
+            self.data_bitrate_combo.addItem(f"{b // 1_000_000} Mbps", userData=b)
+        self.data_bitrate_combo.setCurrentIndex(1)  # 2 Mbps default
+        self.data_bitrate_combo.setEnabled(False)
+
+        self._fd_label = BodyLabel("Data Bitrate:", self)
+        self._fd_label.setEnabled(False)
+
         grid = QGridLayout()
-        grid.addWidget(BodyLabel("Bitrate:", self), 0, 0)
+        grid.addWidget(BodyLabel("Arbitration Bitrate:", self), 0, 0)
         grid.addWidget(self.bitrate_combo, 0, 1)
         grid.addWidget(BodyLabel("CRO (host→ECU):", self), 0, 2)
         grid.addWidget(self.cro_edit, 0, 3)
         grid.addWidget(BodyLabel("DTO (ECU→host):", self), 0, 4)
         grid.addWidget(self.dto_edit, 0, 5)
-        grid.addWidget(BodyLabel("Timeout T1:", self), 1, 0)
+        grid.addWidget(BodyLabel("Response Timeout T1:", self), 1, 0)
         grid.addWidget(self.t1_spin, 1, 1)
         grid.addWidget(self.ext_cb, 1, 2, 1, 2)
         grid.addWidget(self.pad_cb, 1, 4, 1, 2)
+        grid.addWidget(self.fd_cb, 2, 0, 1, 2)
+        grid.addWidget(self._fd_label, 2, 2)
+        grid.addWidget(self.data_bitrate_combo, 2, 3)
 
         self.viewLayout.addWidget(self.titleLabel)
         self.viewLayout.addLayout(top_row)
         self.viewLayout.addWidget(self.list)
         self.viewLayout.addWidget(self.hint_label)
-        self.viewLayout.addWidget(StrongBodyLabel("Tham số bus", self))
+        self.viewLayout.addWidget(StrongBodyLabel("Bus Parameters", self))
         self.viewLayout.addLayout(grid)
         self.viewLayout.addWidget(CaptionLabel(
-            "CRO và DTO thường dùng chung một ID cho response và dữ liệu DAQ — "
-            "công cụ tự phân loại theo byte 0.", self))
+            "CRO and DTO typically share a single CAN ID for responses and DAQ data — "
+            "the tool classifies frames automatically based on byte 0.", self))
 
-        self.yesButton.setText("Kết nối")
-        self.cancelButton.setText("Đóng")
+        self.yesButton.setText("Connect")
+        self.cancelButton.setText("Close")
         self.yesButton.setEnabled(False)
-        self.widget.setMinimumWidth(720)
+        self.widget.setMinimumWidth(760)
 
         self._apply_initial_config()
 
-    # ── nạp danh sách ────────────────────────────────────────────────────────
+    # ── device list population ─────────────────────────────────────────────
 
     def set_busy(self, busy: bool) -> None:
         self.spinner.setVisible(busy)
         self.detect_btn.setEnabled(not busy)
         if busy:
-            self.status_label.setText("Đang dò thiết bị…")
+            self.status_label.setText("Scanning interfaces…")
 
     def set_devices(self, devices: list[DeviceInfo]) -> None:
         self._devices = devices
         self.list.clear()
         select_row = -1
         for i, d in enumerate(devices):
-            mark = "" if d.available else "  (chưa dùng được)"
+            mark = "" if d.available else "  (unavailable)"
             item = QListWidgetItem(f"{d.display_name}   ·   {d.backend}:{d.channel}{mark}")
             if not d.available:
                 item.setForeground(Qt.gray)
             self.list.addItem(item)
             if d.backend == self._initial.backend and d.channel == self._initial.channel:
                 select_row = i
+        available_count = sum(1 for d in devices if d.available)
         self.status_label.setText(
-            f"{sum(1 for d in devices if d.available)}/{len(devices)} kênh dùng được"
+            f"{available_count}/{len(devices)} interface(s) available"
         )
         if select_row < 0:
             select_row = next((i for i, d in enumerate(devices) if d.available), -1)
@@ -160,7 +193,7 @@ class DeviceDialog(MessageBoxBase):
     def set_error(self, message: str) -> None:
         self.status_label.setText(message)
 
-    # ── nội bộ ───────────────────────────────────────────────────────────────
+    # ── internal helpers ───────────────────────────────────────────────────
 
     def _on_detect_clicked(self) -> None:
         self.detect_requested.emit()
@@ -169,17 +202,40 @@ class DeviceDialog(MessageBoxBase):
         if not 0 <= row < len(self._devices):
             self.yesButton.setEnabled(False)
             self.hint_label.setText("")
+            self._update_fd_availability(backend=None)
             return
         d = self._devices[row]
         self.yesButton.setEnabled(d.available)
         if d.available:
             self.hint_label.setText(
-                f"Serial: {d.serial}" if d.serial else "Kênh này sẵn sàng."
+                f"Serial: {d.serial}" if d.serial else "Interface is ready."
             )
         else:
             self.hint_label.setText(
-                d.hint or "Kênh này hiện không dùng được (không rõ nguyên nhân)."
+                d.hint or "This interface is currently unavailable (reason unknown)."
             )
+        self._update_fd_availability(backend=d.backend)
+
+    def _update_fd_availability(self, backend: str | None) -> None:
+        """Grayout CAN FD checkbox when the selected backend does not support FD."""
+        fd_capable = backend is not None and backend.lower() in _FD_CAPABLE_BACKENDS
+        self.fd_cb.setEnabled(fd_capable)
+        if not fd_capable:
+            self.fd_cb.setChecked(False)
+            self.fd_cb.setToolTip(
+                "CAN FD is not supported by this backend.\n"
+                "Use PCAN, Vector, Kvaser, socketcan, or virtual for CAN FD."
+            )
+        else:
+            self.fd_cb.setToolTip(
+                "Enable CAN Flexible Data-Rate (ISO 11898-7).\n"
+                "MAX_DTO can be up to 64 bytes; requires a CAN FD-capable interface."
+            )
+
+    def _on_fd_changed(self, state: int) -> None:
+        enabled = bool(state)
+        self.data_bitrate_combo.setEnabled(enabled)
+        self._fd_label.setEnabled(enabled)
 
     def _apply_initial_config(self) -> None:
         c = self._initial
@@ -191,6 +247,13 @@ class DeviceDialog(MessageBoxBase):
         idx = self.bitrate_combo.findData(c.bitrate)
         if idx >= 0:
             self.bitrate_combo.setCurrentIndex(idx)
+        # CAN FD fields — only if BusConfig has these attrs (added in Phase 2)
+        is_fd = getattr(c, "is_fd", False)
+        data_bitrate = getattr(c, "data_bitrate", 2_000_000)
+        self.fd_cb.setChecked(is_fd)
+        idx2 = self.data_bitrate_combo.findData(data_bitrate)
+        if idx2 >= 0:
+            self.data_bitrate_combo.setCurrentIndex(idx2)
 
     def build_config(self) -> BusConfig | None:
         row = self.list.currentRow()
@@ -201,7 +264,7 @@ class DeviceDialog(MessageBoxBase):
             cro = int(self.cro_edit.text().strip().lower().removeprefix("0x"), 16)
             dto = int(self.dto_edit.text().strip().lower().removeprefix("0x"), 16)
         except ValueError:
-            self.status_label.setText("CAN ID phải là số hex, ví dụ 7E0.")
+            self.status_label.setText("CAN ID must be a hex number, e.g. 7E0.")
             return None
         return BusConfig(
             backend=d.backend,
@@ -212,9 +275,11 @@ class DeviceDialog(MessageBoxBase):
             extended_id=self.ext_cb.isChecked(),
             pad_dlc=self.pad_cb.isChecked(),
             t1_timeout_s=self.t1_spin.value() / 1000.0,
+            is_fd=self.fd_cb.isChecked(),
+            data_bitrate=self.data_bitrate_combo.currentData(),
         )
 
-    def validate(self) -> bool:  # MessageBoxBase gọi trước khi accept()
+    def validate(self) -> bool:  # MessageBoxBase calls this before accept()
         cfg = self.build_config()
         if cfg is None:
             return False

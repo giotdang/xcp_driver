@@ -136,6 +136,15 @@ class RealSession:
     def load_config(self) -> BusConfig:
         return cfg_store.load_bus_config()
 
+    def load_app_config(self) -> AppConfig:
+        return cfg_store.load_app_config()
+
+    def save_app_config(self, cfg: AppConfig) -> None:
+        try:
+            cfg_store.save_app_config(cfg)
+        except OSError:
+            log.warning("Không lưu được app config: %s", cfg_store.config_path(), exc_info=True)
+
     @property
     def symbols(self) -> A2LDatabase:
         return self._a2l_db

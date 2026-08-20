@@ -42,7 +42,7 @@ _KIND_LABEL = {
     "ev": "EV",
     "serv": "SERV",
     "daq": "DAQ",
-    "other": "khác",
+    "other": "Other",
 }
 
 _KIND_COLOR_DARK = {
@@ -65,7 +65,7 @@ _KIND_COLOR_LIGHT = {
     "other": QColor("#6B6B6B"),
 }
 
-_COLUMNS = ("#", "t (s)", "Hướng", "CAN ID", "DLC", "Dữ liệu", "Giải mã")
+_COLUMNS = ("#", "t (s)", "Dir", "CAN ID", "DLC", "Data", "Decoded")
 
 
 class TraceModel(QAbstractTableModel):
@@ -223,36 +223,36 @@ class TraceView(QWidget):
             header.setSectionResizeMode(i, mode)
         self.table.setColumnWidth(5, 220)
 
-        self.pause_btn = PushButton("Tạm dừng", self)
+        self.pause_btn = PushButton("Pause", self)
         self.pause_btn.setCheckable(True)
         self.pause_btn.toggled.connect(self._on_pause)
 
-        self.autoscroll_cb = CheckBox("Tự cuộn", self)
+        self.autoscroll_cb = CheckBox("Auto-scroll", self)
         self.autoscroll_cb.setChecked(True)
 
-        self.clear_btn = PushButton("Xoá", self)
+        self.clear_btn = PushButton("Clear", self)
         self.clear_btn.clicked.connect(self.clear)
 
-        self.export_btn = PushButton("Xuất CSV…", self)
+        self.export_btn = PushButton("Export CSV…", self)
         self.export_btn.clicked.connect(self._on_export)
 
         self.cap_spin = SpinBox(self)
         self.cap_spin.setRange(1000, 500_000)
         self.cap_spin.setSingleStep(1000)
         self.cap_spin.setValue(capacity)
-        self.cap_spin.setToolTip("Số dòng giữ tối đa — quá thì bỏ dòng cũ nhất")
+        self.cap_spin.setToolTip("Maximum row retention capacity — older frames will be evicted")
 
         self.kind_boxes: dict[str, CheckBox] = {}
         filter_row = QHBoxLayout()
-        filter_row.addWidget(BodyLabel("Lọc:", self))
+        filter_row.addWidget(BodyLabel("Filter:", self))
         for kind in ALL_KINDS:
             cb = CheckBox(_KIND_LABEL[kind], self)
-            cb.setChecked(kind != "daq")  # DAQ tắt mặc định — DTO flood 50–100Hz
+            cb.setChecked(kind != "daq")  # DAQ off by default — DTO floods at 50–100Hz
             cb.toggled.connect(self._on_filter)
             self.kind_boxes[kind] = cb
             filter_row.addWidget(cb)
         filter_row.addStretch(1)
-        filter_row.addWidget(BodyLabel("Trần dòng:", self))
+        filter_row.addWidget(BodyLabel("Row limit:", self))
         filter_row.addWidget(self.cap_spin)
 
         tool_row = QHBoxLayout()
@@ -265,8 +265,8 @@ class TraceView(QWidget):
         tool_row.addWidget(self.counter_label)
 
         self.note_label = CaptionLabel(
-            "Chất lượng timestamp khác nhau theo thiết bị: PEAK/Vector lấy timestamp "
-            "từ phần cứng; slcan và bus giả lập do phần mềm sinh nên có jitter.",
+            "Timestamp quality varies by device: hardware timestamps from PEAK/Vector; "
+            "software timestamps from slcan and virtual buses may exhibit jitter.",
             self,
         )
         self.note_label.setWordWrap(True)
@@ -281,10 +281,10 @@ class TraceView(QWidget):
 
         self._update_counters(0)
 
-    # ── API cho MainWindow ───────────────────────────────────────────────────
+    # ── API for MainWindow ───────────────────────────────────────────────────
 
     def feed(self, entries: list[TraceEntry], dropped: int) -> None:
-        """Nhận một lô frame đã gom sẵn. Gọi từ UI thread, theo timer."""
+        """Receive a batched block of trace entries. Called from UI thread."""
         self._received += len(entries)
         if self._paused:
             self._skipped_while_paused += len(entries)
@@ -302,25 +302,25 @@ class TraceView(QWidget):
         self._skipped_while_paused = 0
         self._update_counters(0)
 
-    # ── nội bộ ───────────────────────────────────────────────────────────────
+    # ── internal ─────────────────────────────────────────────────────────────
 
     def _on_pause(self, paused: bool) -> None:
         self._paused = paused
-        self.pause_btn.setText("Tiếp tục" if paused else "Tạm dừng")
+        self.pause_btn.setText("Resume" if paused else "Pause")
 
     def _on_filter(self) -> None:
         self.model.set_kinds({k for k, cb in self.kind_boxes.items() if cb.isChecked()})
 
     def _update_counters(self, dropped: int) -> None:
         self.counter_label.setText(
-            f"nhận {self._received}  ·  đang giữ {self.model.total_held}  ·  "
-            f"hiện {self.model.rowCount()}  ·  session bỏ {dropped}  ·  "
-            f"bỏ khi tạm dừng {self._skipped_while_paused}"
+            f"Rx {self._received}  ·  Buffer {self.model.total_held}  ·  "
+            f"Shown {self.model.rowCount()}  ·  Dropped {dropped}  ·  "
+            f"Paused {self._skipped_while_paused}"
         )
 
     def _on_export(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "Xuất trace", "trace.csv", "CSV (*.csv)"
+            self, "Export Trace", "trace.csv", "CSV (*.csv)"
         )
         if not path:
             return

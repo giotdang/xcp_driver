@@ -42,13 +42,13 @@ def test_chuyen_man_hinh(window: MainWindow) -> None:
 
 def test_menu_du_ba_muc(window: MainWindow) -> None:
     titles = [a.text() for a in window.menuBar().actions()]
-    assert any("Phiên" in t for t in titles)
-    assert any("Xem" in t for t in titles)
-    assert any("Trợ giúp" in t for t in titles)
+    assert any("Session" in t for t in titles)
+    assert any("View" in t for t in titles)
+    assert any("Help" in t for t in titles)
 
 
 def test_status_bar_hien_trang_thai_ban_dau(window: MainWindow) -> None:
-    assert "Chưa kết nối" in window.state_label.text()
+    assert "Disconnected" in window.state_label.text()
     assert window.caps_label.text() == ""
     assert window.session.state is ConnState.DISCONNECTED
 

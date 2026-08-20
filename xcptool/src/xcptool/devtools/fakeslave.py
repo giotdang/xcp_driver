@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import can
 
 from ..master.constants import Cmd, ErrCode
+from ..transport.base import round_to_can_fd_dlc
 
 __all__ = ["SlaveConfig", "FakeSlave"]
 
@@ -40,6 +41,7 @@ class SlaveConfig:
     cro_id: int = 0x600
     dto_id: int = 0x601
     extended_id: bool = False
+    is_fd: bool = False
     pad_dlc: bool = True
 
     max_cto: int = 8
@@ -104,8 +106,11 @@ class FakeSlave:
 
     def __init__(self, cfg: SlaveConfig | None = None) -> None:
         self.cfg = cfg or SlaveConfig()
+        kwargs: dict[str, object] = {}
+        if self.cfg.is_fd:
+            kwargs["fd"] = True
         self._bus = can.Bus(
-            interface="virtual", channel=self.cfg.channel, receive_own_messages=False)
+            interface="virtual", channel=self.cfg.channel, receive_own_messages=False, **kwargs)
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._loop, name="fake-slave", daemon=True)
@@ -255,13 +260,23 @@ class FakeSlave:
                         frame += self.memory[off:off + sz]
                     else:
                         frame += bytes(sz)
-                if self.cfg.pad_dlc and len(frame) < 8:
-                    frame = frame.ljust(8, b"\x00")
-                payload = bytes(frame[:8])
+                if self.cfg.is_fd:
+                    target_len = round_to_can_fd_dlc(len(frame))
+                    if self.cfg.pad_dlc and target_len < 8:
+                        target_len = 8
+                    if len(frame) < target_len:
+                        frame = frame.ljust(target_len, b"\x00")
+                    payload = bytes(frame[:self.cfg.max_dto])
+                else:
+                    if self.cfg.pad_dlc and len(frame) < 8:
+                        frame = frame.ljust(8, b"\x00")
+                    payload = bytes(frame[:8])
                 try:
                     self._bus.send(can.Message(
                         arbitration_id=self.cfg.dto_id, data=payload,
-                        is_extended_id=self.cfg.extended_id))
+                        is_extended_id=self.cfg.extended_id,
+                        is_fd=self.cfg.is_fd,
+                        bitrate_switch=self.cfg.is_fd))
                 except Exception:  # noqa: BLE001
                     return
 
@@ -275,15 +290,28 @@ class FakeSlave:
             self.cfg.truncate_responses -= 1
             data = data[:2]
         payload = bytes(data)
-        if self.cfg.pad_dlc and not truncated and len(payload) < 8:
-            payload = payload.ljust(8, b"\x00")
-        payload = payload[:8]
+        if self.cfg.is_fd:
+            max_cap = self.cfg.max_cto
+            if self.cfg.pad_dlc and not truncated:
+                target_len = round_to_can_fd_dlc(len(payload))
+                if target_len < 8:
+                    target_len = 8
+                if len(payload) < target_len:
+                    payload = payload.ljust(target_len, b"\x00")
+            payload = payload[:max_cap]
+        else:
+            if self.cfg.pad_dlc and not truncated and len(payload) < 8:
+                payload = payload.ljust(8, b"\x00")
+            payload = payload[:8]
+
         if self.cfg.response_delay_s > 0:
             time.sleep(self.cfg.response_delay_s)
         try:
             self._bus.send(can.Message(
                 arbitration_id=self.cfg.dto_id, data=payload,
-                is_extended_id=self.cfg.extended_id))
+                is_extended_id=self.cfg.extended_id,
+                is_fd=self.cfg.is_fd,
+                bitrate_switch=self.cfg.is_fd))
         except Exception:  # noqa: BLE001
             log.exception("fake slave: không gửi được response")
 

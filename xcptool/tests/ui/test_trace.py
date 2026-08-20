@@ -85,7 +85,7 @@ def test_tam_dung_ngung_cap_nhat_bang(qtbot) -> None:
     v.pause_btn.setChecked(True)
     v.feed([_entry(i) for i in range(2, 100)], dropped=0)
     assert v.model.rowCount() == 1, "tạm dừng thì bảng không được đổi"
-    assert "bỏ khi tạm dừng 98" in v.counter_label.text()
+    assert "Paused 98" in v.counter_label.text()
 
     v.pause_btn.setChecked(False)
     v.feed([_entry(200)], dropped=0)
@@ -98,14 +98,14 @@ def test_xoa_dua_ve_rong(qtbot) -> None:
     v.feed([_entry(i) for i in range(50)], dropped=0)
     v.clear()
     assert v.model.rowCount() == 0
-    assert "nhận 0" in v.counter_label.text()
+    assert "Rx 0" in v.counter_label.text()
 
 
 def test_bo_dem_hien_dung_so_dropped_cua_session(qtbot) -> None:
     v = TraceView()
     qtbot.addWidget(v)
     v.feed([_entry(1)], dropped=137)
-    assert "session bỏ 137" in v.counter_label.text()
+    assert "Dropped 137" in v.counter_label.text()
 
 
 def test_xuat_csv(qtbot, tmp_path, monkeypatch) -> None:
@@ -130,7 +130,7 @@ def test_ghi_ro_chat_luong_timestamp_khac_nhau_theo_thiet_bi(qtbot) -> None:
     qtbot.addWidget(v)
     note = v.note_label.text()
     assert "timestamp" in note.lower()
-    assert "phần cứng" in note and "phần mềm" in note
+    assert "hardware" in note.lower() and "software" in note.lower()
 
 
 # ── dưới tải thật ────────────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ def test_flood_2000_fps_ui_van_muot_ram_khong_phinh(qtbot, cfg) -> None:
     )
     growth = (late - early) / max(early, 1)
     assert growth < 0.5, f"RAM tăng {growth:.0%} sau khi đã chạm trần — nghi rò rỉ"
-    assert f"session bỏ {session.dropped_frames}" in v.counter_label.text()
+    assert f"Dropped {session.dropped_frames}" in v.counter_label.text()
     window.close()
 
 

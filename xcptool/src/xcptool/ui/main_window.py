@@ -34,7 +34,10 @@ from qfluentwidgets import (
     StrongBodyLabel,
 )
 
+from pathlib import Path
+
 from ..session.api import (
+    AppConfig,
     BusConfig,
     ConnState,
     DaqList,
@@ -97,6 +100,11 @@ class MainWindow(QMainWindow):
         if _settings.value("debug_area_collapsed", False, type=bool):
             self.dock_manager.toggle_debug_area()
 
+        # Khôi phục cấu hình ứng dụng từ config file
+        self._app_config: AppConfig = self.session.load_app_config()
+        self.measurement_view.scope_switch.setChecked(self._app_config.scope_enabled)
+        self.trace_view.cap_spin.setValue(self._app_config.trace_row_limit)
+
         self.trace_timer = QTimer(self)
         self.trace_timer.setInterval(TRACE_POLL_MS)
         self.trace_timer.timeout.connect(self._poll_trace)
@@ -104,6 +112,10 @@ class MainWindow(QMainWindow):
 
         self.unexpected_error.connect(self._on_unexpected_error)
         self._refresh_state()
+
+        # Auto-load A2L nếu file lần trước vẫn tồn tại
+        if self._app_config.last_a2l_path and Path(self._app_config.last_a2l_path).is_file():
+            QTimer.singleShot(50, lambda: self._on_a2l_load_requested(self._app_config.last_a2l_path))
 
     # ── dựng giao diện ───────────────────────────────────────────────────────
 
@@ -152,21 +164,21 @@ class MainWindow(QMainWindow):
         self.nav.addItem(
             routeKey="calibration",
             icon=FluentIcon.EDIT,
-            text="Hiệu chỉnh",
+            text="Calibration",
             onClick=lambda: self.switch_to(self.calibration_view),
             position=NavigationItemPosition.SCROLL,
         )
         self.nav.addItem(
             routeKey="measurement",
             icon=FluentIcon.DEVELOPER_TOOLS,
-            text="Đo lường",
+            text="Measurement",
             onClick=lambda: self.switch_to(self.measurement_view),
             position=NavigationItemPosition.SCROLL,
         )
         self.nav.addItem(
             routeKey="connect",
             icon=FluentIcon.CONNECT,
-            text="Kết nối…",
+            text="Connect…",
             onClick=self.open_device_dialog,
             selectable=False,
             position=NavigationItemPosition.BOTTOM,
@@ -181,32 +193,32 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         bar = self.menuBar()
 
-        session_menu = bar.addMenu("&Phiên")
-        self.act_connect = QAction("&Kết nối…", self)
+        session_menu = bar.addMenu("&Session")
+        self.act_connect = QAction("&Connect…", self)
         self.act_connect.setShortcut(QKeySequence("Ctrl+K"))
         self.act_connect.triggered.connect(self.open_device_dialog)
         session_menu.addAction(self.act_connect)
 
-        self.act_disconnect = QAction("&Ngắt kết nối", self)
+        self.act_disconnect = QAction("&Disconnect", self)
         self.act_disconnect.triggered.connect(self.do_disconnect)
         session_menu.addAction(self.act_disconnect)
         session_menu.addSeparator()
 
-        act_load_a2l = QAction("Nạp &A2L…", self)
+        act_load_a2l = QAction("&Load A2L…", self)
         act_load_a2l.setShortcut(QKeySequence("Ctrl+O"))
         act_load_a2l.triggered.connect(self.calibration_view.load_btn.click)
         session_menu.addAction(act_load_a2l)
         session_menu.addSeparator()
 
-        act_quit = QAction("T&hoát", self)
+        act_quit = QAction("E&xit", self)
         act_quit.setShortcut(QKeySequence.Quit)
         act_quit.triggered.connect(self.close)
         session_menu.addAction(act_quit)
 
-        view_menu = bar.addMenu("&Xem")
+        view_menu = bar.addMenu("&View")
         for dock, text, shortcut in (
-            (self.dock_manager.trace_dock, "&Trace CAN", "Ctrl+1"),
-            (self.dock_manager.console_dock, "&Lệnh thô", "Ctrl+2"),
+            (self.dock_manager.trace_dock, "CAN &Trace", "Ctrl+1"),
+            (self.dock_manager.console_dock, "&Raw Commands", "Ctrl+2"),
         ):
             act = QAction(text, self)
             act.setShortcut(QKeySequence(shortcut))
@@ -222,25 +234,25 @@ class MainWindow(QMainWindow):
         view_menu.addAction(mem_toggle)
         view_menu.addSeparator()
 
-        self.act_toggle_debug_area = QAction("Ẩn/hiện &vùng debug (Trace + Lệnh thô)", self)
+        self.act_toggle_debug_area = QAction("Toggle &Debug Area (Trace + Raw)", self)
         self.act_toggle_debug_area.setShortcut(QKeySequence("Ctrl+`"))
         self.act_toggle_debug_area.triggered.connect(self.toggle_debug_area)
         view_menu.addAction(self.act_toggle_debug_area)
 
-        help_menu = bar.addMenu("&Trợ giúp")
-        act_log = QAction("Đường dẫn file &log", self)
+        help_menu = bar.addMenu("&Help")
+        act_log = QAction("&Log File Path", self)
         act_log.triggered.connect(
-            lambda: self.notify("File log của phiên này", str(current_log_path()))
+            lambda: self.notify("Session Log File", str(current_log_path()))
         )
         help_menu.addAction(act_log)
-        act_about = QAction("&Về xcptool", self)
+        act_about = QAction("&About xcptool", self)
         act_about.triggered.connect(self._show_about)
         help_menu.addAction(act_about)
 
     def _build_statusbar(self) -> None:
         bar = self.statusBar()
 
-        self.state_label = StrongBodyLabel("Chưa kết nối", self)
+        self.state_label = StrongBodyLabel("Disconnected", self)
         self.caps_label = BodyLabel("", self)
         self.drop_label = BodyLabel("", self)
 
@@ -248,7 +260,7 @@ class MainWindow(QMainWindow):
         self.busy_ring.setFixedSize(16, 16)
         self.busy_ring.hide()
         self.busy_label = BodyLabel("", self)
-        self.cancel_btn = PushButton("Huỷ", self)
+        self.cancel_btn = PushButton("Cancel", self)
         self.cancel_btn.clicked.connect(self.cancel_busy)
         self.cancel_btn.hide()
 
@@ -292,8 +304,8 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         self.notify(
             "xcptool",
-            "Công cụ XCP master đa nền tảng. Giao diện dựng bằng "
-            "PySide6-Fluent-Widgets (license dual GPLv3 / thương mại).",
+            "Cross-platform XCP master tool. Built with "
+            "PySide6-Fluent-Widgets (dual license GPLv3 / commercial).",
         )
 
     # ── trạng thái bận ───────────────────────────────────────────────────────
@@ -324,12 +336,11 @@ class MainWindow(QMainWindow):
         self._refresh_state()
 
     def cancel_busy(self) -> None:
-        """Huỷ = ngừng quan tâm tới kết quả và đóng bus. Contract không có cơ
-        chế cắt ngang một lệnh đang chạy, nên đây là cách trung thực duy nhất."""
+        """Cancel = stop awaiting result and close bus."""
         if self._connect_task is not None:
             self._connect_task.cancel()
             self._connect_task = None
-        self.busy_label.setText("Đang huỷ…")
+        self.busy_label.setText("Cancelling…")
         self.cancel_btn.setEnabled(False)
         self.runner.run(
             self.session.close,
@@ -340,15 +351,15 @@ class MainWindow(QMainWindow):
     def _after_cancel(self) -> None:
         self.cancel_btn.setEnabled(True)
         self._end_busy()
-        self.notify("Đã huỷ", "Kết nối bị huỷ theo yêu cầu.")
+        self.notify("Cancelled", "Connection cancelled by user request.")
 
     def _guard(self) -> bool:
-        """False nghĩa là không gửi lệnh được lúc này — đã báo cho user rồi."""
+        """False means commands cannot be sent currently — user is notified."""
         if self.busy:
-            self.notify("Đang bận", f"Chờ '{self._busy_label}' xong đã.")
+            self.notify("Busy", f"Please wait for '{self._busy_label}' to finish.")
             return False
         if self.session.state is not ConnState.CONNECTED:
-            self.notify("Chưa kết nối", "Bấm Kết nối rồi thử lại.")
+            self.notify("Not Connected", "Click Connect and try again.")
             return False
         return True
 
@@ -381,7 +392,7 @@ class MainWindow(QMainWindow):
 
     def open_device_dialog(self) -> None:
         if self.busy:
-            self.notify("Đang bận", f"Chờ '{self._busy_label}' xong đã.")
+            self.notify("Busy", f"Please wait for '{self._busy_label}' to finish.")
             return
         dlg = DeviceDialog(self, initial=self.session.load_config())
         self._dialog = dlg
@@ -408,19 +419,19 @@ class MainWindow(QMainWindow):
                 dlg.set_busy(False)
                 title, body = errors.describe(exc)
                 dlg.set_error(f"{title}: {body.splitlines()[0]}")
-                log.warning("list_devices() lỗi: %r", exc)
+                log.warning("list_devices() error: %r", exc)
 
         self.runner.run(self.session.list_devices, on_ok=ok, on_err=err)
 
     def connect_to(self, cfg: BusConfig) -> None:
-        self._begin_busy(f"Đang kết nối {cfg.backend}:{cfg.channel}…", cancellable=True)
+        self._begin_busy(f"Connecting to {cfg.backend}:{cfg.channel}…", cancellable=True)
 
         def ok(caps: SlaveCaps) -> None:
             self._connect_task = None
             self._end_busy()
             self.calibration_view.set_byte_order(caps.byte_order)
             self.measurement_view.set_byte_order(caps.byte_order)
-            self.notify("Đã kết nối", self._caps_summary(caps))
+            self.notify("Connected", self._caps_summary(caps))
             self._refresh_pages_after_connect()
 
         def err(exc: Exception) -> None:
@@ -433,15 +444,6 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_pages_after_connect(self) -> None:
-        """Đọc trạng thái trang MỘT LẦN sau khi connect, cập nhật cả memory
-        panel lẫn calibration panel từ cùng một cặp GET_CAL_PAGE.
-
-        KHÔNG được gọi `memory_view.refresh_pages()` rồi `cal_get_pages()` nối
-        tiếp: cái đầu set busy=True ngay khi return (worker chạy bất đồng bộ
-        trên thread khác), nên cái sau bị `_guard()` từ chối tức thì với
-        thông báo "Đang bận" — hai nhãn bận trùng nhau ("Đang đọc trạng thái
-        trang…") càng làm user tưởng lệnh đang treo dù chẳng có gì đang chạy.
-        """
         segment = self.calibration_view.segment_spin.value()
         if not self._guard():
             return
@@ -455,20 +457,20 @@ class MainWindow(QMainWindow):
             self.memory_view.on_pages(segment, *pages)
             self.calibration_view.on_pages(segment, *pages)
 
-        self._call("Đang đọc trạng thái trang…", read_both, on_ok=ok)
+        self._call("Reading page status…", read_both, on_ok=ok)
 
     def do_disconnect(self) -> None:
         if self.busy:
-            self.notify("Đang bận", f"Chờ '{self._busy_label}' xong đã.")
+            self.notify("Busy", f"Please wait for '{self._busy_label}' to finish.")
             return
-        self._call("Đang ngắt kết nối…", self.session.disconnect,
-                   on_ok=lambda _: self.notify("Đã ngắt", "Phiên XCP đã đóng."))
+        self._call("Disconnecting…", self.session.disconnect,
+                   on_ok=lambda _: self.notify("Disconnected", "XCP session closed."))
 
-    # ── lệnh thô ─────────────────────────────────────────────────────────────
+    # ── raw commands ─────────────────────────────────────────────────────────
 
     def send_raw(self, payload: bytes, raise_on_error: bool) -> None:
         if not self._guard():
-            self.console_view.on_error("Chưa kết nối hoặc đang bận.")
+            self.console_view.on_error("Not connected or bus is busy.")
             return
 
         def err(exc: Exception) -> None:
@@ -478,19 +480,19 @@ class MainWindow(QMainWindow):
                 errors.show_error(self, exc)
 
         self._call(
-            "Đang gửi lệnh thô…",
+            "Sending raw command…",
             self.session.raw_command, payload, raise_on_error,
             on_ok=self.console_view.on_response,
             on_err=err,
         )
 
-    # ── bộ nhớ ───────────────────────────────────────────────────────────────
+    # ── memory ───────────────────────────────────────────────────────────────
 
     def read_memory(self, addr: int, size: int) -> None:
         if not self._guard():
             return
         self._call(
-            f"Đang đọc {size} byte tại 0x{addr:08X}…",
+            f"Reading {size} bytes at 0x{addr:08X}…",
             self.session.read, addr, size, self.memory_view.ext,
             on_ok=lambda data: self.memory_view.on_read_done(addr, data),
         )
@@ -506,28 +508,23 @@ class MainWindow(QMainWindow):
                 errors.show_error(self, exc)
 
         self._call(
-            f"Đang ghi {len(data)} byte tại 0x{addr:08X}…",
+            f"Writing {len(data)} bytes at 0x{addr:08X}…",
             self.session.write, addr, data, self.memory_view.ext,
             on_ok=lambda _: self.memory_view.on_write_done(),
             on_err=err,
         )
 
     def _on_write_protected(self, exc: WriteProtectedError) -> None:
-        """Đây là điểm UX quan trọng nhất của panel bộ nhớ: không in mã lỗi mà
-        đưa thẳng nút sửa nguyên nhân."""
         if not ask_switch_to_working_page(self, exc.description):
             return
         segment = self.memory_view.segment_spin.value()
         self._call(
-            "Đang chuyển XCP về working page…",
+            "Switching XCP to working page…",
             self.session.set_page, segment, WORKING_PAGE, PageMode.XCP,
             on_ok=lambda _: self._after_switch_to_working(segment),
         )
 
     def _after_switch_to_working(self, segment: int) -> None:
-        # Ghi lại NGAY, không chen một lượt đọc trang vào giữa: Session không
-        # reentrant nên lệnh đọc đó sẽ chiếm chỗ và lần ghi lại bị nuốt mất.
-        # Trang thì đã biết chắc — ECU vừa ack lệnh đặt trang.
         self.memory_view.set_xcp_page_indicator(WORKING_PAGE)
         QTimer.singleShot(0, self.memory_view.retry_write)
 
@@ -541,7 +538,7 @@ class MainWindow(QMainWindow):
             return ecu, xcp
 
         self._call(
-            "Đang đọc trạng thái trang…",
+            "Reading page status…",
             read_both,
             on_ok=lambda pages: self.memory_view.on_pages(segment, *pages),
         )
@@ -550,7 +547,7 @@ class MainWindow(QMainWindow):
         if not self._guard():
             return
         self._call(
-            f"Đang đặt trang {page} cho {mode.name}…",
+            f"Setting page {page} for {mode.name}…",
             self.session.set_page, segment, page, mode,
             on_ok=lambda _: self.memory_view.refresh_pages(),
         )
@@ -566,7 +563,7 @@ class MainWindow(QMainWindow):
                 errors.show_error(self, exc)
 
         self._call(
-            f"Đang copy trang {src_page} → {dst_page}…",
+            f"Copying page {src_page} → {dst_page}…",
             self.session.copy_page, src_seg, src_page, dst_seg, dst_page,
             on_ok=lambda _: self.memory_view.refresh_pages(),
             on_err=err,
@@ -576,18 +573,21 @@ class MainWindow(QMainWindow):
 
     def _on_a2l_load_requested(self, path: str) -> None:
         self._call(
-            "Nạp A2L…",
+            "Loading A2L…",
             self.session.load_a2l, path,
-            on_ok=lambda _: self._after_a2l_load(),
+            on_ok=lambda _: self._after_a2l_load(path),
         )
 
-    def _after_a2l_load(self) -> None:
+    def _after_a2l_load(self, path: str = "") -> None:
         db = self.session.symbols
         self.calibration_view.set_database(db)
         self.measurement_view.set_database(db)
+        if path:
+            self._app_config.last_a2l_path = path
+            self._save_current_app_config()
         self.notify(
-            "A2L đã nạp",
-            f"{len(db.characteristics)} CHARACTERISTIC, {len(db.measurements)} MEASUREMENT",
+            "A2L Loaded",
+            f"{len(db.characteristics)} CHARACTERISTIC(s), {len(db.measurements)} MEASUREMENT(s)",
         )
         self.switch_to(self.calibration_view)
 
@@ -597,7 +597,7 @@ class MainWindow(QMainWindow):
         symbols = self.session.symbols
         if not symbols.characteristics:
             self.calibration_view.status_label.setText(
-                "Chưa nạp A2L hoặc file không có CHARACTERISTIC nào."
+                "No A2L loaded or file contains no CHARACTERISTICs."
             )
             return
 
@@ -614,7 +614,7 @@ class MainWindow(QMainWindow):
             return results
 
         self._call(
-            "Đang đọc tất cả tham số…",
+            "Reading all parameters…",
             _batch,
             on_ok=self.calibration_view.on_batch_read_done,
         )
@@ -630,7 +630,7 @@ class MainWindow(QMainWindow):
                 errors.show_error(self, exc)
 
         self._call(
-            f"Đang ghi '{name}'…",
+            f"Writing '{name}'…",
             self.session.write, addr, data,
             on_ok=lambda _: self.calibration_view.on_write_done(name),
             on_err=err,
@@ -639,8 +639,6 @@ class MainWindow(QMainWindow):
     def _on_cal_write_protected(
         self, exc: WriteProtectedError, name: str, addr: int, data: bytes
     ) -> None:
-        """UI chỉ có khái niệm Working/Reference — chuyển page nghĩa là chuyển
-        CẢ ECU lẫn XCP cùng lúc (DESIGN.md §5), không riêng XCP như memory panel cũ."""
         if not ask_switch_to_working_page(self, exc.description):
             return
         seg = self.calibration_view.segment_spin.value()
@@ -650,7 +648,7 @@ class MainWindow(QMainWindow):
             self.session.set_page(seg, CAL_WORKING_PAGE, PageMode.XCP)
 
         self._call(
-            "Đang chuyển sang Working…",
+            "Switching to Working…",
             _both,
             on_ok=lambda _: self._after_cal_switch_working(seg, name, addr, data),
         )
@@ -660,7 +658,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         self.calibration_view.set_page_indicator(CAL_WORKING_PAGE)
         self._call(
-            f"Đang ghi lại '{name}'…",
+            f"Writing '{name}' again…",
             self.session.write, addr, data,
             on_ok=lambda _: self.calibration_view.on_write_done(name),
         )
@@ -675,14 +673,12 @@ class MainWindow(QMainWindow):
             return ecu, xcp
 
         self._call(
-            "Đang đọc trạng thái trang…",
+            "Reading page status…",
             read_both,
             on_ok=lambda pages: self.calibration_view.on_pages(segment, *pages),
         )
 
     def cal_set_page(self, segment: int, page: int) -> None:
-        """Đặt CẢ ECU lẫn XCP về `page` — UI chỉ biết Working/Reference, không
-        set hai trang lệch nhau có chủ đích (DESIGN.md §5)."""
         if not self._guard():
             return
 
@@ -692,7 +688,7 @@ class MainWindow(QMainWindow):
 
         name = "Working" if page == CAL_WORKING_PAGE else "Reference"
         self._call(
-            f"Đang chuyển sang {name}…",
+            f"Switching to {name}…",
             _both,
             on_ok=lambda _: self.cal_get_pages(segment),
         )
@@ -703,7 +699,7 @@ class MainWindow(QMainWindow):
         if not self._guard():
             return
         self._call(
-            f"Đang copy trang {src_page} → {dst_page}…",
+            f"Copying page {src_page} → {dst_page}…",
             self.session.copy_page, src_seg, src_page, dst_seg, dst_page,
             on_ok=lambda _: self.cal_get_pages(dst_seg),
         )
@@ -711,22 +707,20 @@ class MainWindow(QMainWindow):
     # ── DAQ ──────────────────────────────────────────────────────────────────
 
     def start_daq(self, lists: list[DaqList]) -> None:
-        """Gọi từ MeasurementView signal — chạy session.start_daq trên worker."""
         if not self._guard():
             return
         self._call(
-            "Đang khởi động DAQ…",
+            "Starting DAQ…",
             self.session.start_daq, lists,
             on_ok=lambda _: self.measurement_view.on_daq_started(),
             on_err=lambda exc: errors.show_error(self, exc),
         )
 
     def stop_daq(self) -> None:
-        """Gọi từ MeasurementView signal — chạy session.stop_daq trên worker."""
         if not self._guard():
             return
         self._call(
-            "Đang dừng DAQ…",
+            "Stopping DAQ…",
             self.session.stop_daq,
             on_ok=lambda _: self.measurement_view.on_daq_stopped(),
         )
@@ -738,11 +732,11 @@ class MainWindow(QMainWindow):
             entries = self.session.drain_trace(200)  # throttle: tránh spike khi DAQ vừa start
             dropped = self.session.dropped_frames
         except Exception:  # noqa: BLE001 — timer không được chết vì một lần lỗi
-            log.exception("drain_trace() lỗi")
+            log.exception("drain_trace() error")
             self.trace_timer.stop()
             return
         self.trace_view.feed(entries, dropped)
-        self.drop_label.setText(f"frame bị bỏ: {dropped}" if dropped else "")
+        self.drop_label.setText(f"Dropped: {dropped}" if dropped else "")
 
         # DAQ — drain trong cùng tick 40ms để giữ nguyên tắc "một nơi drain"
         try:
@@ -750,17 +744,17 @@ class MainWindow(QMainWindow):
             if samples:
                 self.measurement_view.on_samples(samples)
         except Exception:  # noqa: BLE001 — drain lỗi không được giết timer
-            log.exception("drain_daq() lỗi, bỏ qua")
+            log.exception("drain_daq() error, ignored")
 
         self._refresh_state()
 
     def _refresh_state(self) -> None:
         state = self.session.state
         text = {
-            ConnState.DISCONNECTED: "Chưa kết nối",
-            ConnState.CONNECTING: "Đang kết nối…",
-            ConnState.CONNECTED: "Đã kết nối",
-            ConnState.ERROR: "LỖI — bus không dùng được",
+            ConnState.DISCONNECTED: "Disconnected",
+            ConnState.CONNECTING: "Connecting…",
+            ConnState.CONNECTED: "Connected",
+            ConnState.ERROR: "ERROR — bus unavailable",
         }[state]
         self.state_label.setText(text)
         caps = self.session.caps
@@ -774,8 +768,8 @@ class MainWindow(QMainWindow):
         res = "/".join(n for n, on in (
             ("CAL", caps.supports_cal_pag), ("DAQ", caps.supports_daq),
             ("STIM", caps.supports_stim), ("PGM", caps.supports_pgm),
-        ) if on) or "không có resource nào"
-        seed = "  ·  cần seed&key" if caps.needs_seed_and_key else ""
+        ) if on) or "no resources"
+        seed = "  ·  needs seed&key" if caps.needs_seed_and_key else ""
         ident = f"  ·  {caps.id_string}" if caps.id_string else ""
         return (
             f"MAX_CTO {caps.max_cto}  ·  MAX_DTO {caps.max_dto}  ·  "
@@ -792,11 +786,28 @@ class MainWindow(QMainWindow):
     def _on_unexpected_error(self, exc: object) -> None:
         errors.show_unexpected(self, exc, str(current_log_path()))  # type: ignore[arg-type]
 
+    def _save_current_app_config(self) -> None:
+        """Lưu trạng thái hiện tại của app (bus, last A2L, UI settings) vào config file."""
+        new_app_cfg = AppConfig(
+            bus=self.session.load_config(),
+            last_a2l_path=self._app_config.last_a2l_path,
+            scope_enabled=self.measurement_view.scope_switch.isChecked(),
+            trace_row_limit=self.trace_view.cap_spin.value(),
+        )
+        self._app_config = new_app_cfg
+        try:
+            self.session.save_app_config(new_app_cfg)
+        except Exception:  # noqa: BLE001
+            log.exception("Không lưu được app config lúc thoát")
+
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt đặt tên
         # Lưu trạng thái dock trước khi đóng
         _settings = QSettings("xcptool", "xcptool")
         _settings.setValue("dock_state", self.dock_manager.save_state())
         _settings.setValue("debug_area_collapsed", self.dock_manager.is_debug_area_collapsed())
+
+        # Lưu cấu hình ứng dụng
+        self._save_current_app_config()
 
         self.trace_timer.stop()
         if self._connect_task is not None:

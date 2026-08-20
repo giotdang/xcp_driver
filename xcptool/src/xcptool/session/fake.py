@@ -20,6 +20,7 @@ from pathlib import Path
 from ..a2l import A2LDatabase
 from ..a2l import load as _a2l_load
 from .api import (
+    AppConfig,
     BusConfig,
     BusError,
     BusyError,
@@ -195,6 +196,22 @@ class FakeSession:
         chạy khác, chỉ cần đúng hành vi "nhớ trong phiên" để UI test được.
         """
         return self._cfg or BusConfig(backend="virtual", channel="fake0")
+
+    def load_app_config(self) -> AppConfig:
+        return getattr(
+            self,
+            "_app_cfg",
+            AppConfig(
+                bus=self.load_config(),
+                last_a2l_path="",
+                scope_enabled=True,
+                trace_row_limit=20_000,
+            ),
+        )
+
+    def save_app_config(self, cfg: AppConfig) -> None:
+        self._app_cfg = cfg
+        self._cfg = cfg.bus
 
     @property
     def symbols(self) -> A2LDatabase:

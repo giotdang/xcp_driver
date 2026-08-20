@@ -67,7 +67,7 @@ def test_set_database_items_have_datatype(view: MeasurementView) -> None:
         view.tree.topLevelItem(i).text(COL_DTYPE)
         for i in range(view.tree.topLevelItemCount())
     }
-    assert "UWORD" in dtypes or "FLOAT32_IEEE" in dtypes
+    assert "UINT16" in dtypes or "FLOAT32" in dtypes or "UWORD" in dtypes
 
 
 def test_set_database_unchecked_by_default(view: MeasurementView) -> None:
@@ -81,8 +81,8 @@ def test_set_database_unchecked_by_default(view: MeasurementView) -> None:
 def test_start_without_selection_shows_status(view: MeasurementView) -> None:
     view.set_database(_make_db())
     view.start_btn.click()
-    assert "tick" in view.status_label.text().lower() or \
-           "ô vuông" in view.status_label.text()
+    assert "select" in view.status_label.text().lower() or \
+           "signal" in view.status_label.text().lower()
 
 
 def test_start_emits_daq_start_requested(qtbot, view: MeasurementView) -> None:
