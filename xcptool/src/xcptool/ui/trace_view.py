@@ -17,7 +17,10 @@ from typing import Iterable
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFileDialog, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget,
+    QStyledItemDelegate, QStyleOptionViewItem
+)
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -66,6 +69,16 @@ _KIND_COLOR_LIGHT = {
 }
 
 _COLUMNS = ("#", "t (s)", "Dir", "CAN ID", "DLC", "Data", "Decoded")
+
+
+class TextElideDelegate(QStyledItemDelegate):
+    def __init__(self, elide_mode: Qt.TextElideMode, parent=None):
+        super().__init__(parent)
+        self.elide_mode = elide_mode
+
+    def initStyleOption(self, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        super().initStyleOption(option, index)
+        option.textElideMode = self.elide_mode
 
 
 class TraceModel(QAbstractTableModel):
@@ -215,6 +228,9 @@ class TraceView(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(22)
         self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
         
+        self._elide_right_delegate = TextElideDelegate(Qt.TextElideMode.ElideRight, self.table)
+        self.table.setItemDelegateForColumn(5, self._elide_right_delegate)
+        
         header = self.table.horizontalHeader()
         for i, mode in enumerate((
             QHeaderView.Interactive, QHeaderView.Interactive,
@@ -229,8 +245,8 @@ class TraceView(QWidget):
         self.table.setColumnWidth(2, 40)
         self.table.setColumnWidth(3, 80)
         self.table.setColumnWidth(4, 40)
-        self.table.setColumnWidth(5, 1400)
-        self.table.setColumnWidth(6, 800)
+        self.table.setColumnWidth(5, 800)
+        self.table.setColumnWidth(6, 1000)
 
         self.pause_btn = PushButton("Pause", self)
         self.pause_btn.setCheckable(True)
