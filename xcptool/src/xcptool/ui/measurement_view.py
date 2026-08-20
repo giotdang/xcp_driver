@@ -200,10 +200,14 @@ class MeasurementView(QWidget):
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         hdr = self.tree.header()
-        hdr.setSectionResizeMode(COL_NAME,  QHeaderView.Stretch)
-        hdr.setSectionResizeMode(COL_DTYPE, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_ADDR,  QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_VALUE, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(COL_NAME,  QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_DTYPE, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_ADDR,  QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_VALUE, QHeaderView.Stretch)
+        
+        self.tree.setColumnWidth(COL_NAME, 200)
+        self.tree.setColumnWidth(COL_DTYPE, 100)
+        self.tree.setColumnWidth(COL_ADDR, 90)
 
         # đồ thị (phải)
         # Fix 2: OpenGL offload render sang GPU — nhanh hơn software QPainter.

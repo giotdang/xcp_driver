@@ -229,13 +229,20 @@ class CalibrationView(QWidget):
 
 
         hdr = self.tree.header()
-        hdr.setSectionResizeMode(COL_NAME, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_TYPE, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_ADDR, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_SIZE, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_VALUE, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(COL_RANGE, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(COL_NAME, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_TYPE, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_ADDR, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_SIZE, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_VALUE, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_RANGE, QHeaderView.Interactive)
         hdr.setSectionResizeMode(COL_DESC, QHeaderView.Stretch)
+
+        self.tree.setColumnWidth(COL_NAME, 200)
+        self.tree.setColumnWidth(COL_TYPE, 100)
+        self.tree.setColumnWidth(COL_ADDR, 90)
+        self.tree.setColumnWidth(COL_SIZE, 50)
+        self.tree.setColumnWidth(COL_VALUE, 120)
+        self.tree.setColumnWidth(COL_RANGE, 120)
 
         # ── điều khiển trang ─────────────────────────────────────────────────
         # UI chỉ có khái niệm Working/Reference (DESIGN.md §5) — không hiện

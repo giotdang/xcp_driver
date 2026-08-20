@@ -203,6 +203,7 @@ class TraceView(QWidget):
         self.table.setBorderVisible(True)
         self.table.setBorderRadius(8)
         self.table.setWordWrap(False)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.table.verticalHeader().hide()
         mono = QFont("Consolas")
         mono.setStyleHint(QFont.Monospace)
@@ -213,13 +214,18 @@ class TraceView(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(22)
         header = self.table.horizontalHeader()
         for i, mode in enumerate((
-            QHeaderView.ResizeToContents, QHeaderView.ResizeToContents,
-            QHeaderView.ResizeToContents, QHeaderView.ResizeToContents,
-            QHeaderView.ResizeToContents, QHeaderView.Interactive,
+            QHeaderView.Interactive, QHeaderView.Interactive,
+            QHeaderView.Interactive, QHeaderView.Interactive,
+            QHeaderView.Interactive, QHeaderView.Interactive,
             QHeaderView.Stretch,
         )):
             header.setSectionResizeMode(i, mode)
-        self.table.setColumnWidth(5, 220)
+        self.table.setColumnWidth(0, 70)
+        self.table.setColumnWidth(1, 90)
+        self.table.setColumnWidth(2, 40)
+        self.table.setColumnWidth(3, 80)
+        self.table.setColumnWidth(4, 40)
+        self.table.setColumnWidth(5, 300)
 
         self.pause_btn = PushButton("Pause", self)
         self.pause_btn.setCheckable(True)
