@@ -10,7 +10,7 @@ dto_id = 0x7E1
 extended_id = false
 pad_dlc = true
 t1_timeout_s = 1.0
-is_fd = false
+is_fd = true
 data_bitrate = 2000000
 
 [session]

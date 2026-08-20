@@ -226,8 +226,8 @@ class TraceView(QWidget):
         self.table.setColumnWidth(2, 40)
         self.table.setColumnWidth(3, 80)
         self.table.setColumnWidth(4, 40)
-        self.table.setColumnWidth(5, 300)
-        self.table.setColumnWidth(6, 250)
+        self.table.setColumnWidth(5, 800)
+        self.table.setColumnWidth(6, 600)
 
         self.pause_btn = PushButton("Pause", self)
         self.pause_btn.setCheckable(True)
