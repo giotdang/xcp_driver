@@ -1,46 +1,55 @@
 ================================================================================
-xcptool - Hướng dẫn Cài đặt và Chạy (Dành cho Người mới)
+xcptool - Setup and Quick Start Guide
 ================================================================================
 
-Chào mừng bạn đến với xcptool! 
-Đây là công cụ đo lường và hiệu chỉnh ECU qua giao thức CAN/XCP. Để bắt đầu sử dụng, bạn chỉ cần làm theo các bước rất đơn giản dưới đây:
+Welcome to xcptool!
+This is a cross-platform XCP master tool designed for ECU measurement and calibration over CAN/CAN FD. Follow the instructions below to get started quickly.
 
 --------------------------------------------------------------------------------
-YÊU CẦU TRƯỚC KHI CÀI ĐẶT
+PREREQUISITES
 --------------------------------------------------------------------------------
-1. Máy tính của bạn cần được cài đặt sẵn Python phiên bản 3.11 trở lên.
-2. Bạn có thể tải Python tại đây: https://www.python.org/downloads/
-   * LƯU Ý QUAN TRỌNG: Trong quá trình cài đặt Python, ở màn hình đầu tiên, 
-     hãy nhớ TÍCH CHỌN ô "Add python.exe to PATH" (hoặc "Add Python to PATH").
+1. Python 3.11 or higher must be installed on your computer.
+2. Download Python here: https://www.python.org/downloads/
+   * IMPORTANT NOTE: During Python installation on Windows, make sure to check
+     the option "Add Python to PATH" on the first setup screen.
 
 --------------------------------------------------------------------------------
-BƯỚC 1: CÀI ĐẶT MÔI TRƯỜNG (Chỉ làm 1 lần duy nhất)
+STEP 1: SETUP ENVIRONMENT (Run Once)
 --------------------------------------------------------------------------------
-1. Mở thư mục chứa mã nguồn xcptool.
-2. Click đúp chuột vào file `setup.bat`.
-3. Một cửa sổ đen (Console) sẽ hiện lên và tự động thực hiện các thao tác:
-   - Kiểm tra phiên bản Python trên máy.
-   - Tạo môi trường ảo (.venv) để không ảnh hưởng đến máy của bạn.
-   - Tự động tải và cài đặt toàn bộ các thư viện cần thiết.
-4. Quá trình này diễn ra mất khoảng 1-2 phút tùy tốc độ mạng. 
-   Khi chạy xong, nếu thấy báo [SUCCESS] ở dòng cuối cùng, bạn có thể ấn phím 
-   bất kỳ để đóng cửa sổ lại.
+1. Navigate to the `xcptool` project folder.
+2. Double-click the `setup.bat` file.
+3. A terminal window will open and automatically:
+   - Check your Python version.
+   - Create an isolated virtual environment (`.venv`).
+   - Download and install all required dependencies.
+4. When the process finishes with `[SUCCESS]`, press any key to close the window.
 
 --------------------------------------------------------------------------------
-BƯỚC 2: KHỞI CHẠY ỨNG DỤNG (Làm mỗi lần muốn sử dụng)
+STEP 2: RUNNING THE APPLICATION
 --------------------------------------------------------------------------------
-1. Click đúp chuột vào file `run.bat`.
-2. Một cửa sổ Console sẽ hiện lên để khởi động môi trường, sau đó giao diện
-   chính của xcptool sẽ xuất hiện. (Lưu ý: Không tắt cửa sổ Console màu đen 
-   khi đang dùng ứng dụng).
+
+A. Standard Mode (Real Hardware / Default):
+   - Double-click `run.bat`.
+   - By default, xcptool starts in Real Session mode to connect to physical
+     CAN adapters (Vector, PEAK PCAN, CANable / slcan, Kvaser, etc.).
+
+B. Simulation Mode (Virtual Bus / No Hardware Required):
+   - If you do not have physical CAN hardware connected, you can run the tool
+     with a built-in virtual FakeSlave simulator.
+   - Open Command Prompt (cmd) or PowerShell in this folder and run:
+     
+     run.bat --session fake
 
 --------------------------------------------------------------------------------
-LƯU Ý THÊM
+ADDITIONAL TIPS & FEATURES
 --------------------------------------------------------------------------------
-- Cấu hình mạng CAN: Nếu bạn cần thay đổi ID CAN hoặc tốc độ Bitrate cho 
-  kênh CAN ảo/thực, bạn có thể cấu hình ở cửa sổ "Select CAN Interface"
-  lúc mở phần mềm lên.
-- Giao diện: Tại các bảng Trace, Measurement, Calibration, bạn có thể tự do 
-  kéo thả độ rộng của các cột để xem thông tin thoải mái hơn.
-  
-Chúc bạn sử dụng phần mềm hiệu quả!
+- CAN Configuration:
+  You can configure CAN bitrates, CAN FD data rates, CAN IDs, and padding in the
+  "Select CAN Interface" dialog upon opening the app or connecting.
+- Resizable Tables:
+  Columns in the Trace, Measurement, and Calibration views can be manually resized
+  by clicking and dragging the header boundaries.
+- Trace View:
+  Scrollbars are available horizontally and vertically to comfortably inspect
+  full 64-byte CAN FD frames.
+================================================================================
