@@ -217,15 +217,17 @@ class TraceView(QWidget):
             QHeaderView.Interactive, QHeaderView.Interactive,
             QHeaderView.Interactive, QHeaderView.Interactive,
             QHeaderView.Interactive, QHeaderView.Interactive,
-            QHeaderView.Stretch,
+            QHeaderView.Interactive,
         )):
             header.setSectionResizeMode(i, mode)
+        header.setStretchLastSection(False)
         self.table.setColumnWidth(0, 70)
         self.table.setColumnWidth(1, 90)
         self.table.setColumnWidth(2, 40)
         self.table.setColumnWidth(3, 80)
         self.table.setColumnWidth(4, 40)
         self.table.setColumnWidth(5, 300)
+        self.table.setColumnWidth(6, 250)
 
         self.pause_btn = PushButton("Pause", self)
         self.pause_btn.setCheckable(True)
