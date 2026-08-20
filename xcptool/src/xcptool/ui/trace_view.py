@@ -126,7 +126,7 @@ class TraceModel(QAbstractTableModel):
     # ── nạp dữ liệu ──────────────────────────────────────────────────────────
 
     def append(self, entries: Iterable[TraceEntry]) -> None:
-        batch = list(entries)
+        batch = [e for e in entries if e.kind in self._kinds]
         if not batch:
             return
         if self._t0 is None:
@@ -149,12 +149,10 @@ class TraceModel(QAbstractTableModel):
 
         self._all.extend(batch)
 
-        kept = [e for e in batch if e.kind in self._kinds]
-        if kept:
-            start = len(self._rows)
-            self.beginInsertRows(QModelIndex(), start, start + len(kept) - 1)
-            self._rows.extend(kept)
-            self.endInsertRows()
+        start = len(self._rows)
+        self.beginInsertRows(QModelIndex(), start, start + len(batch) - 1)
+        self._rows.extend(batch)
+        self.endInsertRows()
 
     def set_capacity(self, capacity: int) -> None:
         if capacity == self._cap:
@@ -254,6 +252,9 @@ class TraceView(QWidget):
         filter_row.addStretch(1)
         filter_row.addWidget(BodyLabel("Row limit:", self))
         filter_row.addWidget(self.cap_spin)
+        
+        # Apply initial filter state to the model (since toggled wasn't fired)
+        self._on_filter()
 
         tool_row = QHBoxLayout()
         tool_row.addWidget(self.pause_btn)
