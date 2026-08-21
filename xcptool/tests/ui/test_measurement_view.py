@@ -295,4 +295,31 @@ def test_set_database_groups_struct_measurements(view: MeasurementView) -> None:
     }
 
 
+def test_radix_change_updates_float_and_int_live_values(view: MeasurementView) -> None:
+    """Kiểm tra thay đổi Radix (HEX/BIN) lập tức cập nhật lại hiển thị cả kiểu FLOAT và INT."""
+    db = _make_db()
+    view.set_database(db)
+
+    # Nạp mẫu đo cho speed (int) và temp (float)
+    raw_int = struct.pack("<H", 0x1234)
+    raw_float = struct.pack("<f", 1.0)
+    sp_int = SamplePoint(name="speed", timestamp_ns=1000, value_raw=raw_int, datatype="UWORD")
+    sp_float = SamplePoint(name="temp", timestamp_ns=1000, value_raw=raw_float, datatype="FLOAT32_IEEE")
+
+    view.on_samples([sp_int, sp_float])
+
+    # Đổi sang HEX
+    view.radix_combo.setCurrentText("HEX")
+    item_int = view._tree_items["speed"]
+    item_float = view._tree_items["temp"]
+    assert item_int.text(COL_VALUE) == "0x1234"
+    assert item_float.text(COL_VALUE) == "0x3F800000"
+
+    # Đổi sang BIN
+    view.radix_combo.setCurrentText("BIN")
+    assert item_float.text(COL_VALUE) == "0b00111111100000000000000000000000"
+
+
+
+
 

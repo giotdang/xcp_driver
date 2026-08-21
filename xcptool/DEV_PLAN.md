@@ -1,6 +1,6 @@
 # xcptool — Kế hoạch phát triển
 
-> **Trạng thái:** M1 ✅ M2 ✅ M3 ✅ M4 ✅ — 405 tests (2026-08-19, chưa commit)
+> **Trạng thái:** M1 ✅ M2 ✅ M3 ✅ M4 ✅ M5 (in progress) — 443 tests (2026-08-22)
 > **Kiến trúc & quyết định thiết kế:** xem [DESIGN.md](DESIGN.md)
 > **Contract chính thức:** `src/xcptool/session/api.py`
 
@@ -305,6 +305,13 @@ File: `ui/measurement_view.py` (mới).
 - [x] **Phân cấp Struct & Array cho cả MeasurementView và CalibrationView**:
   - `MeasurementView`: Tự động gom nhóm các signal struct (`speedPidTelemetry_*`) thành node cha có 1 Checkbox duy nhất, các con không checkbox; Array `[0]..[n-1]` mở rộng dưới cha.
   - `CalibrationView`: Gom nhóm struct `speedPid_*` thành node cha `STRUCT (N)`; Array `VAL_BLK` mở rộng thành các dòng con `[0]..[n-1]` cho phép double-click sửa riêng từng ô giá trị và tự động đồng bộ dòng cha.
+- [x] **Đồng bộ trạng thái Data Bitrate khi bật Custom Bit Timing**:
+  - Tự động khóa `data_bitrate_combo` khi bật chế độ bit timing tùy chỉnh; áp dụng pattern đồng bộ trạng thái trung tâm `ui_state_sync`.
+- [x] **Hỗ trợ định dạng & nhập liệu HEX / BIN / ASCII cho Float và Int**:
+  - Hỗ trợ xem bit pattern IEEE 754 cho `FLOAT32_IEEE` và `FLOAT64_IEEE` dưới dạng HEX, BIN, ASCII.
+  - Hỗ trợ gõ trực tiếp ký tự ASCII (ví dụ: `'H'`) khi hiệu chỉnh ghi xuống ECU.
+- [x] **Hiển thị tên phần cứng chi tiết của CAN Channel**:
+  - Trích xuất tên thiết bị cụ thể từ driver (ví dụ: `Vector XL — 4 · VN5620A Channel 5`) giúp nhận diện trực quan trên danh sách thiết bị.
 
 ### 📌 Vấn đề cần đào sâu nghiên cứu tiếp (Session tiếp theo):
 - **Hiện tượng**: Ngay sau khi bấm "Bắt đầu đo" (Start DAQ), UI bị lag / khựng một khoảng thời gian ngắn rồi mới dần ổn định (kể cả khi đã tắt chế độ vẽ Scope).
@@ -315,6 +322,14 @@ File: `ui/measurement_view.py` (mới).
   - Bỏ chọn mặc định loại `DAQ` trong bộ lọc `TraceView` (chỉ bật `CMD`, `RES`, `ERR`, `EV`).
   - Không gọi `table.scrollToBottom()` / repaint khi `TraceView` đang bị ẩn (không active).
   - Áp dụng batch throttling khi xả hàng đợi trace lúc khởi động.
+
+### 🐛 Danh sách Bug tạm hoãn để fix sau:
+1. **Window chính không nhảy theo menu Navigation**:
+   - *Hiện tượng*: Khi click chuyển tab trên thanh Navigation bên trái (hoặc lúc khởi động), widget chính trong `QStackedWidget` không chuyển đổi tương ứng.
+   - *Hướng xử lý*: Kiểm tra lại cơ chế binding / signal routing giữa `NavigationInterface` của `qfluentwidgets` và `QStackedWidget`.
+2. **Lỗi Dark Theme khi DockWidget ở chế độ Floating**:
+   - *Hiện tượng*: Khi kéo `QDockWidget` ("CAN Trace", "Raw Commands") ra ngoài thành cửa sổ nổi (floating/top-level window), Windows ép palette về mặc định gây hiện tượng nền trắng chữ trắng.
+   - *Hướng xử lý*: Bắt signal `topLevelChanged(bool)` trên các `QDockWidget` để áp dụng theme động hoặc cấu hình lại stylesheet/palette cấp OS-window khi dock chuyển trạng thái float.
 
 ---
 

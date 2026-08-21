@@ -198,6 +198,8 @@ class RealSession:
             return
         master.disconnect()
         self._last_state = master.state
+        self._teardown()
+
 
     def close(self) -> None:
         """IDEMPOTENT và KHÔNG BAO GIỜ NÉM — frontend gọi trong closeEvent()."""

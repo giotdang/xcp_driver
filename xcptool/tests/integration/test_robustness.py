@@ -208,7 +208,7 @@ def test_garbage_frames_never_escape_as_low_level_errors(
         session.read(slave.cfg.mem_base, 4)
 
 
-def test_unknown_can_id_is_traced_as_other_and_ignored(
+def test_unknown_can_id_is_dropped_by_hardware_filter(
     session: RealSession, bus_cfg: BusConfig, slave: FakeSlave
 ) -> None:
     session.connect(bus_cfg)
@@ -216,14 +216,10 @@ def test_unknown_can_id_is_traced_as_other_and_ignored(
     stranger = bus_cfg.dto_id + 0x100
 
     slave.send_raw(stranger, b"\xff\xff\xff\xff\xff\xff\xff\xff")
-    others: list = []
+    time.sleep(0.5)
+    others = [e for e in session.drain_trace() if e.kind == "other"]
 
-    def seen() -> bool:
-        others.extend(e for e in session.drain_trace() if e.kind == "other")
-        return bool(others)
-
-    assert wait_until(seen)
-    assert others and others[0].can_id == stranger
+    assert not others, "frame trên CAN ID khác phải bị drop bởi hardware filter"
     # Không bị nhận nhầm thành response: lệnh kế tiếp vẫn chạy đúng.
     assert session.read(slave.cfg.mem_base, 4) is not None
 

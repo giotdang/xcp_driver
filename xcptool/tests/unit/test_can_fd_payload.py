@@ -52,24 +52,31 @@ def test_pycan_transport_can_fd_padding() -> None:
     try:
         assert transport.max_frame_len == 64
 
-        # 10 bytes -> pad to 12 bytes
+        # 10 bytes -> pad to 64 bytes (as per new requirements)
         data10 = bytes(range(10))
         sent = transport.send(0x600, data10)
-        assert len(sent) == 12
+        assert len(sent) == 64
         assert sent[:10] == data10
-        assert sent[10:] == b"\x00\x00"
+        assert sent[10:] == b"\x00" * 54
 
-        # 4 bytes -> pad to 8 bytes when pad_dlc=True
+        # 60 bytes -> pad to 64
+        data60 = bytes(range(60))
+        sent2 = transport.send(0x600, data60)
+        assert len(sent2) == 64
+
+        # 4 bytes -> pad to 64 bytes when pad_dlc=True and is_fd=True
         data4 = bytes([1, 2, 3, 4])
-        sent4 = transport.send(0x600, data4)
-        assert len(sent4) == 8
-        assert sent4[:4] == data4
+        sent = transport.send(0x600, data4)
+        assert len(sent) == 64
+        assert sent[:4] == data4
+        assert sent[4:] == b"\x00" * 60
 
-        # 30 bytes -> pad to 32 bytes
+        # 30 bytes -> pad to 64 bytes
         data30 = bytes(range(30))
         sent30 = transport.send(0x600, data30)
-        assert len(sent30) == 32
+        assert len(sent30) == 64
         assert sent30[:30] == data30
+        assert sent30[30:] == b"\x00" * 34
     finally:
         transport.close()
 

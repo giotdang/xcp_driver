@@ -34,6 +34,22 @@ def open_pycan_bus(
         kwargs["bitrate"] = cfg.bitrate
         if cfg.is_fd:
             kwargs["data_bitrate"] = cfg.data_bitrate
+            
+        if cfg.custom_bit_timing:
+            if cfg.is_fd:
+                kwargs["timing"] = can.BitTimingFd(
+                    f_clock=80_000_000, brp=cfg.brp, tseg1=cfg.tseg1, tseg2=cfg.tseg2, sjw=cfg.sjw,
+                    dbrp=cfg.dbrp, dtseg1=cfg.dtseg1, dtseg2=cfg.dtseg2, dsjw=cfg.dsjw
+                )
+            else:
+                kwargs["timing"] = can.BitTiming(
+                    f_clock=80_000_000, brp=cfg.brp, tseg1=cfg.tseg1, tseg2=cfg.tseg2, sjw=cfg.sjw, nosamp=1
+                )
+            
+    # Filter out non-XCP frames at the hardware/OS level
+    mask = 0x1FFFFFFF if cfg.extended_id else 0x7FF
+    kwargs["can_filters"] = [{"can_id": cfg.dto_id, "can_mask": mask, "extended": cfg.extended_id}]
+
     try:
         return can.Bus(**kwargs)
     except can.CanInterfaceNotImplementedError as exc:
@@ -63,8 +79,8 @@ class PyCanTransport(Transport):
         if self._cfg.is_fd:
             # CAN FD: tự động làm tròn lên nấc DLC hợp lệ (0..8, 12, 16, 20, 24, 32, 48, 64)
             target_len = round_to_can_fd_dlc(len(payload))
-            if self._cfg.pad_dlc and target_len < 8:
-                target_len = 8
+            if self._cfg.pad_dlc:
+                target_len = 64
             if len(payload) < target_len:
                 payload = payload.ljust(target_len, b"\x00")
         else:

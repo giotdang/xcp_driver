@@ -42,6 +42,9 @@ DEFAULT_APP_CONFIG = AppConfig(
     last_a2l_path="",
     scope_enabled=True,
     trace_row_limit=20_000,
+    active_route="calibration",
+    dock_state="",
+    debug_area_collapsed=False,
     trace_visible_kinds=["cmd", "res", "err", "ev", "serv", "other"],
 )
 
@@ -66,6 +69,9 @@ def _coerce_bus(raw: dict[str, object], base: BusConfig) -> BusConfig:
         ("cro_id", int), ("dto_id", int), ("extended_id", bool),
         ("pad_dlc", bool), ("t1_timeout_s", float),
         ("is_fd", bool), ("data_bitrate", int),
+        ("custom_bit_timing", bool), ("f_clock", int),
+        ("brp", int), ("tseg1", int), ("tseg2", int), ("sjw", int),
+        ("dbrp", int), ("dtseg1", int), ("dtseg2", int), ("dsjw", int),
     ):
         if key not in raw:
             continue
@@ -120,12 +126,22 @@ def load_app_config(default: AppConfig | None = None) -> AppConfig:
             row_lim = ui_sec["trace_row_limit"]
         if isinstance(ui_sec.get("trace_visible_kinds"), list):
             vis_kinds = [str(k) for k in ui_sec["trace_visible_kinds"]]
+        active_route = str(ui_sec.get("active_route", "calibration"))
+        dock_state = str(ui_sec.get("dock_state", ""))
+        debug_area_collapsed = bool(ui_sec.get("debug_area_collapsed", False))
+    else:
+        active_route = "calibration"
+        dock_state = ""
+        debug_area_collapsed = False
 
     return AppConfig(
         bus=bus_cfg,
         last_a2l_path=last_a2l,
         scope_enabled=scope_on,
         trace_row_limit=row_lim,
+        active_route=active_route,
+        dock_state=dock_state,
+        debug_area_collapsed=debug_area_collapsed,
         trace_visible_kinds=vis_kinds,
     )
 
@@ -147,6 +163,16 @@ def dumps_bus_config(cfg: BusConfig) -> str:
         f"t1_timeout_s = {cfg.t1_timeout_s}\n"
         f"is_fd = {str(cfg.is_fd).lower()}\n"
         f"data_bitrate = {cfg.data_bitrate}\n"
+        f"custom_bit_timing = {str(cfg.custom_bit_timing).lower()}\n"
+        f"f_clock = {cfg.f_clock}\n"
+        f"brp = {cfg.brp}\n"
+        f"tseg1 = {cfg.tseg1}\n"
+        f"tseg2 = {cfg.tseg2}\n"
+        f"sjw = {cfg.sjw}\n"
+        f"dbrp = {cfg.dbrp}\n"
+        f"dtseg1 = {cfg.dtseg1}\n"
+        f"dtseg2 = {cfg.dtseg2}\n"
+        f"dsjw = {cfg.dsjw}\n"
     )
 
 
@@ -163,6 +189,9 @@ def dumps_app_config(cfg: AppConfig) -> str:
         + "\n[ui]\n"
         f"scope_enabled = {str(cfg.scope_enabled).lower()}\n"
         f"trace_row_limit = {cfg.trace_row_limit}\n"
+        f"active_route = \"{esc(cfg.active_route)}\"\n"
+        f"dock_state = \"{esc(cfg.dock_state)}\"\n"
+        f"debug_area_collapsed = {str(cfg.debug_area_collapsed).lower()}\n"
         f"trace_visible_kinds = [{kinds_str}]\n"
     )
 

@@ -12,6 +12,16 @@ pad_dlc = true
 t1_timeout_s = 1.0
 is_fd = true
 data_bitrate = 2000000
+custom_bit_timing = true
+f_clock = 80000000
+brp = 1
+tseg1 = 14
+tseg2 = 2
+sjw = 1
+dbrp = 1
+dtseg1 = 14
+dtseg2 = 2
+dsjw = 1
 
 [session]
 last_a2l_path = "G:/@Autosar/xcp/xcp_driver/examples/xcp_daq_example.a2l"
@@ -19,4 +29,7 @@ last_a2l_path = "G:/@Autosar/xcp/xcp_driver/examples/xcp_daq_example.a2l"
 [ui]
 scope_enabled = false
 trace_row_limit = 20000
+active_route = "calibration"
+dock_state = "000000ff00000000fd00000001000000030000049c00000186fc0100000001fc000000000000049c0000029700fffffffa000000000100000003fb0000001200430041004e005f005400720061006300650100000000ffffffff0000028a00fffffffb00000018005200610077005f0043006f006d006d0061006e006400730100000000ffffffff0000029700fffffffb0000001c004d0065006d006f00720079005f002f005f004400650062007500670000000000ffffffff0000050900ffffff0000049c0000012b00000004000000040000000800000008fc00000000"
+debug_area_collapsed = false
 trace_visible_kinds = ["cmd", "res", "err", "ev", "serv", "other"]

@@ -134,6 +134,7 @@ class DockManager:
         on_toggle: Callable[[], None] | None = None,
     ) -> QDockWidget:
         dock = QDockWidget(title, self._mw)
+        dock.setObjectName(title.replace(" ", "_"))
         dock.setWidget(widget)
         dock.setAllowedAreas(
             Qt.BottomDockWidgetArea | Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea

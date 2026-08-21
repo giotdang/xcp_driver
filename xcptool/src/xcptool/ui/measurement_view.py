@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
+    ComboBox,
+    LineEdit,
     PrimaryPushButton,
     PushButton,
     SwitchButton,
@@ -79,6 +81,49 @@ def _raw_to_float(data: bytes, datatype: str, byte_order: str) -> float | None:
     if len(data) < size:
         return None
     return float(struct.unpack_from(endian + fmt, data)[0])
+
+
+def _format_display_value(data: bytes, datatype: str, byte_order: str, radix: str = "DEC") -> str:
+    """Định dạng giá trị byte thô theo hệ cơ số (DEC, HEX, BIN, ASCII)."""
+    fmt = _DTYPE_FMT.get(datatype)
+    if fmt is None:
+        return "???"
+    endian = _ENDIAN.get(byte_order, "<")
+    size = struct.calcsize(fmt)
+    if len(data) < size:
+        return "???"
+    is_float = datatype.startswith("FLOAT")
+
+    if is_float:
+        v = struct.unpack_from(endian + fmt, data, 0)[0]
+        if radix == "HEX":
+            int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
+            raw_int = struct.unpack_from(endian + int_fmt, data, 0)[0]
+            return f"0x{raw_int:0{size * 2}X}"
+        elif radix == "BIN":
+            int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
+            raw_int = struct.unpack_from(endian + int_fmt, data, 0)[0]
+            return f"0b{raw_int:0{size * 8}b}"
+        elif radix == "ASCII":
+            chars = [chr(b) if 32 <= b <= 126 else "." for b in data[:size]]
+            return "".join(chars)
+        else:
+            return f"{v:.4g}"
+    else:
+        v = struct.unpack_from(endian + fmt, data, 0)[0]
+        if radix == "HEX":
+            mask = (1 << (size * 8)) - 1
+            return f"0x{v & mask:X}"
+        elif radix == "BIN":
+            mask = (1 << (size * 8)) - 1
+            return f"0b{v & mask:b}"
+        elif radix == "ASCII":
+            try:
+                return chr(v) if 32 <= v <= 126 else "."
+            except ValueError:
+                return str(v)
+        else:
+            return str(v)
 
 
 def _group_by_prefix(names: list[str]) -> list[tuple[str | None, list[str]]]:
@@ -141,10 +186,12 @@ class MeasurementView(QWidget):
 
         self._db: A2LDatabase = A2LDatabase()
         self._byte_order = "little"
+        self._radix = "DEC"
+        self._is_expanded = True
         self._daq_running = False
 
-        # Ánh xạ tên signal (vd: "speed", "torqueSamples[0]") -> QTreeWidgetItem
         self._tree_items: dict[str, QTreeWidgetItem] = {}
+        self._last_raw: dict[str, tuple[bytes, str]] = {}
 
         # Plot state — được thiết lập khi _setup_curves() chạy
         self._curves: dict[str, pg.PlotDataItem] = {}
@@ -183,6 +230,18 @@ class MeasurementView(QWidget):
         self.scope_switch.setChecked(True)
         self.scope_switch.checkedChanged.connect(self._on_scope_toggled)
 
+        self.search_box = LineEdit(self)
+        self.search_box.setPlaceholderText("Search...")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self._on_search)
+
+        self.expand_btn = PushButton("Collapse All", self)
+        self.expand_btn.clicked.connect(self._on_expand_toggle)
+
+        self.radix_combo = ComboBox(self)
+        self.radix_combo.addItems(["DEC", "HEX", "BIN", "ASCII"])
+        self.radix_combo.currentTextChanged.connect(self._on_radix_changed)
+
         self.count_label = BodyLabel("No A2L loaded.", self)
 
         toolbar = QHBoxLayout()
@@ -190,6 +249,9 @@ class MeasurementView(QWidget):
         toolbar.addWidget(self.start_btn)
         toolbar.addWidget(self.stop_btn)
         toolbar.addWidget(self.scope_switch)
+        toolbar.addWidget(self.search_box)
+        toolbar.addWidget(self.expand_btn)
+        toolbar.addWidget(self.radix_combo)
         toolbar.addWidget(self.count_label)
         toolbar.addStretch(1)
 
@@ -352,9 +414,11 @@ class MeasurementView(QWidget):
         for sp in samples:
             val = _raw_to_float(sp.value_raw, sp.datatype, self._byte_order)
             if val is not None:
+                self._last_raw[sp.name] = (sp.value_raw, sp.datatype)
                 tree_item = self._tree_items.get(sp.name)
                 if tree_item is not None:
-                    tree_item.setText(COL_VALUE, f"{val:.4g}")
+                    txt = _format_display_value(sp.value_raw, sp.datatype, self._byte_order, self._radix)
+                    tree_item.setText(COL_VALUE, txt)
 
         # Bước 2: Nếu tắt chế độ vẽ Scope hoặc chưa cấu hình curves -> bỏ qua phần vẽ đồ thị
         if not self.scope_switch.isChecked() or not self._curves:
@@ -430,6 +494,41 @@ class MeasurementView(QWidget):
 
     def _on_stop(self) -> None:
         self.daq_stop_requested.emit()
+
+    def _on_search(self, text: str) -> None:
+        text = text.lower()
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            self._filter_tree_item(item, text)
+
+    def _filter_tree_item(self, item: QTreeWidgetItem, text: str) -> bool:
+        match = text in item.text(COL_NAME).lower()
+        child_match = False
+        for i in range(item.childCount()):
+            if self._filter_tree_item(item.child(i), text):
+                child_match = True
+        
+        show = match or child_match
+        item.setHidden(not show)
+        if show and text:
+            item.setExpanded(True)
+        return show
+
+    def _on_expand_toggle(self) -> None:
+        self._is_expanded = not self._is_expanded
+        self.expand_btn.setText("Collapse All" if self._is_expanded else "Expand All")
+        if self._is_expanded:
+            self.tree.expandAll()
+        else:
+            self.tree.collapseAll()
+
+    def _on_radix_changed(self, text: str) -> None:
+        self._radix = text
+        for name, (raw, dt) in self._last_raw.items():
+            item = self._tree_items.get(name)
+            if item is not None:
+                item.setText(COL_VALUE, _format_display_value(raw, dt, self._byte_order, self._radix))
+        self.status_label.setText(f"Radix changed to {text}.")
 
     # ── nội bộ ───────────────────────────────────────────────────────────────
 

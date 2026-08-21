@@ -6,7 +6,7 @@ import struct
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
+    ComboBox,
+    LineEdit,
     PrimaryPushButton,
     PushButton,
     SegmentedWidget,
@@ -69,7 +71,7 @@ COL_DESC = 6
 _HEADERS = ["Name", "Type", "Address", "Size", "Value", "Range", "Description"]
 
 
-def decode_value(data: bytes, datatype: str, byte_order: str) -> str:
+def decode_value(data: bytes, datatype: str, byte_order: str, radix: str = "DEC") -> str:
     """Giải mã bytes thành chuỗi đọc được.
 
     VAL_BLK / array: "v0, v1, v2, …".  VALUE scalar: "v".
@@ -80,19 +82,48 @@ def decode_value(data: bytes, datatype: str, byte_order: str) -> str:
     if item_size == 0 or len(data) < item_size:
         return "???"
     n = len(data) // item_size
-    values = [
-        struct.unpack_from(endian + fmt_char, data, i * item_size)[0]
-        for i in range(n)
-    ]
-    if datatype.startswith("FLOAT"):
-        parts = [f"{v:.6g}" for v in values]
-    else:
-        parts = [str(v) for v in values]
+    is_float = datatype.startswith("FLOAT")
+    parts: list[str] = []
+
+    for i in range(n):
+        chunk = data[i * item_size : (i + 1) * item_size]
+        if is_float:
+            v = struct.unpack_from(endian + fmt_char, chunk)[0]
+            if radix == "HEX":
+                int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
+                raw_int = struct.unpack_from(endian + int_fmt, chunk)[0]
+                parts.append(f"0x{raw_int:0{item_size * 2}X}")
+            elif radix == "BIN":
+                int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
+                raw_int = struct.unpack_from(endian + int_fmt, chunk)[0]
+                parts.append(f"0b{raw_int:0{item_size * 8}b}")
+            elif radix == "ASCII":
+                chars = [chr(b) if 32 <= b <= 126 else "." for b in chunk]
+                parts.append("".join(chars))
+            else:
+                parts.append(f"{v:.6g}")
+        else:
+            v = struct.unpack_from(endian + fmt_char, chunk)[0]
+            if radix == "HEX":
+                mask = (1 << (item_size * 8)) - 1
+                parts.append(f"0x{v & mask:X}")
+            elif radix == "BIN":
+                mask = (1 << (item_size * 8)) - 1
+                parts.append(f"0b{v & mask:b}")
+            elif radix == "ASCII":
+                try:
+                    parts.append(chr(v) if 32 <= v <= 126 else ".")
+                except ValueError:
+                    parts.append(str(v))
+            else:
+                parts.append(str(v))
     return ", ".join(parts)
 
 
 def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> bytes:
     """Mã hoá chuỗi nhập từ người dùng thành bytes để ghi xuống ECU.
+
+    Hỗ trợ cả định dạng số (DEC, HEX, BIN) lẫn ký tự/chuỗi ASCII.
 
     Raises:
         ValueError: chuỗi không parse được hoặc số lượng phần tử không khớp.
@@ -102,6 +133,7 @@ def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> 
     if fmt_char is None:
         raise ValueError(f"Unsupported datatype: {datatype}")
     endian = _ENDIAN.get(byte_order, "<")
+    item_size = struct.calcsize(fmt_char)
     raw = [p.strip() for p in text.split(",")]
     if len(raw) == 1 and array_size > 1:
         raw = raw * array_size
@@ -109,9 +141,36 @@ def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> 
         raise ValueError(f"Expected {array_size} values, received {len(raw)}")
     is_float = datatype.startswith("FLOAT")
     buf = bytearray()
+
     for part in raw:
-        v = float(part) if is_float else int(part, 0)
-        buf += struct.pack(endian + fmt_char, v)
+        if is_float:
+            part_lower = part.lower()
+            if part_lower.startswith("0x") or part_lower.startswith("0b"):
+                int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
+                raw_int = int(part, 0)
+                buf += struct.pack(endian + int_fmt, raw_int)
+            else:
+                try:
+                    v = float(part)
+                    buf += struct.pack(endian + fmt_char, v)
+                except ValueError:
+                    encoded_bytes = part.encode("latin-1")
+                    if len(encoded_bytes) > item_size:
+                        raise ValueError(f"ASCII string '{part}' too long for {datatype} (max {item_size} bytes)")
+                    padded = encoded_bytes.ljust(item_size, b"\x00") if endian == "<" else encoded_bytes.rjust(item_size, b"\x00")
+                    buf += padded
+        else:
+            try:
+                v = int(part, 0)
+                buf += struct.pack(endian + fmt_char, v)
+            except ValueError:
+                # Không phải số (Dec/Hex/Bin) -> parse theo ký tự / chuỗi ASCII
+                encoded_bytes = part.encode("latin-1")
+                if len(encoded_bytes) > item_size:
+                    raise ValueError(f"ASCII string '{part}' too long for {datatype} (max {item_size} bytes)")
+                padded = encoded_bytes.ljust(item_size, b"\x00") if endian == "<" else encoded_bytes.rjust(item_size, b"\x00")
+                buf += padded
+
     return bytes(buf)
 
 
@@ -166,6 +225,7 @@ class CalibrationView(QWidget):
     def __init__(
         self,
         read_all_cb: Callable[[], None],
+        read_cb: Callable[[str], None],                # (name)
         write_cb: Callable[[str, int, bytes], None],   # (name, addr, data)
         get_pages_cb: Callable[[int], None],           # (segment)
         set_page_cb: Callable[[int, int], None],        # (segment, page) — set CẢ ECU lẫn XCP
@@ -175,6 +235,7 @@ class CalibrationView(QWidget):
         super().__init__(parent)
         self.setObjectName("calibrationView")
         self._read_all_cb = read_all_cb
+        self._read_cb = read_cb
         self._write_cb = write_cb
         self._get_pages_cb = get_pages_cb
         self._set_page_cb = set_page_cb
@@ -182,8 +243,11 @@ class CalibrationView(QWidget):
 
         self._db: A2LDatabase = A2LDatabase()
         self._byte_order = "little"
+        self._radix = "DEC"
+        self._is_expanded = True
         self._char_items: dict[str, QTreeWidgetItem] = {}   # name → item
         self._original: dict[str, str] = {}                 # name → giá trị khi vừa đọc
+        self._raw_data: dict[str, bytes] = {}               # name → raw bytes đã đọc
         self._dirty: set[str] = set()                       # tên characteristic đang sửa
         self._suspend_signals = False
         self._last_ecu_page: int | None = None
@@ -201,16 +265,41 @@ class CalibrationView(QWidget):
         self.read_all_btn = PrimaryPushButton("Read All", self)
         self.read_all_btn.clicked.connect(self._on_read_all)
 
-        self.write_btn = PushButton("Write Changes", self)
+        self.read_btn = PushButton("Read", self)
+        self.read_btn.clicked.connect(self._on_read)
+        self.read_btn.setEnabled(False)
+
+        self.write_btn = PushButton("Write Selected", self)
         self.write_btn.clicked.connect(self._on_write)
         self.write_btn.setEnabled(False)
+
+        self.write_all_btn = PushButton("Write All", self)
+        self.write_all_btn.clicked.connect(self._on_write_all)
+        self.write_all_btn.setEnabled(False)
+
+        self.search_box = LineEdit(self)
+        self.search_box.setPlaceholderText("Search...")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self._on_search)
+
+        self.expand_btn = PushButton("Collapse All", self)
+        self.expand_btn.clicked.connect(self._on_expand_toggle)
+
+        self.radix_combo = ComboBox(self)
+        self.radix_combo.addItems(["DEC", "HEX", "BIN", "ASCII"])
+        self.radix_combo.currentTextChanged.connect(self._on_radix_changed)
 
         self.count_label = BodyLabel("No A2L loaded.", self)
 
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.load_btn)
         toolbar.addWidget(self.read_all_btn)
+        toolbar.addWidget(self.read_btn)
         toolbar.addWidget(self.write_btn)
+        toolbar.addWidget(self.write_all_btn)
+        toolbar.addWidget(self.search_box)
+        toolbar.addWidget(self.expand_btn)
+        toolbar.addWidget(self.radix_combo)
         toolbar.addWidget(self.count_label)
         toolbar.addStretch(1)
 
@@ -317,7 +406,8 @@ class CalibrationView(QWidget):
                 if group_name is not None and len(members) >= 2:
                     # ── STRUCT / GROUP ──────────────────────────────────────
                     chars = [db.characteristics[m] for m in members]
-                    min_addr = min(c.address for c in chars)
+                    chars.sort(key=lambda c: c.address)
+                    min_addr = chars[0].address
                     total_size = sum(c.byte_size for c in chars)
 
                     parent = QTreeWidgetItem()
@@ -331,6 +421,8 @@ class CalibrationView(QWidget):
                     parent.setText(COL_DESC, f"Group of {len(members)} parameters")
                     parent.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                     self.tree.addTopLevelItem(parent)
+                    
+                    self._char_items[group_name] = parent
 
                     for c in chars:
                         disp_name = c.name[len(group_name):].lstrip("._") or c.name
@@ -370,7 +462,7 @@ class CalibrationView(QWidget):
         char = self._db.characteristics.get(name)
         if item is None or char is None or char.datatype is None:
             return
-        text = decode_value(data, char.datatype, self._byte_order)
+        text = decode_value(data, char.datatype, self._byte_order, self._radix)
         self._suspend_signals = True
         try:
             if char.array_size > 1 and item.childCount() > 0:
@@ -389,6 +481,7 @@ class CalibrationView(QWidget):
         finally:
             self._suspend_signals = False
         self._original[name] = text  # aggregated string — dùng cho dirty tracking
+        self._raw_data[name] = data
         self._dirty.discard(name)
         self._update_write_btn()
 
@@ -413,14 +506,35 @@ class CalibrationView(QWidget):
         self._suspend_signals = True
         try:
             item.setForeground(COL_VALUE, self.tree.palette().text())
+            item.setForeground(COL_NAME, self.tree.palette().text())
             for i in range(item.childCount()):
                 item.child(i).setForeground(COL_VALUE, self.tree.palette().text())
         finally:
             self._suspend_signals = False
-        self._original[name] = item.text(COL_VALUE)
+            
+        if item.childCount() > 0:
+            if item.text(COL_TYPE).startswith("STRUCT"):
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    child_name = child.data(COL_NAME, Qt.UserRole)
+                    if child.childCount() > 0:
+                        child_vals = [child.child(j).text(COL_VALUE) for j in range(child.childCount())]
+                        self._original[child_name] = ", ".join(child_vals)
+                    else:
+                        self._original[child_name] = child.text(COL_VALUE)
+                    self._dirty.discard(child_name)
+            else:
+                child_vals = [item.child(i).text(COL_VALUE) for i in range(item.childCount())]
+                self._original[name] = ", ".join(child_vals)
+        else:
+            self._original[name] = item.text(COL_VALUE)
+            
         self._dirty.discard(name)
         self._update_write_btn()
         self.status_label.setText(f"Successfully wrote '{name}' to ECU.")
+        
+        if hasattr(self, '_write_queue') and self._write_queue:
+            self._process_write_queue()
 
     def on_pages(self, segment: int, ecu_page: int | None, xcp_page: int | None) -> None:
         """Update page indicator from GET_CAL_PAGE response."""
@@ -463,10 +577,12 @@ class CalibrationView(QWidget):
         for w in (
             self.read_all_btn, self.refresh_pages_btn,
             self.page_toggle, self.copy_ref_btn, self.sync_btn,
+            self.read_btn, self.write_btn, self.write_all_btn,
         ):
             w.setEnabled(not busy)
         if busy:
             self.write_btn.setEnabled(False)
+            self.write_all_btn.setEnabled(False)
         else:
             self._update_write_btn()
 
@@ -486,29 +602,110 @@ class CalibrationView(QWidget):
         self.status_label.setText("Reading all parameters…")
         self._read_all_cb()
 
+    def _on_read(self) -> None:
+        """Read only the selected parent characteristic."""
+        char_name = self._selected_char_name()
+        if not char_name:
+            return
+            
+        self._read_cb(char_name)
+
     def _on_write(self) -> None:
-        name = self._selected_char_name()
-        if name is None or name not in self._dirty:
-            self.status_label.setText("Select a modified CHARACTERISTIC to write.")
+        """Called when 'Write Selected' is clicked."""
+        char_name = self._selected_char_name()
+        if not char_name:
             return
-        item = self._char_items[name]
-        char = self._db.characteristics[name]
-        if char.datatype is None:
-            self.status_label.setText(f"'{name}' datatype not resolved (check A2L).")
-            return
-        text = item.text(COL_VALUE).strip()
-        try:
-            if char.array_size > 1 and item.childCount() > 0:
-                # Array: read from children instead of parent (parent shows "—")
-                parts = [item.child(i).text(COL_VALUE) for i in range(item.childCount())]
-                text = ", ".join(parts)
+            
+        item = self._char_items.get(char_name)
+        if item:
+            self._write_parent(char_name, item)
+
+    def _on_write_all(self) -> None:
+        """Called when 'Write All' is clicked."""
+        dirty_names = list(self._dirty)
+        items_to_write = set()
+        for char_name in dirty_names:
+            item = self._char_items.get(char_name)
+            if not item: continue
+            
+            if item.parent() is not None and item.parent().text(COL_TYPE).startswith("STRUCT"):
+                items_to_write.add(item.parent())
             else:
-                text = item.text(COL_VALUE).strip()
-            data = encode_value(text, char.datatype, self._byte_order, char.array_size)
-        except (ValueError, struct.error) as exc:
-            self.status_label.setText(f"Invalid value: {exc}")
+                items_to_write.add(item)
+                
+        self._write_queue = list(items_to_write)
+        self._process_write_queue()
+        
+    def _process_write_queue(self) -> None:
+        if not hasattr(self, '_write_queue') or not self._write_queue:
             return
-        self._write_cb(name, char.address, data)
+            
+        item = self._write_queue.pop(0)
+        char_name = item.data(COL_NAME, Qt.UserRole)
+        self._write_parent(char_name, item)
+
+    def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
+        if item.text(COL_TYPE).startswith("STRUCT"):
+            try:
+                min_addr = int(item.text(COL_ADDR), 16)
+                total_size = int(item.text(COL_SIZE))
+                buf = bytearray(total_size)
+                
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    c_name = child.data(COL_NAME, Qt.UserRole)
+                    c_def = self._db.characteristics.get(c_name)
+                    if not c_def: continue
+                    
+                    if c_def.array_size > 1 and child.childCount() > 0:
+                        children_values = [child.child(j).text(COL_VALUE) for j in range(child.childCount())]
+                        val_bytes = encode_value(",".join(children_values), c_def.datatype, self._byte_order, c_def.array_size)
+                    else:
+                        val_bytes = encode_value(child.text(COL_VALUE).strip(), c_def.datatype, self._byte_order, c_def.array_size)
+                        
+                    offset = c_def.address - min_addr
+                    if offset + len(val_bytes) > total_size:
+                        raise ValueError(f"Size overflow for {c_name} in struct {char_name}")
+                    buf[offset:offset+len(val_bytes)] = val_bytes
+                    
+                self._write_cb(char_name, min_addr, bytes(buf))
+                
+                # Cleanup dirty state
+                for i in range(item.childCount()):
+                    c_name = item.child(i).data(COL_NAME, Qt.UserRole)
+                    self._dirty.discard(c_name)
+                    item.child(i).setForeground(COL_VALUE, QBrush())
+                self._update_write_btn()
+                if not self._dirty:
+                    self.write_all_btn.setEnabled(False)
+            except ValueError as e:
+                self.status_label.setText(f"Invalid value in STRUCT: {e}")
+                if hasattr(self, '_write_queue') and self._write_queue:
+                    self._process_write_queue()
+            return
+
+        char_def = self._db.characteristics.get(char_name)
+        if not char_def:
+            return
+        try:
+            if char_def.array_size > 1 and item.childCount() > 0:
+                children_values = [item.child(i).text(COL_VALUE) for i in range(item.childCount())]
+                raw_bytes = encode_value(",".join(children_values), char_def.datatype, self._byte_order, char_def.array_size)
+            else:
+                raw_bytes = encode_value(item.text(COL_VALUE).strip(), char_def.datatype, self._byte_order, char_def.array_size)
+            
+            self._write_cb(char_name, char_def.address, raw_bytes)
+            
+            # Cleanup dirty state
+            self._dirty.discard(char_name)
+            item.setForeground(COL_VALUE, QBrush())
+            self._update_write_btn()
+            if not self._dirty:
+                self.write_all_btn.setEnabled(False)
+        except ValueError as e:
+            self.status_label.setText(f"Invalid value: {e}")
+            if hasattr(self, '_write_queue') and self._write_queue:
+                self._process_write_queue()
 
     def _on_refresh_pages(self) -> None:
         self._get_pages_cb(self.segment_spin.value())
@@ -539,7 +736,56 @@ class CalibrationView(QWidget):
             self.sync_warning_label.show()
             self.sync_btn.show()
 
+    def _on_search(self, text: str) -> None:
+        text = text.lower()
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            self._filter_tree_item(item, text)
+
+    def _filter_tree_item(self, item: QTreeWidgetItem, text: str) -> bool:
+        """Trả về True nếu item hoặc con của nó match."""
+        match = text in item.text(COL_NAME).lower()
+        child_match = False
+        for i in range(item.childCount()):
+            if self._filter_tree_item(item.child(i), text):
+                child_match = True
+        
+        show = match or child_match
+        item.setHidden(not show)
+        if show and text:
+            item.setExpanded(True)
+        return show
+
+    def _on_expand_toggle(self) -> None:
+        self._is_expanded = not self._is_expanded
+        self.expand_btn.setText("Collapse All" if self._is_expanded else "Expand All")
+        if self._is_expanded:
+            self.tree.expandAll()
+        else:
+            self.tree.collapseAll()
+
+    def _on_radix_changed(self, text: str) -> None:
+        self._radix = text
+        for name, data in self._raw_data.items():
+            if name not in self._dirty:
+                self.on_read_done(name, data)
+        self.status_label.setText(f"Radix changed to {text}.")
+
     # ── nội bộ ───────────────────────────────────────────────────────────────
+
+    def _selected_char_name(self) -> str | None:
+        item = self.tree.currentItem()
+        if not item: return None
+        
+        data = item.data(0, Qt.UserRole)
+        if not data: return None
+        
+        if isinstance(data, tuple):
+            if data[0] == "array_elem":
+                return data[1]
+            return data[0]
+            
+        return data
 
     def _make_item(self, name: str, char: Any, display_name: str | None = None) -> QTreeWidgetItem:
         item = QTreeWidgetItem()
@@ -586,6 +832,28 @@ class CalibrationView(QWidget):
         item.setFlags(item.flags() | Qt.ItemIsEditable)
         self.tree.editItem(item, COL_VALUE)
 
+    def _on_item_selection_changed(self) -> None:
+        items = self.tree.selectedItems()
+        if not items:
+            self.write_btn.setEnabled(False)
+            self.read_btn.setEnabled(False)
+            return
+
+        item = items[0]
+        data_role = item.data(0, Qt.UserRole)
+        is_child = isinstance(data_role, tuple) or (isinstance(data_role, str) and item.parent() is not None)
+
+        self.read_btn.setEnabled(not is_child)
+
+        if is_child:
+            self.write_btn.setEnabled(False)
+        else:
+            char_name = data_role
+            if char_name:
+                self.write_btn.setEnabled(char_name in self._dirty)
+            else:
+                self.write_btn.setEnabled(False)
+
     def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
         if self._suspend_signals or column != COL_VALUE:
             return
@@ -630,6 +898,10 @@ class CalibrationView(QWidget):
             if not isinstance(char_name, str):
                 return
             current = item.text(COL_VALUE)
+            
+            if item.childCount() > 0 and current == "—":
+                return
+                
             original = self._original.get(char_name)
             is_dirty = original is not None and current != original
             item.setForeground(COL_VALUE, dirty_color if is_dirty else neutral)
@@ -651,20 +923,33 @@ class CalibrationView(QWidget):
             else:
                 self._dirty.discard(char_name)
 
+            struct_parent = item.parent()
+            if struct_parent is not None:
+                any_dirty = is_dirty
+                if not is_dirty:
+                    for i in range(struct_parent.childCount()):
+                        child_name = struct_parent.child(i).data(COL_NAME, Qt.UserRole)
+                        if isinstance(child_name, str) and child_name in self._dirty:
+                            any_dirty = True
+                            break
+                struct_parent.setForeground(COL_NAME, dirty_color if any_dirty else neutral)
+
         self._update_write_btn()
 
-    def _selected_char_name(self) -> str | None:
-        item = self.tree.currentItem()
-        if item is None:
-            return None
-        data_role = item.data(COL_NAME, Qt.UserRole)
-        if isinstance(data_role, tuple) and data_role[0] == "array_elem":
-            return data_role[1]
-        if isinstance(data_role, str):
-            return data_role
-        return None
-
     def _update_write_btn(self) -> None:
-        name = self._selected_char_name()
-        self.write_btn.setEnabled(name is not None and name in self._dirty)
-
+        char_name = self._selected_char_name()
+        if not char_name:
+            self.write_btn.setEnabled(False)
+            return
+            
+        item = self._char_items.get(char_name)
+        if item and item.text(COL_TYPE).startswith("STRUCT"):
+            enable = False
+            for i in range(item.childCount()):
+                child_name = item.child(i).data(COL_NAME, Qt.UserRole)
+                if isinstance(child_name, str) and child_name in self._dirty:
+                    enable = True
+                    break
+            self.write_btn.setEnabled(enable)
+        else:
+            self.write_btn.setEnabled(char_name in self._dirty)

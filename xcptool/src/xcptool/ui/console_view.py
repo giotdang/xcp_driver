@@ -20,7 +20,9 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     TextEdit,
+    isDarkTheme,
 )
+
 
 __all__ = ["ConsoleView", "parse_hex"]
 
@@ -59,6 +61,7 @@ class ConsoleView(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("consoleView")
+        
         self._send_cb = send_cb
         self._history: deque[str] = deque(maxlen=_HISTORY)
         self._history_pos = 0

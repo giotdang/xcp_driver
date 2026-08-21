@@ -137,6 +137,20 @@ class BusConfig:
     t1_timeout_s: float = 1.0       # timeout chờ response của một lệnh
     is_fd: bool = False             # CAN FD mode
     data_bitrate: int = 2_000_000   # Data phase bitrate (CAN FD only)
+    
+    # Custom Bit Timing (Arbitration)
+    custom_bit_timing: bool = False
+    f_clock: int = 80_000_000
+    brp: int = 1
+    tseg1: int = 14
+    tseg2: int = 2
+    sjw: int = 1
+    
+    # Custom Bit Timing (Data Phase - CAN FD only)
+    dbrp: int = 1
+    dtseg1: int = 14
+    dtseg2: int = 2
+    dsjw: int = 1
 
 
 @dataclass
@@ -146,6 +160,9 @@ class AppConfig:
     last_a2l_path: str = ""
     scope_enabled: bool = True
     trace_row_limit: int = 20_000
+    active_route: str = "calibration"
+    dock_state: str = ""
+    debug_area_collapsed: bool = False
     trace_visible_kinds: list[str] = field(
         default_factory=lambda: ["cmd", "res", "err", "ev", "serv", "other"]
     )

@@ -85,6 +85,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("xcptool — XCP master")
         self.resize(1180, 760)
 
+        # Khôi phục cấu hình ứng dụng từ config file
+        self._app_config: AppConfig = self.session.load_app_config()
+
         self._build_views()
         self._build_navigation()
         self._build_docks()
@@ -92,18 +95,22 @@ class MainWindow(QMainWindow):
         self._build_statusbar()
         apply_theme(self)
 
-        # Khôi phục trạng thái dock từ lần chạy trước
-        _settings = QSettings("xcptool", "xcptool")
-        _dock_state = _settings.value("dock_state")
-        if _dock_state:
-            self.dock_manager.restore_state(bytes(_dock_state))
-        if _settings.value("debug_area_collapsed", False, type=bool):
+        # Khôi phục trạng thái dock từ cấu hình
+        if self._app_config.dock_state:
+            import binascii
+            try:
+                state_bytes = binascii.unhexlify(self._app_config.dock_state)
+                self.dock_manager.restore_state(state_bytes)
+            except Exception:
+                pass
+        
+        if self._app_config.debug_area_collapsed:
             self.dock_manager.toggle_debug_area()
 
-        # Khôi phục cấu hình ứng dụng từ config file
-        self._app_config: AppConfig = self.session.load_app_config()
         self.measurement_view.scope_switch.setChecked(self._app_config.scope_enabled)
         self.trace_view.cap_spin.setValue(self._app_config.trace_row_limit)
+        
+        # Navigation restore will happen after navigation is built, wait until _build_navigation is done
 
         self.trace_timer = QTimer(self)
         self.trace_timer.setInterval(TRACE_POLL_MS)
@@ -116,6 +123,7 @@ class MainWindow(QMainWindow):
         # Auto-load A2L nếu file lần trước vẫn tồn tại
         if self._app_config.last_a2l_path and Path(self._app_config.last_a2l_path).is_file():
             QTimer.singleShot(50, lambda: self._on_a2l_load_requested(self._app_config.last_a2l_path))
+
 
     # ── dựng giao diện ───────────────────────────────────────────────────────
 
@@ -132,6 +140,7 @@ class MainWindow(QMainWindow):
         )
         self.calibration_view = CalibrationView(
             read_all_cb=self.read_all_characteristics,
+            read_cb=self.read_characteristic,
             write_cb=self.write_characteristic,
             get_pages_cb=self.cal_get_pages,
             set_page_cb=self.cal_set_page,
@@ -184,6 +193,15 @@ class MainWindow(QMainWindow):
             position=NavigationItemPosition.BOTTOM,
         )
         self.nav.setExpandWidth(200)
+
+        # Restore active tab
+        active = getattr(self._app_config, "active_route", "calibration")
+        if active == "measurement":
+            self.switch_to(self.measurement_view)
+            self.nav.setCurrentItem("measurement")
+        else:
+            self.switch_to(self.calibration_view)
+            self.nav.setCurrentItem("calibration")
 
     def _build_docks(self) -> None:
         """Tạo DockManager và gắn trace/console/memory vào dock bottom."""
@@ -336,17 +354,21 @@ class MainWindow(QMainWindow):
         self._refresh_state()
 
     def cancel_busy(self) -> None:
-        """Cancel = stop awaiting result and close bus."""
+        """Cancel = stop awaiting result. Close bus if not yet connected."""
         if self._connect_task is not None:
             self._connect_task.cancel()
             self._connect_task = None
         self.busy_label.setText("Cancelling…")
         self.cancel_btn.setEnabled(False)
-        self.runner.run(
-            self.session.close,
-            on_ok=lambda _: self._after_cancel(),
-            on_err=lambda _: self._after_cancel(),
-        )
+        
+        if self.session.state is not ConnState.CONNECTED:
+            self.runner.run(
+                self.session.close,
+                on_ok=lambda _: self._after_cancel(),
+                on_err=lambda _: self._after_cancel(),
+            )
+        else:
+            self._after_cancel()
 
     def _after_cancel(self) -> None:
         self.cancel_btn.setEnabled(True)
@@ -370,9 +392,9 @@ class MainWindow(QMainWindow):
         *args: Any,
         on_ok: Callable[[Any], None] | None = None,
         on_err: Callable[[Exception], None] | None = None,
-    ) -> None:
+    ) -> Any:
         """Chạy một lệnh Session trên worker, tự bật/tắt trạng thái bận."""
-        self._begin_busy(label)
+        self._begin_busy(label, cancellable=True)
 
         def ok(result: Any) -> None:
             self._end_busy()
@@ -386,7 +408,10 @@ class MainWindow(QMainWindow):
             else:
                 errors.show_error(self, exc)
 
-        self.runner.run(fn, *args, on_ok=ok, on_err=err)
+        task = self.runner.run(fn, *args, on_ok=ok, on_err=err)
+        if self._connect_task is None:  # Track the current active task for cancellation
+            self._connect_task = task
+        return task
 
     # ── kết nối ──────────────────────────────────────────────────────────────
 
@@ -601,9 +626,11 @@ class MainWindow(QMainWindow):
             )
             return
 
-        def _batch() -> dict:
+        def _batch(task_ref: list[Any]) -> dict:
             results: dict[str, bytes | None] = {}
             for name, char in symbols.characteristics.items():
+                if task_ref[0] and task_ref[0].cancelled:
+                    break
                 if char.byte_size <= 0:
                     results[name] = None
                     continue
@@ -613,9 +640,34 @@ class MainWindow(QMainWindow):
                     results[name] = None
             return results
 
-        self._call(
+        task_ref: list[Any] = [None]
+        task_ref[0] = self._call(
             "Reading all parameters…",
             _batch,
+            task_ref,
+            on_ok=self.calibration_view.on_batch_read_done,
+        )
+
+    def read_characteristic(self, name: str) -> None:
+        if not self._guard():
+            return
+        symbols = self.session.symbols
+        char = symbols.characteristics.get(name)
+        if not char:
+            return
+            
+        def _read() -> dict:
+            if char.byte_size <= 0:
+                return {name: None}
+            try:
+                data = self.session.read(char.address, char.byte_size)
+                return {name: data}
+            except Exception:
+                return {name: None}
+
+        self._call(
+            f"Reading {name}…",
+            _read,
             on_ok=self.calibration_view.on_batch_read_done,
         )
 
@@ -788,11 +840,19 @@ class MainWindow(QMainWindow):
 
     def _save_current_app_config(self) -> None:
         """Lưu trạng thái hiện tại của app (bus, last A2L, UI settings) vào config file."""
+        import binascii
+        dock_bytes = self.dock_manager.save_state()
+        dock_hex = binascii.hexlify(dock_bytes).decode('ascii') if dock_bytes else ""
+        
         new_app_cfg = AppConfig(
             bus=self.session.load_config(),
             last_a2l_path=self._app_config.last_a2l_path,
             scope_enabled=self.measurement_view.scope_switch.isChecked(),
             trace_row_limit=self.trace_view.cap_spin.value(),
+            active_route="measurement" if self.stack.currentWidget() == self.measurement_view else "calibration",
+            dock_state=dock_hex,
+            debug_area_collapsed=self.dock_manager.is_debug_area_collapsed(),
+            trace_visible_kinds=self._app_config.trace_visible_kinds,
         )
         self._app_config = new_app_cfg
         try:
@@ -801,12 +861,7 @@ class MainWindow(QMainWindow):
             log.exception("Không lưu được app config lúc thoát")
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt đặt tên
-        # Lưu trạng thái dock trước khi đóng
-        _settings = QSettings("xcptool", "xcptool")
-        _settings.setValue("dock_state", self.dock_manager.save_state())
-        _settings.setValue("debug_area_collapsed", self.dock_manager.is_debug_area_collapsed())
-
-        # Lưu cấu hình ứng dụng
+        # Lưu cấu hình ứng dụng (bao gồm cả dock_state)
         self._save_current_app_config()
 
         self.trace_timer.stop()

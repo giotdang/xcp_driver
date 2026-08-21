@@ -78,6 +78,12 @@ def _make_view(qtbot) -> CalibrationView:
     def read_all_cb():
         calls["read_all"].append(True)
 
+    def read_cb(name):
+        calls["read"].append(name)
+
+    def write_all_cb(dirty_items):
+        calls["write_all"].append(dirty_items)
+
     def write_cb(name, addr, data):
         calls["write"].append((name, addr, data))
 
@@ -92,6 +98,7 @@ def _make_view(qtbot) -> CalibrationView:
 
     v = CalibrationView(
         read_all_cb=read_all_cb,
+        read_cb=read_cb,
         write_cb=write_cb,
         get_pages_cb=pages_cb,
         set_page_cb=set_page_cb,
@@ -631,7 +638,120 @@ def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
     v._on_item_changed(child1, COL_VALUE)
 
     assert "tempTable" in v._dirty
-    assert v._selected_char_name() == "tempTable"
+    
+    items = v.tree.selectedItems()
+    assert items[0].data(0, Qt.UserRole) == ("array_elem", "tempTable", 1)
     assert v.write_btn.isEnabled()
+
+
+def test_write_struct_aggregates_children(qtbot, connected_window: MainWindow) -> None:
+    """Test that writing a STRUCT parent packs all its children and writes to the base address."""
+    v = connected_window.calibration_view
+    
+    db = A2LDatabase()
+    db.characteristics["pid_kp"] = Characteristic("pid_kp", "", "VALUE", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    db.characteristics["pid_ki"] = Characteristic("pid_ki", "", "VALUE", MEM_BASE + 4, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    v.set_database(db)
+    
+    parent = v._char_items["pid"]
+    parent.child(0).setText(COL_VALUE, "1.0")
+    parent.child(1).setText(COL_VALUE, "2.0")
+    
+    writes = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    
+    v._write_parent("pid", parent)
+    
+    assert len(writes) == 1
+    name, addr, data = writes[0]
+    assert name == "pid"
+    assert addr == MEM_BASE
+    assert len(data) == 8
+
+
+def test_array_placeholder_edit_ignored(qtbot) -> None:
+    """Test that editing an array parent with placeholder '—' is ignored."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["arr"] = Characteristic("arr", "", "VAL_BLK", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=2)
+    v.set_database(db)
+    
+    parent = v._char_items["arr"]
+    assert parent.text(COL_VALUE) == "—"
+    
+    # Trigger item changed with the placeholder
+    v._on_item_changed(parent, COL_VALUE)
+    
+    # Child should remain intact
+    assert parent.child(0).text(COL_VALUE) == "—"
+    assert "arr" not in v._dirty
+
+
+def test_write_all_uses_queue(qtbot) -> None:
+    """Test that Write All queues writes sequentially."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic("a", "", "VALUE", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    db.characteristics["b"] = Characteristic("b", "", "VALUE", MEM_BASE + 4, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    v.set_database(db)
+    
+    item_a = v._char_items["a"]
+    item_b = v._char_items["b"]
+    item_a.setText(COL_VALUE, "1.0")
+    item_b.setText(COL_VALUE, "2.0")
+    v._dirty.add("a")
+    v._dirty.add("b")
+    
+    writes = []
+    def fake_write_parent(name, item):
+        writes.append(name)
+        
+    v._write_parent = fake_write_parent
+    
+    v._on_write_all()
+    
+    # Only the first one is popped and processed initially
+    assert len(writes) == 1
+    assert len(v._write_queue) == 1
+    
+    # Call on_write_done for the first one, which should trigger the second
+    v.on_write_done(writes[0])
+    
+    assert len(writes) == 2
+    assert len(v._write_queue) == 0
+
+
+def test_float_radix_decode_and_encode() -> None:
+    """Kiểm tra decode và encode kiểu FLOAT32 và FLOAT64 theo DEC, HEX, BIN, ASCII."""
+    # 1.0f trong IEEE 754 float32 little endian là 0x3F800000 -> bytes: 00 00 80 3F
+    f32_raw = struct.pack("<f", 1.0)
+    assert decode_value(f32_raw, "FLOAT32_IEEE", "little", "DEC") == "1"
+    assert decode_value(f32_raw, "FLOAT32_IEEE", "little", "HEX") == "0x3F800000"
+    assert decode_value(f32_raw, "FLOAT32_IEEE", "little", "BIN") == "0b00111111100000000000000000000000"
+
+    # Encode lại từ HEX string và DEC string
+    assert encode_value("1.0", "FLOAT32_IEEE", "little", 1) == f32_raw
+    assert encode_value("0x3F800000", "FLOAT32_IEEE", "little", 1) == f32_raw
+
+    # Float64: 1.0d -> 0x3FF0000000000000
+    f64_raw = struct.pack("<d", 1.0)
+    assert decode_value(f64_raw, "FLOAT64_IEEE", "little", "HEX") == "0x3FF0000000000000"
+    assert encode_value("0x3FF0000000000000", "FLOAT64_IEEE", "little", 1) == f64_raw
+
+
+def test_encode_value_ascii_support() -> None:
+    """Kiểm tra encode_value khi nhập ký tự ASCII cho kiểu số nguyên và số thực."""
+    # UINT16 nhập 'H' (mã 72 = 0x48) -> b'\x48\x00' (little endian)
+    assert encode_value("H", "UWORD", "little", 1) == b"\x48\x00"
+
+    # UINT8 nhập 'e' (mã 101 = 0x65) -> b'\x65'
+    assert encode_value("e", "UBYTE", "little", 1) == b"\x65"
+
+    # Array 3 phần tử: "H, e, l" -> b'\x48\x00\x65\x00\x6c\x00'
+    assert encode_value("H, e, l", "UWORD", "little", 3) == b"\x48\x00\x65\x00\x6c\x00"
+
+    # Nhập số thường (Dec/Hex) vẫn hoạt động hoàn hảo
+    assert encode_value("72", "UWORD", "little", 1) == b"\x48\x00"
+    assert encode_value("0x48", "UWORD", "little", 1) == b"\x48\x00"
 
 
