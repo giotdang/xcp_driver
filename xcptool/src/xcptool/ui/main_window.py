@@ -614,7 +614,6 @@ class MainWindow(QMainWindow):
             "A2L Loaded",
             f"{len(db.characteristics)} CHARACTERISTIC(s), {len(db.measurements)} MEASUREMENT(s)",
         )
-        self.switch_to(self.calibration_view)
 
     def read_all_characteristics(self) -> None:
         if not self._guard():

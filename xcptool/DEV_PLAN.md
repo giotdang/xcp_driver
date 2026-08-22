@@ -312,6 +312,14 @@ File: `ui/measurement_view.py` (mới).
   - Hỗ trợ gõ trực tiếp ký tự ASCII (ví dụ: `'H'`) khi hiệu chỉnh ghi xuống ECU.
 - [x] **Hiển thị tên phần cứng chi tiết của CAN Channel**:
   - Trích xuất tên thiết bị cụ thể từ driver (ví dụ: `Vector XL — 4 · VN5620A Channel 5`) giúp nhận diện trực quan trên danh sách thiết bị.
+- [x] **Đồng bộ theme cho cả 3 docking window (title bar + nền + tab bar)** (2026-08-22):
+  - *Nguyên nhân thật* (khác hẳn phỏng đoán "Windows ép palette" trước đây): `QDockWidget` không có rule `background` trong `CHROME_QSS_DARK/LIGHT` (chỉ có `border`) — khi docked thì "chìm" trong nền tối của MainWindow nên không lộ ra, nhưng khi **float** thành cửa sổ top-level riêng thì phải tự vẽ nền của chính nó, và rơi về mặc định sáng của Windows.
+  - Thêm `background`/`color` cho `QDockWidget` vào `theme.py`. Riêng dock "Memory / Debug" còn dùng title bar gốc của Qt (`QDockWidget::title`) — sub-control này **không tự kế thừa** `color`/`background` từ selector `QDockWidget` cha nên vẫn trắng dù đã sửa nền — chuyển nó sang title bar custom (QWidget/QLabel) giống "CAN Trace"/"Raw Commands" để cả 3 dock nhất quán.
+  - Bonus: thêm QSS cho `QTabBar` (tab lúc các dock docked chung khay) — trước đó dùng giao diện tab mặc định Windows, lệch hẳn theme tối.
+- [x] **Đồng bộ UX bật/tắt cho cả 3 dock** (2026-08-22): "CAN Trace"/"Raw Commands" giờ cũng `closable=True` (có nút ✕) như "Memory / Debug"; ngược lại "Memory / Debug" giờ cũng có nút mũi tên thu/mở vùng debug — cả 3 dock dùng chung `toggle_debug_area()` vì chúng tabify chung một vùng.
+- [x] **Sửa desync giữa Navigation highlight và nội dung hiển thị** (2026-08-22):
+  - *Nguyên nhân thật*: KHÔNG phải lỗi binding `NavigationInterface`↔`QStackedWidget` như phỏng đoán ban đầu (`switch_to()` + `onClick` đã đúng, có test cover). Thủ phạm là `_after_a2l_load()` gọi `switch_to(self.calibration_view)` **vô điều kiện** — kể cả khi được trigger bởi auto-load A2L lúc khởi động (`QTimer.singleShot(50, ...)` sau khi `_build_navigation()` đã restore đúng `active_route`), ghi đè tab vừa restore mà không đồng bộ lại `nav.setCurrentItem()`.
+  - Fix: bỏ hẳn dòng auto-switch trong `_after_a2l_load()` — `set_database()` đã cập nhật dữ liệu cho cả Calibration lẫn Measurement view rồi nên không cần ép chuyển tab.
 
 ### 📌 Vấn đề cần đào sâu nghiên cứu tiếp (Session tiếp theo):
 - **Hiện tượng**: Ngay sau khi bấm "Bắt đầu đo" (Start DAQ), UI bị lag / khựng một khoảng thời gian ngắn rồi mới dần ổn định (kể cả khi đã tắt chế độ vẽ Scope).
@@ -324,12 +332,10 @@ File: `ui/measurement_view.py` (mới).
   - Áp dụng batch throttling khi xả hàng đợi trace lúc khởi động.
 
 ### 🐛 Danh sách Bug tạm hoãn để fix sau:
-1. **Window chính không nhảy theo menu Navigation**:
-   - *Hiện tượng*: Khi click chuyển tab trên thanh Navigation bên trái (hoặc lúc khởi động), widget chính trong `QStackedWidget` không chuyển đổi tương ứng.
-   - *Hướng xử lý*: Kiểm tra lại cơ chế binding / signal routing giữa `NavigationInterface` của `qfluentwidgets` và `QStackedWidget`.
-2. **Lỗi Dark Theme khi DockWidget ở chế độ Floating**:
-   - *Hiện tượng*: Khi kéo `QDockWidget` ("CAN Trace", "Raw Commands") ra ngoài thành cửa sổ nổi (floating/top-level window), Windows ép palette về mặc định gây hiện tượng nền trắng chữ trắng.
-   - *Hướng xử lý*: Bắt signal `topLevelChanged(bool)` trên các `QDockWidget` để áp dụng theme động hoặc cấu hình lại stylesheet/palette cấp OS-window khi dock chuyển trạng thái float.
+
+Không còn bug tồn đọng nào được ghi nhận tại đây — 2 bug trước đó (Window chính
+không nhảy theo Navigation; Dark theme vỡ khi Dock floating) đã fix, xem mục
+"Đã hoàn thành trong M5" ở trên.
 
 ---
 

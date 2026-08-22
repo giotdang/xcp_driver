@@ -80,9 +80,13 @@ def test_nut_toggle_nam_tren_titlebar_cua_dock_khong_phai_status_bar(
     """User yêu cầu: nút phải nằm ở góc trên-phải của chính docking window (đi
     theo khi float/kéo), không phải một nút rời trong status bar."""
     dm = window.dock_manager
-    assert len(dm._debug_arrow_btns) == 2  # type: ignore[attr-defined]
+    assert len(dm._debug_arrow_btns) == 3  # type: ignore[attr-defined]
     for btn in dm._debug_arrow_btns:  # type: ignore[attr-defined]
-        assert btn.parent() in (dm.trace_dock.titleBarWidget(), dm.console_dock.titleBarWidget())
+        assert btn.parent() in (
+            dm.trace_dock.titleBarWidget(),
+            dm.console_dock.titleBarWidget(),
+            dm.memory_dock.titleBarWidget(),
+        )
     assert not hasattr(window, "debug_toggle_btn"), "nút cũ ở status bar phải được gỡ bỏ"
 
 
@@ -99,6 +103,7 @@ def test_toggle_vung_debug_thu_nho_khong_an_dock(window: MainWindow) -> None:
     assert not dm.console_dock.isHidden()
     assert dm.trace_dock.widget().maximumHeight() == 0, "nội dung phải co chiều cao về 0"
     assert dm.console_dock.widget().maximumHeight() == 0
+    assert dm.memory_dock.widget().maximumHeight() == 0
     assert dm.debug_toggle_symbol == "▲"
 
 

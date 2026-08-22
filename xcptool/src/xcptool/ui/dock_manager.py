@@ -44,12 +44,14 @@ class DockManager:
     ) -> None:
         """Tạo dock widgets và add vào main window."""
         self.trace_dock = self._make_dock(
-            "CAN Trace", trace_widget, closable=False, on_toggle=self.toggle_debug_area
+            "CAN Trace", trace_widget, closable=True, on_toggle=self.toggle_debug_area
         )
         self.console_dock = self._make_dock(
-            "Raw Commands", console_widget, closable=False, on_toggle=self.toggle_debug_area
+            "Raw Commands", console_widget, closable=True, on_toggle=self.toggle_debug_area
         )
-        self.memory_dock = self._make_dock("Memory / Debug", memory_widget, closable=True)
+        self.memory_dock = self._make_dock(
+            "Memory / Debug", memory_widget, closable=True, on_toggle=self.toggle_debug_area
+        )
 
         self._mw.addDockWidget(Qt.BottomDockWidgetArea, self.trace_dock)
         self._mw.addDockWidget(Qt.BottomDockWidgetArea, self.console_dock)
@@ -68,7 +70,7 @@ class DockManager:
     def restore_state(self, state: bytes) -> bool:
         return self._mw.restoreState(state)
 
-    # ── vùng debug (CAN Trace + Raw Commands) ─────────────────────────────────
+    # ── vùng debug (CAN Trace + Raw Commands + Memory/Debug) ──────────────────
 
     def is_debug_area_collapsed(self) -> bool:
         return self._debug_collapsed
@@ -88,6 +90,7 @@ class DockManager:
             self._expanded_height = current_height
         self.trace_dock.widget().setMaximumHeight(0)
         self.console_dock.widget().setMaximumHeight(0)
+        self.memory_dock.widget().setMaximumHeight(0)
         self._mw.resizeDocks(
             [self.trace_dock], [_TITLEBAR_HEIGHT], Qt.Orientation.Vertical
         )
@@ -96,6 +99,7 @@ class DockManager:
     def _expand_debug_area(self) -> None:
         self.trace_dock.widget().setMaximumHeight(_WIDGET_HEIGHT_MAX)
         self.console_dock.widget().setMaximumHeight(_WIDGET_HEIGHT_MAX)
+        self.memory_dock.widget().setMaximumHeight(_WIDGET_HEIGHT_MAX)
         height = self._expanded_height or _DEFAULT_EXPANDED_HEIGHT
         self._mw.resizeDocks([self.trace_dock], [height], Qt.Orientation.Vertical)
         self.trace_dock.raise_()
@@ -113,12 +117,12 @@ class DockManager:
         return _ARROW_EXPAND if self._debug_collapsed else _ARROW_COLLAPSE
 
     def sync_toggle_buttons(self) -> None:
-        """Đồng bộ mũi tên + tooltip trên title bar của CAN Trace/Raw Commands."""
+        """Đồng bộ mũi tên + tooltip trên title bar của CAN Trace/Raw Commands/Memory."""
         arrow = self.debug_toggle_symbol
         tooltip = (
-            "Expand CAN Trace + Raw Commands"
+            "Expand debug area (CAN Trace / Raw Commands / Memory)"
             if self._debug_collapsed
-            else "Collapse CAN Trace + Raw Commands to make room for main view"
+            else "Collapse debug area to make room for main view"
         )
         for btn in self._debug_arrow_btns:
             btn.setText(arrow)
@@ -144,28 +148,30 @@ class DockManager:
             features |= QDockWidget.DockWidgetClosable
         dock.setFeatures(features)
 
-        if on_toggle is not None:
-            # Title bar riêng: chữ + nút mũi tên thu nhỏ/mở ở góc phải — nút
-            # này là con thật của dock nên trôi theo khi dock được float/kéo đi.
-            dock.setTitleBarWidget(self._make_titlebar(dock, title, on_toggle))
-        else:
-            # QSS để khớp Fluent theme — chỉ title bar gốc (dock giữ title bar mặc định)
-            dock.setStyleSheet("""
-                QDockWidget::title {
-                    background: transparent;
-                    padding: 4px 8px;
-                    font-size: 13px;
-                }
-                QDockWidget::close-button,
-                QDockWidget::float-button {
-                    border: none;
-                    padding: 0;
-                }
-            """)
+        # Cửa sổ float mới chưa phải active window -> Qt vẽ bằng palette
+        # Inactive (nhạt/mờ) cho tới khi user click vào. Chủ động activate
+        # ngay khi vừa tách ra để tránh khoảng nhấp nháy nhạt màu đó.
+        def _on_top_level_changed(floating: bool) -> None:
+            if floating:
+                dock.raise_()
+                dock.activateWindow()
+
+        dock.topLevelChanged.connect(_on_top_level_changed)
+
+        # Title bar riêng cho CẢ BA dock (không dùng title bar gốc của Qt) —
+        # title bar gốc vẽ qua sub-control `QDockWidget::title`, sub-control
+        # này không tự thừa hưởng `color`/`background` của selector cha nên
+        # luôn hiện theme sáng mặc định của Windows khi float, bất kể QSS đặt
+        # trên `QDockWidget`. Dùng QWidget/QLabel thật thì theme nhất quán.
+        dock.setTitleBarWidget(self._make_titlebar(dock, title, on_toggle, closable))
         return dock
 
     def _make_titlebar(
-        self, dock: QDockWidget, title: str, on_toggle: Callable[[], None]
+        self,
+        dock: QDockWidget,
+        title: str,
+        on_toggle: Callable[[], None] | None,
+        closable: bool,
     ) -> QWidget:
         bar = QWidget(dock)
         bar.setFixedHeight(_TITLEBAR_HEIGHT)
@@ -179,18 +185,33 @@ class DockManager:
         layout.addWidget(label)
         layout.addStretch(1)
 
-        btn = QToolButton(bar)
-        btn.setText(_ARROW_COLLAPSE)
-        btn.setAutoRaise(True)
-        btn.setFixedSize(22, 22)
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet(
-            "QToolButton { color: #0078d4; background: transparent;"
-            " border: none; font-size: 15px; font-weight: bold; }"
-            " QToolButton:hover { color: #0060a3; }"
-        )
-        btn.clicked.connect(on_toggle)
-        layout.addWidget(btn, 0, Qt.AlignBottom)
-        self._debug_arrow_btns.append(btn)
+        if on_toggle is not None:
+            toggle_btn = QToolButton(bar)
+            toggle_btn.setText(_ARROW_COLLAPSE)
+            toggle_btn.setAutoRaise(True)
+            toggle_btn.setFixedSize(22, 22)
+            toggle_btn.setCursor(Qt.PointingHandCursor)
+            toggle_btn.setStyleSheet(
+                "QToolButton { color: #0078d4; background: transparent;"
+                " border: none; font-size: 15px; font-weight: bold; }"
+                " QToolButton:hover { color: #0060a3; }"
+            )
+            toggle_btn.clicked.connect(on_toggle)
+            layout.addWidget(toggle_btn, 0, Qt.AlignBottom)
+            self._debug_arrow_btns.append(toggle_btn)
+
+        if closable:
+            close_btn = QToolButton(bar)
+            close_btn.setText("✕")
+            close_btn.setAutoRaise(True)
+            close_btn.setFixedSize(22, 22)
+            close_btn.setCursor(Qt.PointingHandCursor)
+            close_btn.setStyleSheet(
+                "QToolButton { color: palette(text); background: transparent;"
+                " border: none; font-size: 12px; }"
+                " QToolButton:hover { color: #e81123; }"
+            )
+            close_btn.clicked.connect(dock.close)
+            layout.addWidget(close_btn, 0, Qt.AlignBottom)
 
         return bar
