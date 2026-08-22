@@ -50,7 +50,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from .types import A2LDatabase, Characteristic, Measurement, RecordLayout
+from .types import A2LDatabase, Characteristic, Measurement, RecordLayout, XcpProtocolInfo
 
 _log = logging.getLogger(__name__)
 
@@ -259,6 +259,49 @@ def _extract_record_layout(b: _Block) -> RecordLayout | None:
     return RecordLayout(name=name, datatype=datatype)
 
 
+def _extract_xcp_protocol_info(b: _Block) -> XcpProtocolInfo | None:
+    """Trích xuất thông số XCP (MAX_CTO, MAX_DTO, CAN FD parameters) từ IF_DATA XCP."""
+    info = XcpProtocolInfo()
+
+    for child in b.children:
+        if child.name == "PROTOCOL_LAYER":
+            # PROTOCOL_LAYER token layout:
+            # [0] version (0x0100/0x0103)
+            # [1] T1 [2] T2 [3] T3 [4] T4 [5] T5
+            # [6] MAX_CTO [7] MAX_DTO
+            # [8] BYTE_ORDER (BYTE_ORDER_MSB_LAST / BYTE_ORDER_MSB_FIRST)
+            tokens = child.tokens
+            if len(tokens) >= 8:
+                try:
+                    info.max_cto = _to_int(tokens[6])
+                    info.max_dto = _to_int(tokens[7])
+                except (ValueError, IndexError):
+                    pass
+            for tok in tokens:
+                if tok == "BYTE_ORDER_MSB_LAST":
+                    info.byte_order = "little"
+                elif tok == "BYTE_ORDER_MSB_FIRST":
+                    info.byte_order = "big"
+
+        elif child.name == "XCP_ON_CAN_FD":
+            info.is_fd = True
+            for tok in child.tokens:
+                if tok == "CAN_FD_MAX_DLC_REQUIRED":
+                    info.max_dlc_required = True
+                elif tok.startswith("CAN_FD_MAX_DLC_"):
+                    try:
+                        info.can_fd_max_dlc = int(tok.replace("CAN_FD_MAX_DLC_", ""))
+                    except ValueError:
+                        pass
+
+        elif child.name == "XCP_ON_CAN":
+            for tok in child.tokens:
+                if tok == "MAX_DLC_REQUIRED":
+                    info.max_dlc_required = True
+
+    return info
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -300,6 +343,14 @@ def parse(text: str) -> A2LDatabase:
                     db.record_layouts[rl.name] = rl
             except Exception as exc:
                 _log.warning("Skipping RECORD_LAYOUT %r: %s", bname, exc)
+
+        elif block.name == "IF_DATA" and block.tokens and block.tokens[0] == "XCP":
+            try:
+                proto = _extract_xcp_protocol_info(block)
+                if proto:
+                    db.protocol_info = proto
+            except Exception as exc:
+                _log.warning("Skipping IF_DATA XCP: %s", exc)
 
         for child in block.children:
             _visit(child)

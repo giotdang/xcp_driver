@@ -12,7 +12,7 @@ import time
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget
 
-from xcptool.session.api import BusConfig, ConnState, DriverMissingError
+from xcptool.session.api import BusConfig, ConnState, DeviceInfo, DriverMissingError
 from xcptool.session.fake import FakeBehavior, FakeSession
 from xcptool.ui.device_dialog import DeviceDialog
 from xcptool.ui.main_window import MainWindow
@@ -165,7 +165,7 @@ def test_status_bar_hien_caps_sau_khi_connect(qtbot, connected_window: MainWindo
     assert f"MAX_CTO {caps.max_cto}" in text
     assert f"MAX_DTO {caps.max_dto}" in text
     assert "CAL" in text and "DAQ" in text
-    assert "Đã kết nối" in connected_window.state_label.text()
+    assert "Connected" in connected_window.state_label.text()
 
 
 def test_caps_khong_hardcode_ma_lay_tu_ecu(qtbot, cfg: BusConfig) -> None:
@@ -202,3 +202,46 @@ def test_loi_thieu_driver_hien_hint_chu_khong_phai_traceback(
     assert "PCAN-Basic driver" in body
     assert "Traceback" not in body
     window.close()
+
+
+def test_custom_bit_timing_disables_both_arbitration_and_data_bitrate(qtbot, host) -> None:
+    """Khi custom_bit_timing = True, cả arbitration và data bitrate combo đều phải bị vô hiệu hóa."""
+    cfg = BusConfig(
+        backend="virtual",
+        channel="fake1",
+        bitrate=500_000,
+        cro_id=0x600,
+        dto_id=0x601,
+        is_fd=True,
+        data_bitrate=2_000_000,
+        custom_bit_timing=True,
+    )
+    dlg = DeviceDialog(host, initial=cfg)
+    assert not dlg.bitrate_combo.isEnabled(), "Arbitration bitrate combo phải bị disabled"
+    assert not dlg.data_bitrate_combo.isEnabled(), "Data bitrate combo phải bị disabled khi custom_bit_timing bật"
+
+    # Toggle CAN FD cũng không được làm bật lại data_bitrate_combo khi custom_bit_timing vẫn bật
+    dlg.fd_cb.setChecked(False)
+    assert not dlg.data_bitrate_combo.isEnabled()
+    dlg.fd_cb.setChecked(True)
+    assert not dlg.data_bitrate_combo.isEnabled()
+
+
+def test_device_dialog_displays_detailed_channel_name(qtbot, host) -> None:
+    """Kiểm tra DeviceDialog hiển thị tên chi tiết của thiết bị nếu có."""
+    devices = [
+        DeviceInfo(
+            backend="vector",
+            channel="4",
+            display_name="Vector XL — 4  ·  VN5620A Channel 5",
+            available=True,
+            serial="1418",
+        )
+    ]
+    dlg = DeviceDialog(host)
+    dlg.set_devices(devices)
+    item_text = dlg.list.item(0).text()
+    assert "Vector XL — 4" in item_text
+    assert "VN5620A Channel 5" in item_text
+
+

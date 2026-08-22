@@ -1,9 +1,9 @@
-"""Panel bộ nhớ — hex dump sửa trực tiếp + điều khiển trang calibration.
+"""Memory panel — live hex dump with in-place editing + calibration page controls.
 
-Mô hình hai trang (DESIGN.md §5): ECU đang *chạy* trên một trang, XCP đang *nhìn*
-vào một trang, hai thứ độc lập. Ghi khi XCP trỏ reference page → ECU trả
-CRC_WRITE_PROTECTED. Đó không phải bug mà là trạng thái sai, nên thông báo phải
-kèm nút sửa trạng thái đó — xem `ask_switch_to_working_page`.
+Two-page model (DESIGN.md §5): the ECU *runs* on one page, XCP *looks* at another;
+both are independent. Writing while XCP points at the reference page (ROM) triggers
+CRC_WRITE_PROTECTED. This is not a bug but an incorrect state, so the error message
+must include a button to fix it — see `ask_switch_to_working_page`.
 """
 
 from __future__ import annotations
@@ -49,17 +49,17 @@ WORKING_PAGE = 0
 
 
 def ask_switch_to_working_page(parent: QWidget | None, detail: str) -> bool:
-    """Hộp thoại chuyên cho CRC_WRITE_PROTECTED. True = user muốn chuyển trang."""
+    """Dedicated dialog for CRC_WRITE_PROTECTED. Returns True if user wants to switch."""
     box = MessageBox(
-        "Không ghi được — vùng nhớ đang được bảo vệ",
+        "Write protected — memory region is read-only",
         f"{detail}\n\n"
-        "Nguyên nhân thường gặp: XCP đang trỏ vào reference page (ROM, chỉ đọc) "
-        f"thay vì working page (RAM).\n\n"
-        f"Chuyển XCP sang trang {WORKING_PAGE} rồi ghi lại?",
+        "Most likely cause: XCP is currently pointing at the reference page (ROM) "
+        f"instead of the working page (RAM).\n\n"
+        f"Switch XCP to page {WORKING_PAGE} and retry the write?",
         parent,
     )
-    box.yesButton.setText(f"Chuyển sang trang {WORKING_PAGE} và ghi lại")
-    box.cancelButton.setText("Để nguyên")
+    box.yesButton.setText(f"Switch to page {WORKING_PAGE} and retry")
+    box.cancelButton.setText("Keep current page")
     return bool(box.exec())
 
 
@@ -111,25 +111,25 @@ class MemoryView(QWidget):
         self.ext_spin.setRange(0, 255)
         self.ext_spin.setValue(0)
         self.ext_spin.lineEdit().setMinimumWidth(40)
-        self.ext_spin.setToolTip("Address extension — hầu hết ECU dùng 0")
+        self.ext_spin.setToolTip("Address extension — most ECUs use 0")
 
-        self.read_btn = PrimaryPushButton("Đọc", self)
+        self.read_btn = PrimaryPushButton("Read", self)
         self.read_btn.clicked.connect(self.do_read)
 
-        self.write_btn = PushButton("Ghi vùng này", self)
+        self.write_btn = PushButton("Write Block", self)
         self.write_btn.clicked.connect(self.do_write)
         self.write_btn.setEnabled(False)
 
-        self.revert_btn = PushButton("Bỏ sửa", self)
+        self.revert_btn = PushButton("Discard Changes", self)
         self.revert_btn.clicked.connect(self._revert)
         self.revert_btn.setEnabled(False)
 
         addr_row = QHBoxLayout()
-        addr_row.addWidget(BodyLabel("Địa chỉ:", self))
+        addr_row.addWidget(BodyLabel("Address:", self))
         addr_row.addWidget(self.addr_edit)
-        addr_row.addWidget(BodyLabel("Số byte:", self))
+        addr_row.addWidget(BodyLabel("Size (bytes):", self))
         addr_row.addWidget(self.size_spin)
-        addr_row.addWidget(BodyLabel("ext:", self))
+        addr_row.addWidget(BodyLabel("Ext:", self))
         addr_row.addWidget(self.ext_spin)
         addr_row.addWidget(self.read_btn)
         addr_row.addWidget(self.write_btn)
@@ -165,7 +165,7 @@ class MemoryView(QWidget):
         self.ecu_page_label = StrongBodyLabel("—", self)
         self.xcp_page_label = StrongBodyLabel("—", self)
 
-        self.refresh_pages_btn = PushButton("Đọc lại trạng thái trang", self)
+        self.refresh_pages_btn = PushButton("Read Page Status", self)
         self.refresh_pages_btn.clicked.connect(self.refresh_pages)
 
         self.page_spin = SpinBox(self)
@@ -173,9 +173,9 @@ class MemoryView(QWidget):
         self.page_spin.lineEdit().setMinimumWidth(40)
 
         self.mode_combo = ComboBox(self)
-        self.mode_combo.addItems(["Trang XCP (công cụ nhìn)", "Trang ECU (ECU chạy)"])
+        self.mode_combo.addItems(["XCP Page (tool view)", "ECU Page (ECU execution)"])
 
-        self.set_page_btn = PushButton("Đặt trang", self)
+        self.set_page_btn = PushButton("Set Page", self)
         self.set_page_btn.clicked.connect(self._on_set_page)
 
         self.copy_src_spin = SpinBox(self)
@@ -186,21 +186,21 @@ class MemoryView(QWidget):
         self.copy_dst_spin.setRange(0, 255)
         self.copy_dst_spin.setValue(0)
         self.copy_dst_spin.lineEdit().setMinimumWidth(40)
-        self.copy_btn = PushButton("Copy trang", self)
+        self.copy_btn = PushButton("Copy Page", self)
         self.copy_btn.clicked.connect(self._on_copy_page)
 
-        self.reread_cb = CheckBox("Đọc lại sau khi ghi để đối chiếu", self)
+        self.reread_cb = CheckBox("Re-read after write (verify)", self)
         self.reread_cb.setChecked(True)
 
         page_grid = QGridLayout()
         page_grid.addWidget(BodyLabel("Segment:", self), 0, 0)
         page_grid.addWidget(self.segment_spin, 0, 1)
-        page_grid.addWidget(BodyLabel("Trang ECU đang chạy:", self), 0, 2)
+        page_grid.addWidget(BodyLabel("ECU Active Page:", self), 0, 2)
         page_grid.addWidget(self.ecu_page_label, 0, 3)
-        page_grid.addWidget(BodyLabel("Trang XCP đang nhìn:", self), 0, 4)
+        page_grid.addWidget(BodyLabel("XCP View Page:", self), 0, 4)
         page_grid.addWidget(self.xcp_page_label, 0, 5)
         page_grid.addWidget(self.refresh_pages_btn, 0, 6)
-        page_grid.addWidget(BodyLabel("Đặt trang:", self), 1, 0)
+        page_grid.addWidget(BodyLabel("Set Page:", self), 1, 0)
         page_grid.addWidget(self.page_spin, 1, 1)
         page_grid.addWidget(self.mode_combo, 1, 2, 1, 2)
         page_grid.addWidget(self.set_page_btn, 1, 4)
@@ -211,7 +211,7 @@ class MemoryView(QWidget):
         page_grid.addWidget(self.copy_btn, 2, 4)
         page_grid.setColumnStretch(7, 1)
 
-        self.status_label = CaptionLabel("Chưa đọc vùng nhớ nào.", self)
+        self.status_label = CaptionLabel("No memory region loaded.", self)
         self.status_label.setWordWrap(True)
 
         layout = QVBoxLayout(self)
@@ -222,11 +222,11 @@ class MemoryView(QWidget):
         layout.addWidget(self.status_label)
         layout.addLayout(page_grid)
         layout.addWidget(CaptionLabel(
-            "Địa chỉ trong A2L luôn trỏ ROM; slave tự chuyển hướng sang RAM khi XCP "
-            "ở working page. Sửa ô rồi bấm “Ghi vùng này” — cả vùng được ghi trọn "
-            "khối, ECU không đi qua trạng thái nửa cũ nửa mới.", self))
+            "Addresses in the A2L file always point to ROM; the ECU redirects to RAM when XCP "
+            "is on the working page. Edit a cell then click “Write Block” — the entire block "
+            "is written atomically; the ECU never passes through a half-old, half-new state.", self))
 
-    # ── đọc / ghi ────────────────────────────────────────────────────────────
+    # ── read / write ────────────────────────────────────────────────────────────
 
     @property
     def address(self) -> int:
@@ -238,7 +238,7 @@ class MemoryView(QWidget):
 
     @staticmethod
     def _parse_addr(text: str) -> int:
-        """Ô địa chỉ luôn là hex, có hay không có tiền tố 0x."""
+        """Address field is always hex, with or without 0x prefix."""
         cleaned = text.strip().lower().removeprefix("0x").replace("_", "")
         return int(cleaned, 16)
 
@@ -246,9 +246,9 @@ class MemoryView(QWidget):
         try:
             addr = self.address
         except ValueError:
-            self.status_label.setText("Địa chỉ không hợp lệ — nhập dạng 0x80000000.")
+            self.status_label.setText("Invalid address — use format 0x80000000.")
             return
-        self.status_label.setText(f"Đang đọc {self.size_spin.value()} byte tại 0x{addr:08X}…")
+        self.status_label.setText(f"Reading {self.size_spin.value()} bytes at 0x{addr:08X}…")
         self._read_cb(addr, self.size_spin.value())
 
     def do_write(self) -> None:
@@ -257,11 +257,11 @@ class MemoryView(QWidget):
         self._write_cb(self._base_addr, bytes(self._edited))
 
     def retry_write(self) -> None:
-        """Ghi lại đúng nội dung đang hiện — dùng sau khi chuyển trang."""
+        """Re-write current content — used after page switch."""
         if self._edited:
             self._write_cb(self._base_addr, bytes(self._edited))
 
-    # ── kết quả từ MainWindow ────────────────────────────────────────────────
+    # ── results from MainWindow ────────────────────────────────────────────────
 
     def on_read_done(self, addr: int, data: bytes) -> None:
         self._base_addr = addr
@@ -271,7 +271,7 @@ class MemoryView(QWidget):
         self.write_btn.setEnabled(False)
         self.revert_btn.setEnabled(False)
         self.status_label.setText(
-            f"Đã đọc {len(data)} byte tại 0x{addr:08X}. Nhấp đúp một ô để sửa."
+            f"Read {len(data)} bytes at 0x{addr:08X}. Double-click a cell to edit."
         )
 
     def on_write_done(self) -> None:
@@ -280,22 +280,22 @@ class MemoryView(QWidget):
         self.write_btn.setEnabled(False)
         self.revert_btn.setEnabled(False)
         self.status_label.setText(
-            f"Đã ghi {len(self._original)} byte tại 0x{self._base_addr:08X}."
+            f"Wrote {len(self._original)} bytes at 0x{self._base_addr:08X}."
         )
         if self.reread_cb.isChecked():
             self._read_cb(self._base_addr, len(self._original))
 
     def on_pages(self, segment: int, ecu_page: int | None, xcp_page: int | None) -> None:
-        self.ecu_page_label.setText("—" if ecu_page is None else str(ecu_page))
-        self.xcp_page_label.setText("—" if xcp_page is None else str(xcp_page))
+        self.ecu_page_label.setText("\u2014" if ecu_page is None else str(ecu_page))
+        self.xcp_page_label.setText("\u2014" if xcp_page is None else str(xcp_page))
         if xcp_page is not None and xcp_page != WORKING_PAGE:
             self.status_label.setText(
-                f"XCP đang nhìn trang {xcp_page} — nhiều khả năng là reference page "
-                "(ROM, chỉ đọc). Ghi sẽ bị từ chối."
+                f"XCP is viewing page {xcp_page} — likely the reference page "
+                "(ROM, read-only). Write operations will be rejected."
             )
 
     def set_xcp_page_indicator(self, page: int) -> None:
-        """Cập nhật chỉ báo sau khi ECU đã ack SET_CAL_PAGE, khỏi tốn một lượt đọc."""
+        """Update indicator after ECU has acked SET_CAL_PAGE, avoiding a read."""
         self.xcp_page_label.setText(str(page))
 
     def refresh_pages(self) -> None:
@@ -309,7 +309,7 @@ class MemoryView(QWidget):
             w.setEnabled(not busy)
         self.write_btn.setEnabled(not busy and bool(self._dirty_cells()))
 
-    # ── nội bộ ───────────────────────────────────────────────────────────────
+    # ── internal ───────────────────────────────────────────────────────────────
 
     def _on_set_page(self) -> None:
         mode = PageMode.XCP if self.mode_combo.currentIndex() == 0 else PageMode.ECU
@@ -371,7 +371,7 @@ class MemoryView(QWidget):
             if not 0 <= value <= 0xFF:
                 raise ValueError
         except ValueError:
-            self.status_label.setText(f"'{text}' không phải byte hex (00–FF).")
+            self.status_label.setText(f"'{text}' is not a valid hex byte (00–FF).")
             self._suspend_signals = True
             item.setText(f"{self._edited[idx]:02X}")
             self._suspend_signals = False
@@ -383,6 +383,6 @@ class MemoryView(QWidget):
         self.write_btn.setEnabled(bool(dirty))
         self.revert_btn.setEnabled(bool(dirty))
         self.status_label.setText(
-            f"{len(dirty)} byte đã sửa, chưa ghi xuống ECU."
-            if dirty else "Không có thay đổi nào."
+            f"{len(dirty)} byte(s) modified, not yet written to ECU."
+            if dirty else "No pending changes."
         )

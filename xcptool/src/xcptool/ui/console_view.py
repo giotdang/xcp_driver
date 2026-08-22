@@ -1,7 +1,7 @@
-"""Console lệnh thô — gõ hex, gửi CTO, xem byte thô ECU trả về.
+"""Raw command console — enter hex bytes, send a CTO, inspect the raw ECU response.
 
-`raw_command(raise_on_error=False)` TRẢ VỀ frame lỗi thay vì ném, đúng ý đồ của
-contract: ở đây user muốn nhìn byte, không muốn hộp thoại.
+`raw_command(raise_on_error=False)` RETURNS the error frame instead of raising,
+which is intentional: here the user wants to see the raw bytes, not a dialog.
 """
 
 from __future__ import annotations
@@ -20,7 +20,9 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     TextEdit,
+    isDarkTheme,
 )
+
 
 __all__ = ["ConsoleView", "parse_hex"]
 
@@ -32,20 +34,20 @@ def parse_hex(text: str) -> bytes:
     cleaned = text.replace(",", " ").replace("0x", " ").replace("0X", " ")
     tokens = cleaned.split()
     if not tokens:
-        raise ValueError("Chưa nhập byte nào")
+        raise ValueError("No bytes entered")
 
     out = bytearray()
     for tok in tokens:
         if len(tok) % 2 != 0:
-            raise ValueError(f"'{tok}' lẻ ký tự — mỗi byte phải đủ 2 chữ số hex")
+            raise ValueError(f"'{tok}' has an odd number of characters — each byte requires exactly 2 hex digits")
         for i in range(0, len(tok), 2):
             pair = tok[i:i + 2]
             try:
                 out.append(int(pair, 16))
             except ValueError:
-                raise ValueError(f"'{pair}' không phải số hex") from None
+                raise ValueError(f"'{pair}' is not a valid hex value") from None
     if len(out) > 255:
-        raise ValueError("Payload quá dài")
+        raise ValueError("Payload too long (max 255 bytes)")
     return bytes(out)
 
 
@@ -59,6 +61,7 @@ class ConsoleView(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("consoleView")
+        
         self._send_cb = send_cb
         self._history: deque[str] = deque(maxlen=_HISTORY)
         self._history_pos = 0
@@ -71,21 +74,21 @@ class ConsoleView(QWidget):
         self.output.setFont(mono)
 
         self.input = LineEdit(self)
-        self.input.setPlaceholderText("Nhập CTO dạng hex, ví dụ: FF 00  (CONNECT)")
+        self.input.setPlaceholderText("Enter CTO as hex bytes, e.g.: FF 00  (CONNECT)")
         self.input.setFont(mono)
         self.input.returnPressed.connect(self.send)
         self.input.installEventFilter(self)
 
-        self.send_btn = PrimaryPushButton("Gửi", self)
+        self.send_btn = PrimaryPushButton("Send", self)
         self.send_btn.clicked.connect(self.send)
 
-        self.clear_btn = PushButton("Xoá", self)
+        self.clear_btn = PushButton("Clear", self)
         self.clear_btn.clicked.connect(self.output.clear)
 
-        self.raise_cb = CheckBox("Coi response lỗi là ngoại lệ", self)
+        self.raise_cb = CheckBox("Treat error response as exception", self)
         self.raise_cb.setToolTip(
-            "Tắt (mặc định): frame 0xFE được in ra để tự nhìn byte.\n"
-            "Bật: lỗi của ECU hiện thành hộp thoại như các lệnh khác."
+            "Off (default): 0xFE frames are printed so you can inspect the raw bytes.\n"
+            "On: ECU errors display as a dialog box, same as other commands."
         )
 
         row = QHBoxLayout()
@@ -94,7 +97,7 @@ class ConsoleView(QWidget):
         row.addWidget(self.clear_btn)
 
         quick = QHBoxLayout()
-        quick.addWidget(BodyLabel("Lệnh nhanh:", self))
+        quick.addWidget(BodyLabel("Quick commands:", self))
         for label, payload in (
             ("CONNECT", "FF 00"),
             ("GET_STATUS", "FD"),
@@ -115,8 +118,8 @@ class ConsoleView(QWidget):
         layout.addLayout(quick)
         layout.addLayout(row)
         layout.addWidget(CaptionLabel(
-            "Byte 0 của response: 0xFF = OK, 0xFE = ECU báo lỗi, 0xFD = event. "
-            "Cùng những frame này cũng xuất hiện trong cửa sổ Trace CAN.", self))
+            "Response byte 0: 0xFF = positive response, 0xFE = error, 0xFD = event. "
+            "All frames also appear in the CAN Trace window.", self))
 
     # ── gửi / nhận ───────────────────────────────────────────────────────────
 

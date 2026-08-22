@@ -44,6 +44,7 @@ class _FakeEcuSession:
         self._slave = FakeSlave(SlaveConfig(
             channel=defaults.channel, cro_id=defaults.cro_id, dto_id=defaults.dto_id,
             mem_size=_FAKE_MEM_SIZE,
+            is_fd=True, max_cto=64, max_dto=64,
         )).start()
         self._plant = PidPlant(self._slave).start()
         self._session = RealSession()

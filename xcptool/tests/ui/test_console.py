@@ -104,7 +104,7 @@ def test_chua_ket_noi_thi_bao_ro_thay_vi_im_lang(qtbot, window: MainWindow) -> N
     window.console_view.input.setText("FF 00")
     window.console_view.send()
     qtbot.wait(100)
-    assert "Chưa kết nối" in window.console_view.output.toPlainText()
+    assert "Not connected" in window.console_view.output.toPlainText()
 
 
 def test_lich_su_bang_phim_mui_ten(qtbot, connected_window: MainWindow) -> None:
@@ -123,14 +123,12 @@ def test_lich_su_bang_phim_mui_ten(qtbot, connected_window: MainWindow) -> None:
 
 
 def test_nut_lenh_nhanh_dien_vao_o_nhap(qtbot, window: MainWindow) -> None:
-    from PySide6.QtCore import Qt
     from qfluentwidgets import PushButton
 
-    # console_view nằm trong dock; phải raise dock trước để button có thể nhận click
     window.show()
     window.switch_to(window.console_view)
     qtbot.waitExposed(window.console_view)
 
     buttons = {b.text(): b for b in window.console_view.findChildren(PushButton)}
-    qtbot.mouseClick(buttons["CONNECT"], Qt.LeftButton)
+    buttons["CONNECT"].click()
     assert window.console_view.input.text() == "FF 00"

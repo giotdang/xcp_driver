@@ -41,7 +41,7 @@ def test_dia_chi_sai_dinh_dang_khong_lam_vo_app(qtbot, connected_window: MainWin
     v.addr_edit.setText("không phải địa chỉ")
     v.do_read()
     qtbot.wait(100)
-    assert "không hợp lệ" in v.status_label.text()
+    assert "invalid" in v.status_label.text().lower()
 
 
 def test_sua_o_bat_nut_ghi_va_danh_dau_thay_doi(qtbot, connected_window: MainWindow) -> None:
@@ -53,7 +53,7 @@ def test_sua_o_bat_nut_ghi_va_danh_dau_thay_doi(qtbot, connected_window: MainWin
     _edit_cell(connected_window, 0, (original + 1) & 0xFF)
 
     assert v.write_btn.isEnabled()
-    assert "1 byte đã sửa" in v.status_label.text()
+    assert "1 byte(s) modified" in v.status_label.text()
 
 
 def test_go_gia_tri_khong_hop_le_thi_tra_ve_gia_tri_cu(
@@ -64,7 +64,7 @@ def test_go_gia_tri_khong_hop_le_thi_tra_ve_gia_tri_cu(
     before = v.table.item(0, 0).text()
     v.table.item(0, 0).setText("ZZ")
     assert v.table.item(0, 0).text() == before
-    assert "không phải byte hex" in v.status_label.text()
+    assert "not a valid hex byte" in v.status_label.text()
 
 
 def test_bo_sua_khoi_phuc_noi_dung_da_doc(qtbot, connected_window: MainWindow) -> None:
@@ -87,8 +87,8 @@ def test_ghi_roi_doc_lai_thay_dung_gia_tri(qtbot, connected_window: MainWindow) 
 
     v.do_write()
     qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
-    qtbot.waitUntil(lambda: "Đã ghi" in v.status_label.text()
-                    or "Đã đọc" in v.status_label.text(), timeout=5000)
+    qtbot.waitUntil(lambda: "Wrote" in v.status_label.text()
+                    or "Read" in v.status_label.text(), timeout=5000)
 
     assert connected_window.session.read(MEM_BASE, 4) == bytes(new_values)
     _read(qtbot, connected_window, size=16)
@@ -182,7 +182,7 @@ def test_ecu_khong_ho_tro_cal_pag_thi_bao_ro(qtbot, cfg, monkeypatch) -> None:
     qtbot.waitUntil(lambda: bool(shown), timeout=5000)
 
     title, body = errors.describe(shown[0])
-    assert "không hỗ trợ" in title
+    assert "not supported" in title.lower()
     assert "CAL/PAG" in body
     w.close()
 

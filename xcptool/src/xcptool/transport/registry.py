@@ -113,10 +113,19 @@ def list_devices() -> list[DeviceInfo]:
         for cfg in found:
             channel = str(cfg.get("channel", spec.default_channel))
             serial = cfg.get("serial") or cfg.get("device_id")
+
+            # Trích xuất tên phần cứng chi tiết (ví dụ: Vector VN5620A Channel 5)
+            vcfg = cfg.get("vector_channel_config")
+            hw_name = getattr(vcfg, "name", None) or cfg.get("name") or cfg.get("device_name")
+            if hw_name and str(hw_name).strip() and str(hw_name).strip() != channel:
+                disp_name = f"{spec.label} — {channel}  ·  {str(hw_name).strip()}"
+            else:
+                disp_name = f"{spec.label} — {channel}"
+
             out.append(DeviceInfo(
                 backend=spec.name,
                 channel=channel,
-                display_name=f"{spec.label} — {channel}",
+                display_name=disp_name,
                 available=True,
                 serial=str(serial) if serial is not None else None,
             ))

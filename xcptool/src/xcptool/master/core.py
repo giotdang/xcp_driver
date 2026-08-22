@@ -92,6 +92,7 @@ class XcpMaster:
         self._responses: queue.Queue[bytes | _Sentinel] = queue.Queue(maxsize=1)
         self._cmd_lock = threading.Lock()
         self._pending_cmd: int | None = None
+        self._consecutive_synch_fails = 0
 
         # DAQ callback — được gọi từ RX thread khi nhận DAO frame (byte0 < 0xFC).
         # Phải là hàm nhanh, không chặn; set_daq_callback() để đăng ký/huỷ.
@@ -161,8 +162,6 @@ class XcpMaster:
     def _on_frame(self, frame: RxFrame) -> None:
         data = bytes(frame.data)
         if frame.can_id != self._cfg.dto_id:
-            self._trace.add("rx", frame.can_id, data, "other",
-                            hexs(data) or "(rỗng)", t_mono=frame.t_mono)
             return
 
         kind = classify(data)
@@ -232,8 +231,11 @@ class XcpMaster:
         try:
             self._send_raw(bytes([Cmd.SYNCH]), note="resync sau timeout T1")
             self._await_response(self._cfg.t1_timeout_s)
+            self._consecutive_synch_fails = 0
         except XcpToolError:
-            pass
+            self._consecutive_synch_fails += 1
+            if self._consecutive_synch_fails >= 5:
+                self._rx_failed(BusError("Mất kết nối ECU (5 lần SYNCH liên tiếp không phản hồi)"))
         self._drain_responses()
 
     def transact(

@@ -1,225 +1,222 @@
 # xcptool — Hướng dẫn sử dụng
 
-Công cụ PC thay thế CANape/INCA cho việc kết nối tới ECU qua **XCP-on-CAN**: chọn thiết bị CAN, CONNECT tới ECU, xem mọi frame trên bus theo thời gian thực, gửi lệnh XCP thô, đọc/ghi bộ nhớ theo địa chỉ, và điều khiển trang calibration (working/reference). Không cần biên dịch, không cần phần cứng CAN thật để dùng thử (có bus ảo dựng sẵn).
+Công cụ PC thay thế CANape/INCA cho việc kết nối tới ECU qua **XCP-on-CAN**: đo lường tín hiệu thời gian thực (DAQ), đồ thị scope, hiệu chỉnh tham số theo file A2L, quản lý trang nhớ calibration (Working/Reference), đọc/ghi bộ nhớ theo địa chỉ, xem trace CAN và gửi lệnh XCP thô.
 
-> Tài liệu này viết cho **người dùng** xcptool (kỹ sư đo lường/hiệu chỉnh, đã quen CANape/XCP). Muốn hiểu code hoạt động thế nào, xem `ARCHITECTURE.md`.
-
----
-
-## 1. Đang hỗ trợ gì / chưa hỗ trợ gì
-
-xcptool hiện ở giai đoạn **M1 + M2** — nền tảng kết nối và thao tác bộ nhớ. Đọc kỹ mục này trước khi dùng để khỏi kỳ vọng nhầm.
-
-**✅ Đã có, dùng được ngay:**
-
-| Tính năng | Ghi chú |
-|---|---|
-| Kết nối ECU qua CAN | Đa hãng: PEAK, Vector, ETAS, CANable/slcan, bus ảo để test |
-| Dò năng lực ECU lúc CONNECT | MAX_CTO/MAX_DTO, byte order, resource CAL/PAG/DAQ/STIM/PGM — không hardcode theo một ECU cụ thể |
-| Cửa sổ debug CAN (trace) | Mọi frame đi qua bus, kể cả frame không thuộc phiên xcptool |
-| Console lệnh XCP thô | Gõ tay CTO dạng hex, xem byte thô ECU trả về |
-| Đọc/ghi bộ nhớ theo địa chỉ | Hex dump sửa trực tiếp, ghi trọn khối |
-| Điều khiển trang calibration | Xem/đổi trang ECU (đang chạy) và trang XCP (đang nhìn), copy trang |
-
-**❌ Chưa có — đừng tìm, chưa được viết:**
-
-| Tính năng | Dự kiến |
-|---|---|
-| Đo tín hiệu theo thời gian (DAQ), đồ thị scope | M4 |
-| Đọc A2L, làm việc theo **tên** tín hiệu thay vì địa chỉ thô | M3 |
-| Ghi log ra MDF4 | M5 |
-| Nạp chương trình vào flash (PGM/Block Upload/Download) | chưa có kế hoạch |
-| STIM (bơm dữ liệu vào ECU) | chưa có kế hoạch |
-| **Seed & Key** | Chưa hỗ trợ bypass. ECU đòi seed & key sẽ được CONNECT nhưng bị chặn ở đúng resource cần khoá — xcptool báo rõ, không có đường vòng |
+> Tài liệu này viết cho **người dùng** xcptool (kỹ sư đo lường/hiệu chỉnh ECU). Muốn tìm hiểu sâu về kiến trúc mã nguồn, xem `ARCHITECTURE.md`.
 
 ---
 
-## 2. Cài đặt
+## 1. Tính năng đang hỗ trợ
 
-Yêu cầu Python ≥ 3.11.
+xcptool hiện đã hoàn thiện các mốc phát triển **M1 → M6** với đầy đủ các tính năng:
 
-```
+| Tính năng | Mô tả chi tiết |
+|---|---|
+| **Kết nối ECU qua CAN** | Hỗ trợ đa thiết bị: PEAK, Vector, ETAS, CANable/slcan, và bus ảo (`virtual`) để chạy thử nghiệm không cần phần cứng. |
+| **Dò năng lực tự động** | Đọc `MAX_CTO`, `MAX_DTO`, byte order (Endianness), các tài nguyên `CAL/PAG`, `DAQ`, `STIM`, `PGM` từ ECU lúc CONNECT. |
+| **Nạp file mô tả A2L** | Tự động phân tích file A2L (ASAM MCD-2 MC), nạp toàn bộ danh mục CHARACTERISTIC, MEASUREMENT, kiểu dữ liệu và RECORD_LAYOUT. |
+| **Panel Hiệu chỉnh (Calibration)** | Xem và chỉnh sửa tham số theo tên, hỗ trợ phân cấp Struct và mảng Array `[0..N-1]`, sửa trực tiếp inline (double-click), đánh dấu màu cam (dirty), chống ghi đè trang ROM. |
+| **Quản lý trang Calibration** | Điều khiển chuyển đổi trang Working (RAM) và Reference (ROM), hỗ trợ tính năng 1-click Copy Reference $\rightarrow$ Working. |
+| **Panel Đo lường (Measurement & Scope)** | Chọn tín hiệu đo từ A2L, cấu hình DAQ list trên ECU, hiển thị giá trị số thực thời gian thực (Live Value), vẽ đồ thị Scope đa tín hiệu thời gian thực mượt mà (tăng tốc GPU PyOpenGL). |
+| **Switch tối ưu Scope** | Nút gạt bật/tắt đồ thị: Tắt scope giúp giải phóng 100% tải GPU/CPU khi chỉ cần xem bảng giá trị. |
+| **Cửa sổ CAN Trace** | Bảng ghi nhận toàn bộ frame CAN thời gian thực, bộ lọc thông minh (mặc định ẩn DTO để tránh nghẽn UI), tự động cuộn khi đang nhìn thấy, xuất file CSV. |
+| **Console lệnh thô** | Gõ trực tiếp byte CTO dạng Hex, có các nút lệnh nhanh XCP chuẩn, lướt lịch sử lệnh (phím mũi tên). |
+| **Panel Bộ nhớ Hex** | Đọc/ghi bộ nhớ theo địa chỉ tuyệt đối, hex dump trực quan, ghi trọn khối an toàn. |
+| **Chế độ Demo (`--session fake`)** | Tích hợp ECU giả lập (`FakeSlave`) và mô hình xe + thuật toán PID (`PidPlant`) mô phỏng các giá trị đo thực tế tính từ các biến hiệu chỉnh. |
+
+---
+
+## 2. Cài đặt môi trường
+
+Yêu cầu Python $\ge$ 3.11 (khuyến nghị Python 3.12).
+
+```bash
 cd xcptool
 python -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 ```
 
-`pip install -e ".[dev]"` cài `python-can`, `PySide6`, `PySide6-Fluent-Widgets` (giao diện), và bộ công cụ test. Dùng **đúng interpreter trong venv** (`.venv\Scripts\python.exe`), không dùng `python` hệ thống.
+> **Mẹo tăng tốc đồ thị Scope:**
+> Cài đặt thêm PyOpenGL để bật tính năng render đồ thị bằng phần cứng (GPU):
+> ```bash
+> .venv\Scripts\pip install PyOpenGL
+> ```
 
-### Driver hãng CAN — cài riêng theo thiết bị bạn có
+### Cài đặt Driver thiết bị phần cứng CAN
 
-xcptool không tự cài được driver hãng (đây là phần mềm của nhà sản xuất, không phải gói Python). Không có driver, backend đó vẫn hiện trong danh sách thiết bị nhưng đánh dấu "chưa dùng được" kèm gợi ý cần cài gì:
-
-| Hãng | Cần cài | Nền tảng |
+| Hãng thiết bị | Gói driver cần cài đặt | Hệ điều hành |
 |---|---|---|
-| PEAK PCAN-USB | Driver **PCAN-Basic** (PCANBasic.dll / libpcanbasic.so) | Windows / Linux |
-| Vector VN16xx | **Vector XL Driver Library** (cài kèm Vector Driver Setup) | chỉ Windows |
-| ETAS ES58x/ES5xx | **ETAS Distribution Package (BOA)** | chỉ Windows |
-| CANable / slcan | Gói Python `pyserial` (`pip install xcptool[slcan]`) + driver COM ảo | Windows / Linux |
-| Bus ảo (test) | Không cần gì | mọi nơi |
+| **PEAK PCAN-USB** | Driver **PCAN-Basic** (`PCANBasic.dll` / `libpcanbasic.so`) | Windows / Linux |
+| **Vector VN16xx** | **Vector XL Driver Library** (kèm Vector Driver Setup) | Windows |
+| **ETAS ES58x/ES5xx** | **ETAS Distribution Package (BOA)** | Windows |
+| **CANable / slcan** | Gói Python `pyserial` (`pip install xcptool[slcan]`) + cổng COM ảo | Windows / Linux |
+| **Bus ảo (Virtual)** | Có sẵn trong `python-can`, không cần cài thêm driver | Mọi nền tảng |
 
 ---
 
 ## 3. Khởi động nhanh
 
-Hai cách chạy: dòng lệnh (`xcptool ...`) hoặc giao diện đồ hoạ.
+### 3.1 Dùng thử không cần phần cứng (Chế độ Demo)
+Chạy ứng dụng với cờ `--session fake`. Hệ thống sẽ tự động khởi động một ECU giả lập kèm mô hình động lực học xe PID:
 
 ```bash
-# Thử ngay không cần phần cứng — dùng bus giả lập
-.venv\Scripts\python.exe -m xcptool.cli.main --session fake devices
+# Giao diện đồ họa (GUI)
 .venv\Scripts\python.exe -m xcptool.ui.app --session fake
 
-# Có bus CAN thật rồi thì bỏ --session fake (mặc định là "real")
-.venv\Scripts\python.exe -m xcptool.cli.main devices
+# Hoặc dùng script tiện ích
+.\run.bat
+```
+
+### 3.2 Kết nối với phần cứng CAN thật
+Khi đã cắm thiết bị CAN và nối dây tới ECU:
+
+```bash
 .venv\Scripts\python.exe -m xcptool.ui.app
 ```
 
-`--session fake` dùng một ECU giả lập hoàn toàn trong Python, không đụng `python-can`, không cần bus thật — tiện để làm quen giao diện trước khi có phần cứng.
+---
+
+## 4. Kết nối ECU & Nạp file A2L
+
+### Bước 1: Kết nối thiết bị CAN
+1. Bấm nút **Kết nối…** ở góc dưới thanh điều hướng (hoặc menu `Phiên → Kết nối…`, phím tắt `Ctrl+K`).
+2. Chọn thiết bị phần cứng trong danh sách (PEAK, Vector, Virtual...).
+3. Kiểm tra Bitrate (mặc định 500 kbps) và CAN ID của CRO/DTO (mặc định `0x7E0` / `0x7E1`).
+4. Bấm **Kết nối**. Thanh trạng thái dưới cùng sẽ hiển thị thông tin ECU: `MAX_CTO`, `MAX_DTO`, Endianness và các tính năng hỗ trợ (`CAL`, `DAQ`...).
+
+### Bước 2: Nạp file A2L
+1. Bấm **Nạp A2L…** trên thanh công cụ của tab Hiệu chỉnh hoặc Đo lường (phím tắt `Ctrl+O`).
+2. Chọn file `.a2l` (ví dụ: `examples/xcp_daq_example.a2l`).
+3. Ứng dụng sẽ nạp toàn bộ danh mục tham số và tín hiệu vào cả hai tab.
 
 ---
 
-## 4. Kết nối ECU
+## 5. Panel Hiệu chỉnh (Calibration)
 
-Trong GUI: menu **Phiên → Kết nối…** (`Ctrl+K`) hoặc nút **Kết nối…** ở cuối thanh điều hướng trái.
-
-**Dialog chọn thiết bị:**
-- Danh sách liệt kê MỌI backend đã biết, kể cả cái chưa dùng được (hiện màu xám, kèm dòng gợi ý cần cài gì — xem mục 2). Đừng bỏ qua dòng gợi ý này, đây là nguyên nhân phổ biến nhất khi "không thấy thiết bị nào".
-- Nút **Dò lại thiết bị** — quét lại (có thể mất vài giây, có spinner).
-- Lựa chọn lần kết nối thành công gần nhất được **tự nhớ** và chọn sẵn ở lần mở dialog kế tiếp.
-- Tham số bus (bitrate, CAN ID của CRO/DTO, ID 29-bit hay không, đệm đủ 8 byte, timeout T1) điều chỉnh được ngay trong dialog — giá trị mặc định lấy từ CAN ID chuẩn 0x7E0/0x7E1, 500 kbps, nhưng **ECU khác có thể dùng ID khác**, sửa lại cho khớp thiết bị của bạn.
-- CRO và DTO thường dùng chung một CAN ID cho cả response lẫn dữ liệu DAQ — xcptool tự phân loại theo byte đầu, không cần bạn khai riêng.
-
-Bấm **Kết nối** → có thể mất vài giây (spinner hiện, có nút **Huỷ** nếu đợi quá lâu — huỷ nghĩa là đóng hẳn bus, không phải tạm dừng). Kết nối thành công, thanh trạng thái dưới cùng hiện tóm tắt năng lực ECU: MAX_CTO/MAX_DTO, byte order, version XCP, resource nào ECU hỗ trợ (CAL/DAQ/STIM/PGM), có đòi seed & key không.
-
-Ngắt kết nối: menu **Phiên → Ngắt kết nối** (giữ bus mở) hoặc đóng cửa sổ (đóng hẳn bus).
-
----
-
-## 5. Cửa sổ debug CAN (Trace)
-
-Tab **Trace CAN** — bảng liệt kê mọi frame đi qua bus theo thời gian thực, kể cả frame không thuộc phiên xcptool.
-
-| Cột | Ý nghĩa |
-|---|---|
-| # | Số thứ tự, tăng dần trong phiên |
-| t (s) | Thời điểm tương đối so với frame đầu tiên |
-| Hướng | → gửi đi, ← nhận về |
-| CAN ID | Hệ hex |
-| DLC | Số byte |
-| Dữ liệu | Toàn bộ byte, hex |
-| Giải mã | Diễn giải người đọc được (`CONNECT mode=0`, `ERR CRC_WRITE_PROTECTED`...), không giải mã được thì hiện hex thô |
-
-Công cụ trên thanh phía trên bảng:
-- **Tạm dừng / Tiếp tục** — dừng vẽ (frame vẫn được đếm ở "bỏ khi tạm dừng", không dùng để phân tích được vì không lưu lại).
-- **Tự cuộn** — tự trôi xuống dòng mới nhất.
-- **Xoá** — xoá sạch bảng.
-- **Xuất CSV…** — xuất các dòng đang hiển thị (theo bộ lọc hiện tại) ra file.
-- **Lọc theo loại frame** — tick/bỏ tick từng loại: CMD (lệnh gửi), RES (phản hồi OK), ERR (phản hồi lỗi), EV (event), SERV (service request), DAQ, khác (frame không thuộc phiên).
-- **Trần dòng** — số dòng tối đa giữ trong bộ nhớ (mặc định 20.000), vượt trần thì tự bỏ dòng cũ nhất — RAM không phình dù bus chạy hàng giờ.
-
-Bộ đếm góc phải: nhận / đang giữ / hiện / **session bỏ** (frame bị ring buffer phía backend bỏ vì UI rút không kịp — nếu số này tăng liên tục nghĩa là bus quá tải so với tốc độ vẽ, không phải lỗi kết nối) / bỏ khi tạm dừng.
-
-> **Lưu ý về timestamp:** PEAK/Vector lấy timestamp từ phần cứng, còn slcan và bus giả lập sinh bằng phần mềm nên có jitter — đừng dùng slcan để đo độ trễ chính xác của ECU.
-
----
-
-## 6. Console lệnh thô
-
-Tab **Lệnh thô** — dành cho khi bạn muốn tự tay gửi một CTO không qua panel nào khác (debug protocol, thử lệnh ECU chưa được xcptool hỗ trợ sẵn).
-
-- Gõ hex vào ô nhập, ví dụ `FF 00` (CONNECT mode 0), Enter hoặc bấm **Gửi**. Chấp nhận cả dạng `ff00`, `FF,00`, `0xFF 0x00`.
-- Có sẵn nút bấm nhanh: CONNECT, GET_STATUS, SYNCH, GET_ID, DISCONNECT.
-- Phím ↑/↓ trong ô nhập để lướt lại lịch sử lệnh đã gửi (tối đa 50 lệnh gần nhất).
-- Đọc response: byte đầu tiên `0xFF` = OK, `0xFE` = ECU báo lỗi (frame lỗi vẫn được **in ra**, không tự động thành hộp thoại — bạn tự đọc byte). Tick **"Coi response lỗi là ngoại lệ"** nếu muốn lỗi ECU hiện thành hộp thoại như các thao tác khác.
-- Mọi lệnh gửi qua đây cũng xuất hiện đồng thời trong tab Trace CAN.
-
----
-
-## 7. Panel bộ nhớ
-
-Tab **Bộ nhớ** — đọc/ghi ECU theo địa chỉ tuyệt đối, và điều khiển trang calibration.
-
-**Đọc/ghi:**
-1. Nhập địa chỉ (hex, có hoặc không tiền tố `0x`), số byte cần đọc, `ext` (address extension — hầu hết ECU dùng `0`).
-2. Bấm **Đọc** → hiện hex dump, mỗi ô là 1 byte, nhấp đúp để sửa trực tiếp (ô sửa đổi màu cam để phân biệt).
-3. Bấm **Ghi vùng này** → ghi *toàn bộ khối* xuống ECU trong một lượt (không ghi rời từng byte — tránh ECU chạy qua trạng thái nửa cũ nửa mới, đặc biệt quan trọng với struct/mảng như bộ hệ số PID).
-4. **Bỏ sửa** — hoàn tác về giá trị vừa đọc, chưa ghi gì.
-5. Tick **"Đọc lại sau khi ghi để đối chiếu"** (mặc định bật) — tự đọc lại ngay sau khi ghi để xác nhận giá trị đã lên ECU đúng như ý.
-
-**Trang calibration (working/reference):** ECU phân biệt *trang nó đang chạy* (trang ECU) và *trang XCP đang nhìn vào* (trang XCP) — hai khái niệm độc lập nhau. Địa chỉ bạn nhập luôn hiểu theo vùng ROM (reference); khi XCP trỏ working page, ECU tự đổi hướng sang RAM tương ứng.
-
-- **Segment / Đọc lại trạng thái trang** — xem trang ECU và trang XCP hiện tại.
-- **Đặt trang** — đổi trang cho một trong hai mode (XCP hoặc ECU).
-- **Copy trang** — copy nội dung từ trang nguồn sang trang đích trong cùng segment.
-
-**Khi ghi bị từ chối** (thường gặp nhất): hộp thoại "Không ghi được — vùng nhớ đang được bảo vệ" hiện ra kèm nút **"Chuyển sang trang 0 và ghi lại"**. Nguyên nhân gần như luôn là XCP đang trỏ reference page (ROM, chỉ đọc) thay vì working page (RAM) — bấm nút đó, xcptool tự đổi trang rồi ghi lại đúng dữ liệu bạn vừa sửa, không cần làm lại từ đầu.
-
-> Quy ước "trang 0 = working" là của slave tham chiếu trong dự án này (XcpBasic), **không phải chuẩn chung của XCP** — ECU khác có thể đánh số trang khác.
-
----
-
-## 8. Tham chiếu dòng lệnh (CLI)
+Tab **Hiệu chỉnh** (biểu tượng cây bút trên thanh điều hướng bên trái):
 
 ```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ [Nạp A2L…]  [Đọc tất cả]  [Ghi thay đổi]       15 CHARACTERISTIC        │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Tên               Loại        Địa chỉ     Byte   Giá trị       Khoảng    │
+│ ▼ speedPid        STRUCT (4)  0x80100000  16     —                       │
+│     kp            FLOAT32     0x80100000  4      1.25          [0 … 100] │
+│     ki            FLOAT32     0x80100004  4      0.08          [0 … 50]  │
+│     outMin        FLOAT32     0x80100008  4      -50.0         [-100 … 0]│
+│     outMax        FLOAT32     0x8010000C  4      50.0          [0 … 100] │
+│ ▶ adcCalPoints    UINT16[4]   0x80100038  8      —                       │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Thao tác chính:
+1. **Đọc giá trị từ ECU**: Bấm **Đọc tất cả** để lấy giá trị hiện tại của toàn bộ tham số trong bộ nhớ ECU.
+2. **Chỉnh sửa giá trị (Inline Edit)**:
+   - Nhấp đúp chuột (Double-click) vào ô ở cột **Giá trị**.
+   - Nhập giá trị mới (số thực hoặc số nguyên) rồi nhấn `Enter`.
+   - Dòng vừa sửa và dòng cha sẽ chuyển sang **màu cam nổi bật** (Dirty indicator) để dễ nhận biết các giá trị chưa ghi.
+3. **Ghi thay đổi xuống ECU**:
+   - Chọn dòng tham số cần ghi.
+   - Bấm nút **Ghi thay đổi** (nút chỉ kích hoạt khi dòng được chọn đang có thay đổi).
+4. **Hiệu chỉnh mảng (Array)**:
+   - Mở rộng mảng (ví dụ `adcCalPoints`), nhấp đúp vào từng phần tử `[0]`, `[1]`... để sửa giá trị riêng lẻ.
+   - Khi bấm ghi, ứng dụng tự động đóng gói toàn bộ mảng và gửi xuống ECU.
+
+### Quản lý trang (Working / Reference):
+- Thanh điều khiển trang ở dưới cùng hiển thị trạng thái hiện tại:
+  - **Working (RAM)**: Cho phép ghi và thay đổi tham số trực tiếp khi ECU đang chạy.
+  - **Reference (ROM)**: Vùng nhớ chỉ đọc (Flash/ROM).
+- **Tính năng bảo vệ thông minh**: Nếu bạn ghi giá trị khi đang ở trang Reference, ứng dụng sẽ hiện hộp thoại thông báo kèm nút **"Chuyển sang trang Working và ghi lại"** 1-click.
+- **Copy Ref $\rightarrow$ Working**: Khôi phục toàn bộ giá trị hiệu chỉnh về mặc định ban đầu của ROM.
+
+---
+
+## 6. Panel Đo lường (Measurement & Scope)
+
+Tab **Đo lường** (biểu tượng công cụ trên thanh điều hướng):
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ [Nạp A2L…]  [Bắt đầu đo]  [Dừng]  [🔘 Đồ thị: Bật]    12 MEASUREMENT    │
+├───────────────────────────────────┬─────────────────────────────────────┤
+│ Signal                Kiểu   Giá trị│ 📈 Scope (pyqtgraph)                │
+│ ☑ vehicleSpeedKph     FLOAT32 45.2 │    ── vehicleSpeedKph               │
+│ ☑ engineRpm           FLOAT32 2150 │    ── engineRpm                     │
+│ ▼ ☑ speedPidTelemetry STRUCT  —    │                                     │
+│       error           FLOAT32 1.45 │  80 ┤     /\     /\                 │
+│       integral        FLOAT32 0.32 │  40 ┤____/  \___/  \____            │
+│ ▶ ☑ torqueSamples     FLOAT32[4] — │   0 ┼───────────────────            │
+│                                   │     0s      5s     10s    15s       │
+└───────────────────────────────────┴─────────────────────────────────────┘
+```
+
+### Thao tác đo lường:
+1. **Chọn tín hiệu đo**:
+   - Tích chọn vào ô vuông (Checkbox) cạnh các tín hiệu muốn theo dõi.
+   - Đối với nhóm Struct hoặc mảng Array: Chỉ cần tích chọn 1 ô ở dòng cha, toàn bộ các tín hiệu con sẽ tự động được đưa vào danh sách đo.
+2. **Bắt đầu đo**:
+   - Bấm **Bắt đầu đo**. Ứng dụng sẽ tự động cấu hình danh sách DAQ trên ECU và bắt đầu thu thập dữ liệu.
+   - Cột **Giá trị** sẽ hiển thị số thực trực tiếp theo thời gian thực (chu kỳ cập nhật 40ms).
+   - Đồ thị Scope bên phải sẽ vẽ các đường tín hiệu tương ứng với màu sắc phân biệt.
+3. **Tối ưu hiệu năng với Switch "Đồ thị"**:
+   - Gạt switch **Đồ thị: Tắt** khi bạn chỉ cần theo dõi các con số trong bảng hoặc đo số lượng lớn tín hiệu cùng lúc. Chế độ này ngắt hoàn toàn việc vẽ đồ thị để đạt tốc độ xử lý tối đa và không tốn CPU/GPU.
+4. **Dừng đo**: Bấm nút **Dừng**.
+
+---
+
+## 7. Cửa sổ Trace CAN
+
+Tab **Trace CAN** ở dock phía dưới (phím tắt `Ctrl+1`):
+
+- **Hiển thị toàn bộ frame**: Liệt kê chi tiết mọi frame CAN gửi và nhận (`seq`, thời gian `t`, hướng `→`/`←`, `CAN ID`, `DLC`, `Dữ liệu Hex`, và diễn giải lệnh `Giải mã`).
+- **Bộ lọc loại frame**: Lọc theo CMD, RES, ERR, EV, SERV, DAQ.
+  > **Lưu ý:** Bộ lọc `DAQ` được **tắt mặc định** để tránh hàng trăm frame DTO mỗi giây làm chậm giao diện. Bạn có thể bật lại bất cứ lúc nào khi cần debug chi tiết cấu trúc frame DTO.
+- **Tối ưu tự động cuộn**: Tự động tạm ngưng cuộn bảng khi tab Trace bị ẩn, giúp tiết kiệm tối đa tài nguyên hệ thống.
+- **Xuất file**: Bấm **Xuất CSV…** để lưu lại log frame cho việc phân tích.
+
+---
+
+## 8. Panel Bộ nhớ & Console lệnh thô
+
+### 8.1 Hex Memory Panel (phím tắt `Ctrl+3`)
+- Nhập địa chỉ bắt đầu và số byte cần đọc $\rightarrow$ bấm **Đọc**.
+- Nhấp đúp vào các ô byte hex để chỉnh sửa giá trị trực tiếp.
+- Bấm **Ghi vùng này** để ghi toàn bộ khối nhớ xuống ECU.
+
+### 8.2 Console lệnh thô (phím tắt `Ctrl+2`)
+- Gõ trực tiếp các byte Hex của lệnh XCP (ví dụ: `FF 00` cho lệnh `CONNECT`).
+- Cung cấp các nút lệnh nhanh: `CONNECT`, `GET_STATUS`, `SYNCH`, `GET_ID`, `DISCONNECT`.
+- Lưu trữ lịch sử 50 lệnh gần nhất (dùng phím mũi tên $\uparrow/\downarrow$ để chọn lại).
+
+---
+
+## 9. Tham chiếu dòng lệnh (CLI)
+
+```bash
 xcptool [--session fake|real] [--backend TÊN] [--channel KÊNH]
         [--bitrate SỐ] [--cro 0xHEX] [--dto 0xHEX] [--timeout GIÂY]
         <lệnh con> [tham số]
 ```
 
-Không truyền `--backend`/`--channel` thì xcptool tự lấy kênh khả dụng đầu tiên dò được.
-
-| Lệnh con | Tham số | Ý nghĩa | Ví dụ |
-|---|---|---|---|
-| `devices` | — | Liệt kê kênh CAN dò được, kèm hint nếu thiếu driver | `xcptool devices` |
-| `connect` | — | CONNECT rồi in năng lực ECU | `xcptool --session fake connect` |
-| `read` | `<địa_chỉ_hex> <số_byte>` | Đọc bộ nhớ, in hex dump | `xcptool read 80000000 64` |
-| `write` | `<địa_chỉ_hex> <chuỗi_hex>` | Ghi bộ nhớ rồi đọc lại để xác nhận | `xcptool write 80000000 "DE AD BE EF"` |
-| `pages` | `[--segment N]` | In trang ECU và trang XCP hiện tại | `xcptool pages --segment 0` |
-| `set-page` | `<trang> [--segment N] [--mode ecu\|xcp]` | Đổi trang calibration | `xcptool set-page 0 --mode xcp` |
-| `raw` | `<chuỗi_hex>` | Gửi CTO thô, in response | `xcptool raw "FF 00"` |
-| `trace` | `[--seconds N]` | Nghe bus N giây rồi in mọi frame và thoát | `xcptool trace --seconds 10` |
-
-Mọi lệnh con (trừ `devices`) tự CONNECT trước khi chạy và in trace của phiên khi kết thúc.
-
----
-
-## 9. File cấu hình & log
-
-| File | Nội dung |
-|---|---|
-| `~/.xcptool/config.toml` | Tự lưu lại `BusConfig` (backend, channel, bitrate, CAN ID, timeout...) sau lần CONNECT thành công qua `--session real`. Sửa tay được — file text thường, có comment. |
-| `~/.xcptool/logs/xcptool-YYYYMMDD-HHMMSS.log` | Log đầy đủ của từng phiên GUI — xem đường dẫn qua menu **Trợ giúp → Đường dẫn file log**. Rất hữu ích khi báo lỗi cho người phát triển. |
-| `~/.xcptool/logs/faulthandler.log` | Bắt cả những lỗi Python không kịp dựng traceback (ví dụ crash trong tầng Qt) — vết tích cuối cùng nếu app biến mất đột ngột. |
-
-(Đường dẫn `~/.xcptool` đổi được qua biến môi trường `XCPTOOL_HOME`, chủ yếu dùng khi test.)
+| Lệnh con | Ví dụ | Ý nghĩa |
+|---|---|---|
+| `devices` | `xcptool devices` | Liệt kê các kênh CAN khả dụng trên máy tính |
+| `connect` | `xcptool connect` | Kết nối thử tới ECU và in bảng năng lực |
+| `read` | `xcptool read 80100000 16` | Đọc 16 byte từ địa chỉ `0x80100000` |
+| `write` | `xcptool write 80100000 "00 00 80 3F"` | Ghi 4 byte xuống địa chỉ `0x80100000` |
+| `pages` | `xcptool pages --segment 0` | Đọc trạng thái trang Working/Reference |
+| `set-page`| `xcptool set-page 0 --mode xcp` | Chuyển trang XCP sang trang 0 |
+| `raw` | `xcptool raw "FF 00"` | Gửi frame CTO thô |
+| `trace` | `xcptool trace --seconds 5` | Bắt và in frame CAN trong 5 giây |
 
 ---
 
 ## 10. Xử lý sự cố thường gặp
 
-| Triệu chứng | Nguyên nhân | Cách xử lý |
+| Hiện tượng | Nguyên nhân | Hướng xử lý |
 |---|---|---|
-| Thiết bị hiện màu xám, "chưa dùng được" | Chưa cài driver hãng | Đọc dòng gợi ý ngay dưới tên thiết bị — nó nói chính xác cần cài gì (xem bảng mục 2), cài xong bấm Dò lại |
-| "Không tìm thấy thiết bị" khi CONNECT | Thiết bị bị rút / đổi cổng USB giữa chừng | Kiểm tra dây, cổng USB, dò lại danh sách |
-| Lỗi bus CAN | Bus-off, sai bitrate, thiếu điện trở đầu cuối | Kiểm tra bitrate khớp ECU, điện trở đầu cuối 120Ω, ECU có đang cấp nguồn không |
-| "ECU không trả lời" (timeout) | Sai CAN ID của CRO/DTO, hoặc ECU không chạy | Đây là hai thứ hay đặt sai nhất — đối chiếu lại CRO/DTO với tài liệu ECU |
-| "Response không hợp lệ" | ECU trả frame ngắn/sai định dạng | Xem tab Trace CAN, đối chiếu byte thô ECU thực sự gửi về |
-| Ghi bộ nhớ bị từ chối, "vùng nhớ đang được bảo vệ" | XCP đang trỏ reference page (ROM, chỉ đọc) | Bấm nút "Chuyển sang trang 0 và ghi lại" trong hộp thoại hiện ra |
-| "Bus đang bận" | Đã có một lệnh XCP khác đang chờ phản hồi | Mỗi lúc chỉ chạy được một lệnh — chờ lệnh hiện tại xong |
-| "ECU không hỗ trợ" | Bạn yêu cầu tính năng ECU không khai hỗ trợ lúc CONNECT (vd. đổi trang trên ECU không có CAL/PAG) | Không có cách bypass — đúng theo năng lực ECU đã khai báo |
-| ECU đòi seed & key | xcptool chưa hỗ trợ unlock | Không có đường vòng ở bản này — cần chờ tính năng Seed & Key được thêm |
-| Số "session bỏ" trong tab Trace tăng liên tục | Bus bắn frame nhanh hơn tốc độ UI rút được | Không phải lỗi kết nối — tăng "Trần dòng" hoặc lọc bớt loại frame không cần xem |
-| App đóng đột ngột / lỗi ngoài dự kiến | Bug của công cụ | Xem `~/.xcptool/logs/` — app đã ghi traceback đầy đủ trước khi hộp thoại xin lỗi hiện ra |
-
-Mọi lỗi lường trước được đều hiện thành hộp thoại có nội dung đọc được kèm gợi ý xử lý — không bao giờ là traceback thô. Nếu bạn thấy traceback trong hộp thoại, đó là bug, báo lại kèm file log.
-
----
-
-## 11. Giới hạn & lộ trình sắp tới
-
-Nhắc lại mục 1: xcptool ở bản này **chưa** đo tín hiệu theo thời gian (DAQ/scope), **chưa** đọc A2L để làm việc theo tên tín hiệu, **chưa** ghi MDF4, **chưa** nạp flash, **chưa** hỗ trợ ECU đòi Seed & Key.
-
-Các mốc tiếp theo (xem `DEV_PLAN.md` nếu muốn biết chi tiết kỹ thuật):
-- **M3** — đọc file A2L, cho phép làm việc theo tên tín hiệu (`engineRpm` thay vì địa chỉ hex) và bảng calibration theo tên.
-- **M4** — DAQ engine thật + scope thời gian thực (đồ thị `pyqtgraph`).
-- **M5** — xuất log ra MDF4, xuất/nhập bộ tham số, hỗ trợ XCP-on-Ethernet, đóng gói thành file `.exe` độc lập.
+| Thiết bị CAN hiện màu xám | Chưa cài driver nhà sản xuất | Đọc dòng hướng dẫn hiển thị dưới tên thiết bị để tải driver tương ứng. |
+| "ECU không trả lời" (Timeout) | Sai Bitrate hoặc sai CAN ID | Kiểm tra lại Bitrate (500k, 250k...) và cặp CAN ID CRO/DTO trong hộp thoại Kết nối. |
+| Ghi tham số bị từ chối | Đang ở Reference page (ROM) | Bấm nút chuyển sang Working page trong hộp thoại thông báo để ghi lại. |
+| Đồ thị scope giật lag | Đang dùng software rendering | Cài đặt gói `PyOpenGL` (`pip install PyOpenGL`) để kích hoạt tăng tốc GPU. |
+| Bị nghẽn frame khi đo DAQ | Bật hiển thị DAQ trong Trace | Tắt checkbox lọc `DAQ` trong tab Trace CAN để giảm tải vẽ bảng. |

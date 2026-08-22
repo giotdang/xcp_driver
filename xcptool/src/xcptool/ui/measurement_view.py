@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
+    ComboBox,
+    LineEdit,
     PrimaryPushButton,
     PushButton,
     SwitchButton,
@@ -53,6 +55,14 @@ _ENDIAN: dict[str, str] = {"little": "<", "big": ">"}
 # Số điểm tối đa mỗi signal trong bộ đệm (~30s tại 100 Hz)
 _MAX_POINTS = 3000
 
+# Tên thân thiện cho kiểu dữ liệu A2L → kiểu C quen thuộc
+_FRIENDLY_DTYPE: dict[str, str] = {
+    "UBYTE": "UINT8", "SBYTE": "INT8",
+    "UWORD": "UINT16", "SWORD": "INT16",
+    "ULONG": "UINT32", "SLONG": "INT32",
+    "FLOAT32_IEEE": "FLOAT32", "FLOAT64_IEEE": "FLOAT64",
+}
+
 # Index cột trong QTreeWidget
 COL_NAME  = 0
 COL_DTYPE = 1
@@ -71,6 +81,49 @@ def _raw_to_float(data: bytes, datatype: str, byte_order: str) -> float | None:
     if len(data) < size:
         return None
     return float(struct.unpack_from(endian + fmt, data)[0])
+
+
+def _format_display_value(data: bytes, datatype: str, byte_order: str, radix: str = "DEC") -> str:
+    """Định dạng giá trị byte thô theo hệ cơ số (DEC, HEX, BIN, ASCII)."""
+    fmt = _DTYPE_FMT.get(datatype)
+    if fmt is None:
+        return "???"
+    endian = _ENDIAN.get(byte_order, "<")
+    size = struct.calcsize(fmt)
+    if len(data) < size:
+        return "???"
+    is_float = datatype.startswith("FLOAT")
+
+    if is_float:
+        v = struct.unpack_from(endian + fmt, data, 0)[0]
+        if radix == "HEX":
+            int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
+            raw_int = struct.unpack_from(endian + int_fmt, data, 0)[0]
+            return f"0x{raw_int:0{size * 2}X}"
+        elif radix == "BIN":
+            int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
+            raw_int = struct.unpack_from(endian + int_fmt, data, 0)[0]
+            return f"0b{raw_int:0{size * 8}b}"
+        elif radix == "ASCII":
+            chars = [chr(b) if 32 <= b <= 126 else "." for b in data[:size]]
+            return "".join(chars)
+        else:
+            return f"{v:.4g}"
+    else:
+        v = struct.unpack_from(endian + fmt, data, 0)[0]
+        if radix == "HEX":
+            mask = (1 << (size * 8)) - 1
+            return f"0x{v & mask:X}"
+        elif radix == "BIN":
+            mask = (1 << (size * 8)) - 1
+            return f"0b{v & mask:b}"
+        elif radix == "ASCII":
+            try:
+                return chr(v) if 32 <= v <= 126 else "."
+            except ValueError:
+                return str(v)
+        else:
+            return str(v)
 
 
 def _group_by_prefix(names: list[str]) -> list[tuple[str | None, list[str]]]:
@@ -133,10 +186,12 @@ class MeasurementView(QWidget):
 
         self._db: A2LDatabase = A2LDatabase()
         self._byte_order = "little"
+        self._radix = "DEC"
+        self._is_expanded = True
         self._daq_running = False
 
-        # Ánh xạ tên signal (vd: "speed", "torqueSamples[0]") -> QTreeWidgetItem
         self._tree_items: dict[str, QTreeWidgetItem] = {}
+        self._last_raw: dict[str, tuple[bytes, str]] = {}
 
         # Plot state — được thiết lập khi _setup_curves() chạy
         self._curves: dict[str, pg.PlotDataItem] = {}
@@ -158,44 +213,63 @@ class MeasurementView(QWidget):
 
     def _build_ui(self) -> None:
         # toolbar
-        self.load_btn = PushButton("Nạp A2L…", self)
+        self.load_btn = PushButton("Load A2L…", self)
         self.load_btn.clicked.connect(self._on_load_click)
 
-        self.start_btn = PrimaryPushButton("Bắt đầu đo", self)
+        self.start_btn = PrimaryPushButton("Start Acquisition", self)
         self.start_btn.clicked.connect(self._on_start)
 
-        self.stop_btn = PushButton("Dừng", self)
+        self.stop_btn = PushButton("Stop", self)
         self.stop_btn.clicked.connect(self._on_stop)
         self.stop_btn.setEnabled(False)
 
-        # Switch bật / tắt vẽ đồ thị
+        # Switch to enable/disable scope plotting
         self.scope_switch = SwitchButton(self)
-        self.scope_switch.setOnText("Đồ thị: Bật")
-        self.scope_switch.setOffText("Đồ thị: Tắt")
+        self.scope_switch.setOnText("Scope: On")
+        self.scope_switch.setOffText("Scope: Off")
         self.scope_switch.setChecked(True)
         self.scope_switch.checkedChanged.connect(self._on_scope_toggled)
 
-        self.count_label = BodyLabel("Chưa nạp A2L.", self)
+        self.search_box = LineEdit(self)
+        self.search_box.setPlaceholderText("Search...")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self._on_search)
+
+        self.expand_btn = PushButton("Collapse All", self)
+        self.expand_btn.clicked.connect(self._on_expand_toggle)
+
+        self.radix_combo = ComboBox(self)
+        self.radix_combo.addItems(["DEC", "HEX", "BIN", "ASCII"])
+        self.radix_combo.currentTextChanged.connect(self._on_radix_changed)
+
+        self.count_label = BodyLabel("No A2L loaded.", self)
 
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.load_btn)
         toolbar.addWidget(self.start_btn)
         toolbar.addWidget(self.stop_btn)
         toolbar.addWidget(self.scope_switch)
+        toolbar.addWidget(self.search_box)
+        toolbar.addWidget(self.expand_btn)
+        toolbar.addWidget(self.radix_combo)
         toolbar.addWidget(self.count_label)
         toolbar.addStretch(1)
 
-        # cây signal (trái) — hiển thị dạng bảng thông số & live values
+        # signal tree (left) — parameter table & live values
         self.tree = QTreeWidget(self)
         self.tree.setColumnCount(4)
-        self.tree.setHeaderLabels(["Signal", "Kiểu", "Địa chỉ", "Giá trị"])
+        self.tree.setHeaderLabels(["Signal", "Type", "Address", "Value"])
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
         hdr = self.tree.header()
-        hdr.setSectionResizeMode(COL_NAME,  QHeaderView.Stretch)
-        hdr.setSectionResizeMode(COL_DTYPE, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_ADDR,  QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(COL_VALUE, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(COL_NAME,  QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_DTYPE, QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_ADDR,  QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_VALUE, QHeaderView.Stretch)
+        
+        self.tree.setColumnWidth(COL_NAME, 200)
+        self.tree.setColumnWidth(COL_DTYPE, 100)
+        self.tree.setColumnWidth(COL_ADDR, 90)
 
         # đồ thị (phải)
         # Fix 2: OpenGL offload render sang GPU — nhanh hơn software QPainter.
@@ -210,8 +284,8 @@ class MeasurementView(QWidget):
             )
             pg.setConfigOptions(antialias=False, useOpenGL=False)
         self._plot = pg.PlotWidget(background=None)
-        self._plot.setLabel("left",   "Giá trị")
-        self._plot.setLabel("bottom", "Thời gian (s)")
+        self._plot.setLabel("left",   "Value")
+        self._plot.setLabel("bottom", "Time (s)")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
         self._legend = self._plot.addLegend(offset=(10, 10))
 
@@ -262,7 +336,7 @@ class MeasurementView(QWidget):
                     child.setData(COL_NAME, Qt.UserRole, m.name)
                     disp_name = m.name[len(group_name):].lstrip("._") or m.name
                     child.setText(COL_NAME, disp_name)
-                    child.setText(COL_DTYPE, m.datatype)
+                    child.setText(COL_DTYPE, _FRIENDLY_DTYPE.get(m.datatype, m.datatype))
                     child.setText(COL_ADDR, f"0x{m.address:08X}")
                     child.setText(COL_VALUE, "-")
                     child.setToolTip(COL_NAME, m.description)
@@ -277,9 +351,10 @@ class MeasurementView(QWidget):
                 item.setData(COL_NAME, Qt.UserRole, name)
                 item.setText(COL_NAME, name)
                 item.setCheckState(COL_NAME, Qt.Unchecked)
+                friendly = _FRIENDLY_DTYPE.get(meas.datatype, meas.datatype)
                 item.setText(
                     COL_DTYPE,
-                    meas.datatype if meas.array_size == 1 else f"{meas.datatype}[{meas.array_size}]"
+                    friendly if meas.array_size == 1 else f"{friendly}[{meas.array_size}]"
                 )
                 item.setText(COL_ADDR, f"0x{meas.address:08X}")
                 item.setText(COL_VALUE, "-")
@@ -295,7 +370,7 @@ class MeasurementView(QWidget):
                         child = QTreeWidgetItem()
                         child.setData(COL_NAME, Qt.UserRole, child_name)
                         child.setText(COL_NAME, f"[{i}]")
-                        child.setText(COL_DTYPE, meas.datatype)
+                        child.setText(COL_DTYPE, _FRIENDLY_DTYPE.get(meas.datatype, meas.datatype))
                         child.setText(COL_ADDR, f"0x{(meas.address + i * elem_size):08X}")
                         child.setText(COL_VALUE, "-")
                         item.addChild(child)
@@ -303,10 +378,10 @@ class MeasurementView(QWidget):
                     item.setExpanded(True)
 
         n = len(db.measurements)
-        self.count_label.setText(f"{n} MEASUREMENT")
+        self.count_label.setText(f"{n} MEASUREMENT(s)")
         self.status_label.setText(
-            "Chọn signals (tick ô vuông) rồi bấm 'Bắt đầu đo'."
-            if n > 0 else "File A2L không có MEASUREMENT nào."
+            "Select signals (check boxes) then click 'Start Acquisition'."
+            if n > 0 else "A2L file contains no MEASUREMENTs."
         )
 
 
@@ -314,20 +389,20 @@ class MeasurementView(QWidget):
         self._byte_order = byte_order
 
     def on_daq_started(self) -> None:
-        """Gọi từ MainWindow sau khi start_daq() thành công."""
+        """Called from MainWindow after start_daq() succeeds."""
         self._daq_running = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.status_label.setText("Đang đo…")
+        self.status_label.setText("Acquiring DAQ data…")
         self._t0_ns = 0
         self._start_mono = time.perf_counter()
 
     def on_daq_stopped(self) -> None:
-        """Gọi từ MainWindow sau khi stop_daq() thành công."""
+        """Called from MainWindow after stop_daq() succeeds."""
         self._daq_running = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.status_label.setText("Đã dừng.")
+        self.status_label.setText("Stopped.")
 
     def on_samples(self, samples: list[SamplePoint]) -> None:
         """Gọi từ timer 40ms trong MainWindow — cập nhật live value & scope."""
@@ -335,12 +410,15 @@ class MeasurementView(QWidget):
             return
 
         # Bước 1: Cập nhật giá trị hiển thị thời gian thực (Live Value) trên Tree
+        # Chỉ cập nhật các item lá (con của array hoặc scalar) — dòng cha giữ nguyên "-"
         for sp in samples:
             val = _raw_to_float(sp.value_raw, sp.datatype, self._byte_order)
             if val is not None:
+                self._last_raw[sp.name] = (sp.value_raw, sp.datatype)
                 tree_item = self._tree_items.get(sp.name)
                 if tree_item is not None:
-                    tree_item.setText(COL_VALUE, f"{val:.4g}")
+                    txt = _format_display_value(sp.value_raw, sp.datatype, self._byte_order, self._radix)
+                    tree_item.setText(COL_VALUE, txt)
 
         # Bước 2: Nếu tắt chế độ vẽ Scope hoặc chưa cấu hình curves -> bỏ qua phần vẽ đồ thị
         if not self.scope_switch.isChecked() or not self._curves:
@@ -399,7 +477,7 @@ class MeasurementView(QWidget):
 
     def _on_load_click(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn file A2L", "", "A2L files (*.a2l);;All files (*)"
+            self, "Select A2L File", "", "A2L files (*.a2l);;All files (*)"
         )
         if path:
             self.a2l_load_requested.emit(path)
@@ -408,7 +486,7 @@ class MeasurementView(QWidget):
         lists = self._build_daq_lists()
         if not lists:
             self.status_label.setText(
-                "Tick ít nhất một ô vuông trong danh sách signal trước."
+                "Select at least one signal before starting acquisition."
             )
             return
         self._setup_curves(lists)
@@ -416,6 +494,41 @@ class MeasurementView(QWidget):
 
     def _on_stop(self) -> None:
         self.daq_stop_requested.emit()
+
+    def _on_search(self, text: str) -> None:
+        text = text.lower()
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            self._filter_tree_item(item, text)
+
+    def _filter_tree_item(self, item: QTreeWidgetItem, text: str) -> bool:
+        match = text in item.text(COL_NAME).lower()
+        child_match = False
+        for i in range(item.childCount()):
+            if self._filter_tree_item(item.child(i), text):
+                child_match = True
+        
+        show = match or child_match
+        item.setHidden(not show)
+        if show and text:
+            item.setExpanded(True)
+        return show
+
+    def _on_expand_toggle(self) -> None:
+        self._is_expanded = not self._is_expanded
+        self.expand_btn.setText("Collapse All" if self._is_expanded else "Expand All")
+        if self._is_expanded:
+            self.tree.expandAll()
+        else:
+            self.tree.collapseAll()
+
+    def _on_radix_changed(self, text: str) -> None:
+        self._radix = text
+        for name, (raw, dt) in self._last_raw.items():
+            item = self._tree_items.get(name)
+            if item is not None:
+                item.setText(COL_VALUE, _format_display_value(raw, dt, self._byte_order, self._radix))
+        self.status_label.setText(f"Radix changed to {text}.")
 
     # ── nội bộ ───────────────────────────────────────────────────────────────
 

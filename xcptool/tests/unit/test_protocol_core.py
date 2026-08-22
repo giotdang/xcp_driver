@@ -44,25 +44,20 @@ def test_drain_trace_empties_the_buffer(
     assert session.drain_trace() == []
 
 
-def test_frame_on_another_can_id_is_traced_as_other(
+def test_frame_on_another_can_id_is_dropped(
     session: RealSession, bus_cfg: BusConfig, slave: FakeSlave
 ) -> None:
-    """Frame lạ không được xử lý nhầm thành response của phiên."""
+    """Frame lạ không được nhận vì hardware filter đã loại bỏ."""
     session.connect(bus_cfg)
     session.drain_trace()
 
     stranger_id = bus_cfg.dto_id + 0x50
     slave.send_raw(stranger_id, b"\xff\x01\x02\x03")
 
-    deadline = time.perf_counter() + 2.0
-    others = []
-    while time.perf_counter() < deadline and not others:
-        others = [e for e in session.drain_trace() if e.kind == "other"]
-        time.sleep(0.01)
+    time.sleep(0.5)
+    others = [e for e in session.drain_trace() if e.kind == "other"]
 
-    assert others, "frame trên CAN ID khác phải xuất hiện trong trace"
-    assert others[0].can_id == stranger_id
-    assert others[0].decoded == "FF 01 02 03"
+    assert not others, "frame trên CAN ID khác phải bị drop bởi hardware filter"
 
 
 def test_daq_frame_is_not_mistaken_for_a_response(

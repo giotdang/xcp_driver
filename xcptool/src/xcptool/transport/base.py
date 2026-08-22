@@ -12,7 +12,19 @@ from dataclasses import dataclass, field
 
 from ..session.api import BusConfig
 
-__all__ = ["CanFrame", "Transport", "BackendSpec"]
+__all__ = ["CanFrame", "Transport", "BackendSpec", "CAN_FD_DLC_SIZES", "round_to_can_fd_dlc"]
+
+CAN_FD_DLC_SIZES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64)
+
+
+def round_to_can_fd_dlc(length: int) -> int:
+    """Làm tròn chiều dài payload lên nấc DLC hợp lệ gần nhất của CAN FD."""
+    if length <= 8:
+        return max(0, length)
+    for sz in CAN_FD_DLC_SIZES:
+        if sz >= length:
+            return sz
+    return 64
 
 
 @dataclass(frozen=True, slots=True)

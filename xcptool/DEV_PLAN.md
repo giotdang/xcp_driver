@@ -1,6 +1,6 @@
 # xcptool — Kế hoạch phát triển
 
-> **Trạng thái:** M1 ✅ M2 ✅ M3 ✅ M4 ✅ — 405 tests (2026-08-19, chưa commit)
+> **Trạng thái:** M1 ✅ M2 ✅ M3 ✅ M4 ✅ M5 (in progress) — 443 tests (2026-08-22)
 > **Kiến trúc & quyết định thiết kế:** xem [DESIGN.md](DESIGN.md)
 > **Contract chính thức:** `src/xcptool/session/api.py`
 
@@ -305,6 +305,21 @@ File: `ui/measurement_view.py` (mới).
 - [x] **Phân cấp Struct & Array cho cả MeasurementView và CalibrationView**:
   - `MeasurementView`: Tự động gom nhóm các signal struct (`speedPidTelemetry_*`) thành node cha có 1 Checkbox duy nhất, các con không checkbox; Array `[0]..[n-1]` mở rộng dưới cha.
   - `CalibrationView`: Gom nhóm struct `speedPid_*` thành node cha `STRUCT (N)`; Array `VAL_BLK` mở rộng thành các dòng con `[0]..[n-1]` cho phép double-click sửa riêng từng ô giá trị và tự động đồng bộ dòng cha.
+- [x] **Đồng bộ trạng thái Data Bitrate khi bật Custom Bit Timing**:
+  - Tự động khóa `data_bitrate_combo` khi bật chế độ bit timing tùy chỉnh; áp dụng pattern đồng bộ trạng thái trung tâm `ui_state_sync`.
+- [x] **Hỗ trợ định dạng & nhập liệu HEX / BIN / ASCII cho Float và Int**:
+  - Hỗ trợ xem bit pattern IEEE 754 cho `FLOAT32_IEEE` và `FLOAT64_IEEE` dưới dạng HEX, BIN, ASCII.
+  - Hỗ trợ gõ trực tiếp ký tự ASCII (ví dụ: `'H'`) khi hiệu chỉnh ghi xuống ECU.
+- [x] **Hiển thị tên phần cứng chi tiết của CAN Channel**:
+  - Trích xuất tên thiết bị cụ thể từ driver (ví dụ: `Vector XL — 4 · VN5620A Channel 5`) giúp nhận diện trực quan trên danh sách thiết bị.
+- [x] **Đồng bộ theme cho cả 3 docking window (title bar + nền + tab bar)** (2026-08-22):
+  - *Nguyên nhân thật* (khác hẳn phỏng đoán "Windows ép palette" trước đây): `QDockWidget` không có rule `background` trong `CHROME_QSS_DARK/LIGHT` (chỉ có `border`) — khi docked thì "chìm" trong nền tối của MainWindow nên không lộ ra, nhưng khi **float** thành cửa sổ top-level riêng thì phải tự vẽ nền của chính nó, và rơi về mặc định sáng của Windows.
+  - Thêm `background`/`color` cho `QDockWidget` vào `theme.py`. Riêng dock "Memory / Debug" còn dùng title bar gốc của Qt (`QDockWidget::title`) — sub-control này **không tự kế thừa** `color`/`background` từ selector `QDockWidget` cha nên vẫn trắng dù đã sửa nền — chuyển nó sang title bar custom (QWidget/QLabel) giống "CAN Trace"/"Raw Commands" để cả 3 dock nhất quán.
+  - Bonus: thêm QSS cho `QTabBar` (tab lúc các dock docked chung khay) — trước đó dùng giao diện tab mặc định Windows, lệch hẳn theme tối.
+- [x] **Đồng bộ UX bật/tắt cho cả 3 dock** (2026-08-22): "CAN Trace"/"Raw Commands" giờ cũng `closable=True` (có nút ✕) như "Memory / Debug"; ngược lại "Memory / Debug" giờ cũng có nút mũi tên thu/mở vùng debug — cả 3 dock dùng chung `toggle_debug_area()` vì chúng tabify chung một vùng.
+- [x] **Sửa desync giữa Navigation highlight và nội dung hiển thị** (2026-08-22):
+  - *Nguyên nhân thật*: KHÔNG phải lỗi binding `NavigationInterface`↔`QStackedWidget` như phỏng đoán ban đầu (`switch_to()` + `onClick` đã đúng, có test cover). Thủ phạm là `_after_a2l_load()` gọi `switch_to(self.calibration_view)` **vô điều kiện** — kể cả khi được trigger bởi auto-load A2L lúc khởi động (`QTimer.singleShot(50, ...)` sau khi `_build_navigation()` đã restore đúng `active_route`), ghi đè tab vừa restore mà không đồng bộ lại `nav.setCurrentItem()`.
+  - Fix: bỏ hẳn dòng auto-switch trong `_after_a2l_load()` — `set_database()` đã cập nhật dữ liệu cho cả Calibration lẫn Measurement view rồi nên không cần ép chuyển tab.
 
 ### 📌 Vấn đề cần đào sâu nghiên cứu tiếp (Session tiếp theo):
 - **Hiện tượng**: Ngay sau khi bấm "Bắt đầu đo" (Start DAQ), UI bị lag / khựng một khoảng thời gian ngắn rồi mới dần ổn định (kể cả khi đã tắt chế độ vẽ Scope).
@@ -315,6 +330,12 @@ File: `ui/measurement_view.py` (mới).
   - Bỏ chọn mặc định loại `DAQ` trong bộ lọc `TraceView` (chỉ bật `CMD`, `RES`, `ERR`, `EV`).
   - Không gọi `table.scrollToBottom()` / repaint khi `TraceView` đang bị ẩn (không active).
   - Áp dụng batch throttling khi xả hàng đợi trace lúc khởi động.
+
+### 🐛 Danh sách Bug tạm hoãn để fix sau:
+
+Không còn bug tồn đọng nào được ghi nhận tại đây — 2 bug trước đó (Window chính
+không nhảy theo Navigation; Dark theme vỡ khi Dock floating) đã fix, xem mục
+"Đã hoàn thành trong M5" ở trên.
 
 ---
 

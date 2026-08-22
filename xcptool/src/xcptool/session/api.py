@@ -58,7 +58,7 @@ from ..a2l import A2LDatabase
 
 __all__ = [
     "ConnState", "PageMode", "Direction", "FrameKind",
-    "DeviceInfo", "BusConfig", "DaqCaps", "SlaveCaps", "TraceEntry",
+    "DeviceInfo", "BusConfig", "AppConfig", "DaqCaps", "SlaveCaps", "TraceEntry",
     "DaqSignal", "DaqList", "SamplePoint",
     "XcpToolError", "TransportError", "DeviceNotFoundError", "DriverMissingError",
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
@@ -124,7 +124,7 @@ class BusConfig:
     """Mọi thứ cần để mở bus và nói chuyện với MỘT ECU.
 
     Không có giá trị nào ở đây được hardcode trong code — tất cả do user đặt
-    và lưu vào ~/.xcptool/config.toml. Mặc định dưới đây chỉ là điểm khởi đầu
+    và lưu vào thư mục hiện tại. Mặc định dưới đây chỉ là điểm khởi đầu
     tiện tay, không phải giả định về ECU.
     """
     backend: str
@@ -135,6 +135,37 @@ class BusConfig:
     extended_id: bool = False       # False = 11-bit
     pad_dlc: bool = True            # A2L MAX_DLC_REQUIRED → luôn đệm đủ 8 byte
     t1_timeout_s: float = 1.0       # timeout chờ response của một lệnh
+    is_fd: bool = False             # CAN FD mode
+    data_bitrate: int = 2_000_000   # Data phase bitrate (CAN FD only)
+    
+    # Custom Bit Timing (Arbitration)
+    custom_bit_timing: bool = False
+    f_clock: int = 80_000_000
+    brp: int = 1
+    tseg1: int = 14
+    tseg2: int = 2
+    sjw: int = 1
+    
+    # Custom Bit Timing (Data Phase - CAN FD only)
+    dbrp: int = 1
+    dtseg1: int = 14
+    dtseg2: int = 2
+    dsjw: int = 1
+
+
+@dataclass
+class AppConfig:
+    """Toàn bộ cấu hình ứng dụng được lưu lại giữa các phiên làm việc."""
+    bus: BusConfig
+    last_a2l_path: str = ""
+    scope_enabled: bool = True
+    trace_row_limit: int = 20_000
+    active_route: str = "calibration"
+    dock_state: str = ""
+    debug_area_collapsed: bool = False
+    trace_visible_kinds: list[str] = field(
+        default_factory=lambda: ["cmd", "res", "err", "ev", "serv", "other"]
+    )
 
 
 @dataclass(frozen=True)
@@ -397,10 +428,16 @@ class Session(Protocol):
 
         Đây là nguồn DUY NHẤT cho việc "nhớ lựa chọn thiết bị" — `ui/` không
         được tự đọc/ghi file cấu hình riêng, phải đi qua đây. `RealSession` đọc
-        `~/.xcptool/config.toml` (được `connect()` tự lưu sau mỗi lần thành
+        `config.toml` ở thư mục hiện tại (được `connect()` tự lưu sau mỗi lần thành
         công); `FakeSession` trả lại `BusConfig` của lần `connect()` gần nhất
         trong tiến trình, hoặc giá trị mặc định nếu chưa từng connect.
         """
+
+    def load_app_config(self) -> AppConfig:
+        """Đọc toàn bộ cấu hình ứng dụng bao gồm bus, session và ui."""
+
+    def save_app_config(self, cfg: AppConfig) -> None:
+        """Lưu toàn bộ cấu hình ứng dụng."""
 
     @property
     def symbols(self) -> A2LDatabase:

@@ -78,6 +78,12 @@ def _make_view(qtbot) -> CalibrationView:
     def read_all_cb():
         calls["read_all"].append(True)
 
+    def read_cb(name):
+        calls["read"].append(name)
+
+    def write_all_cb(dirty_items):
+        calls["write_all"].append(dirty_items)
+
     def write_cb(name, addr, data):
         calls["write"].append((name, addr, data))
 
@@ -92,6 +98,7 @@ def _make_view(qtbot) -> CalibrationView:
 
     v = CalibrationView(
         read_all_cb=read_all_cb,
+        read_cb=read_cb,
         write_cb=write_cb,
         get_pages_cb=pages_cb,
         set_page_cb=set_page_cb,
@@ -175,8 +182,8 @@ def test_item_hien_dung_loai_va_dia_chi(qtbot) -> None:
     v.set_database(_make_db())
     items = {v.tree.topLevelItem(i).text(COL_NAME): v.tree.topLevelItem(i)
              for i in range(v.tree.topLevelItemCount())}
-    assert items["GAIN"].text(COL_TYPE) == "VALUE"
-    assert items["LUT"].text(COL_TYPE) == "VAL_BLK"
+    assert items["GAIN"].text(COL_TYPE) == "UINT8"
+    assert items["LUT"].text(COL_TYPE) == "UINT8[4]"
     assert items["GAIN"].text(COL_ADDR) == f"0x{MEM_BASE:08X}"
 
 
@@ -214,7 +221,7 @@ def test_on_batch_read_done_cap_nhat_nhieu(qtbot) -> None:
              for i in range(v.tree.topLevelItemCount())}
     assert items["GAIN"].text(COL_VALUE) == "7"
     assert items["OFFSET"].text(COL_VALUE) == "1000"
-    assert items["LUT"].text(COL_VALUE) == "10, 20, 30, 40"
+    assert items["LUT"].child(0).text(COL_VALUE) == "10"
     assert "3/3" in v.status_label.text()
 
 
@@ -223,7 +230,7 @@ def test_on_batch_read_done_co_loi_hien_so_loi(qtbot) -> None:
     v.set_database(_make_db())
     v.on_batch_read_done({"GAIN": bytes([1]), "OFFSET": None, "LUT": None})
     assert "1/3" in v.status_label.text()
-    assert "2" in v.status_label.text()   # 2 lỗi
+    assert "2" in v.status_label.text()   # 2 errors
 
 
 def test_on_pages_dong_bo_hien_dung_toggle(qtbot) -> None:
@@ -297,7 +304,7 @@ def test_doc_tat_ca_khong_co_a2l_khong_goi_cb(qtbot) -> None:
     v = _make_view(qtbot)
     v._on_read_all()
     assert not v._calls["read_all"]  # type: ignore
-    assert "Chưa nạp A2L" in v.status_label.text()
+    assert "No A2L loaded" in v.status_label.text()
 
 
 def test_ghi_btn_disabled_khi_khong_co_thay_doi(qtbot) -> None:
@@ -362,7 +369,7 @@ def test_ghi_gia_tri_sai_khong_goi_write_cb(qtbot) -> None:
     v.tree.setCurrentItem(item)
     v._on_write()
     assert not v._calls["write"]  # type: ignore
-    assert "không hợp lệ" in v.status_label.text()
+    assert "invalid" in v.status_label.text().lower()
 
 
 def test_set_busy_tat_nut_doc(qtbot) -> None:
@@ -456,9 +463,6 @@ def test_cal_get_pages_cap_nhat_toggle(qtbot, connected_window: MainWindow) -> N
 
 
 def test_cal_set_page_dat_ca_ecu_lan_xcp(qtbot, connected_window: MainWindow) -> None:
-    """Bug đã sửa: trước đây nút '→ Reference' chỉ set trang XCP, khiến ô toggle
-    không bao giờ chuyển sang Reference một cách bền vững vì ECU/XCP lệch nhau
-    và UI (đúng theo DESIGN.md) không tô sáng khi hai trang không đồng bộ."""
     w = connected_window
     v = w.calibration_view
     w.cal_set_page(0, REFERENCE_PAGE)
@@ -471,8 +475,6 @@ def test_cal_set_page_dat_ca_ecu_lan_xcp(qtbot, connected_window: MainWindow) ->
 
 
 def test_cal_get_pages_phat_hien_khong_dong_bo(qtbot, connected_window: MainWindow) -> None:
-    """Nếu tool ngoài (hoặc sequence bị gián đoạn) làm ECU ≠ XCP, panel phải
-    cảnh báo thay vì âm thầm hiện một trong hai (DESIGN.md §5)."""
     w = connected_window
     v = w.calibration_view
     w.session.set_page(0, REFERENCE_PAGE, PageMode.XCP)   # chỉ set XCP, không set ECU
@@ -499,15 +501,6 @@ def test_sync_button_dong_bo_lai_qua_session(qtbot, connected_window: MainWindow
 def test_copy_ref_to_working_qua_session_khop_gia_tri_reference(
     qtbot, connected_window: MainWindow
 ) -> None:
-    """Cổng thật của Copy Ref→Working: sau khi copy, đọc lại Working phải RA
-    ĐÚNG giá trị đang có trên Reference — không chỉ 'khác giá trị cũ'.
-
-    Test cũ (`test_copy_ref_to_working_goi_copy_page_cb`) chỉ kiểm tra callback
-    được gọi đúng tham số, không hề đi qua Session thật nên không bắt được bug
-    thật: `FakeSession._default_byte()` từng trộn số trang vào hash khiến hai
-    trang luôn khác nhau ngay cả khi chưa ai ghi gì — copy xong đọc lại Working
-    vẫn ra giá trị khác Reference, đúng như user báo cáo "chưa hoạt động".
-    """
     w = connected_window
     v = w.calibration_view
     db = _make_db()
@@ -559,12 +552,6 @@ def test_byte_order_duoc_dat_khi_ket_noi(qtbot, connected_window: MainWindow) ->
 
 
 def test_connect_khong_tu_bao_dang_ban_gia(qtbot, window: MainWindow, cfg: BusConfig) -> None:
-    """Bug đã sửa: connect_to() từng gọi memory_view.refresh_pages() rồi
-    cal_get_pages() liên tiếp ngay sau đó. Cái đầu set busy=True ngay khi
-    return (worker chạy bất đồng bộ trên thread khác, chưa xong), nên cái sau
-    bị _guard() từ chối tức thì với InfoBar 'Đang bận' — user vừa connect
-    xong, chưa bấm gì cả, đã thấy thông báo bận vô lý (2 nhãn bận trùng chữ
-    'Đang đọc trạng thái trang…' càng làm rối thêm)."""
     notified: list[tuple[str, str]] = []
     window.notify = lambda title, content: notified.append((title, content))  # type: ignore[method-assign]
 
@@ -572,18 +559,14 @@ def test_connect_khong_tu_bao_dang_ban_gia(qtbot, window: MainWindow, cfg: BusCo
     qtbot.waitUntil(lambda: window.session.state is ConnState.CONNECTED, timeout=5000)
     qtbot.waitUntil(lambda: not window.busy, timeout=5000)
 
-    assert not any(title == "Đang bận" for title, _ in notified), (
-        f"connect xong không được tự bắn thông báo 'Đang bận': {notified}"
+    assert not any(title == "Busy" for title, _ in notified), (
+        f"connect xong không được tự bắn thông báo 'Busy': {notified}"
     )
 
 
 def test_connect_cap_nhat_ca_hai_panel_trang_tu_mot_lan_doc(
     qtbot, connected_window: MainWindow
 ) -> None:
-    """Sau khi sửa bug ở trên, calibration panel phải THỰC SỰ được cập nhật
-    trạng thái trang ngay sau connect — trước đây cal_get_pages() bị guard từ
-    chối nên page_toggle không bao giờ được set tự động, chỉ update khi user
-    tự bấm 'Đọc trạng thái trang'."""
     v = connected_window.calibration_view
     assert v.page_toggle.currentRouteKey() == _ROUTE_WORKING
     assert connected_window.memory_view.xcp_page_label.text() == str(WORKING_PAGE)
@@ -617,7 +600,7 @@ def test_set_database_groups_struct_characteristics(qtbot) -> None:
 
 
 def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
-    """Kiểm tra Array CHARACTERISTIC (VAL_BLK) có các node con và sửa con đồng bộ cha."""
+    """Kiểm tra Array CHARACTERISTIC (VAL_BLK) có các node con và sửa con đồng bộ."""
     db = A2LDatabase()
     db.characteristics["tempTable"] = Characteristic(
         name="tempTable",
@@ -642,7 +625,7 @@ def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
 
     # Giả lập đọc xong giá trị
     v.on_read_done("tempTable", struct.pack("<3f", 10.0, 20.0, 30.0))
-    assert parent.text(COL_VALUE) == "10, 20, 30"
+    assert parent.text(COL_VALUE) == "—"
     assert parent.child(0).text(COL_VALUE) == "10"
     assert parent.child(1).text(COL_VALUE) == "20"
     assert parent.child(2).text(COL_VALUE) == "30"
@@ -654,9 +637,121 @@ def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
     # Kích hoạt signal itemChanged
     v._on_item_changed(child1, COL_VALUE)
 
-    assert parent.text(COL_VALUE) == "10, 25, 30"
     assert "tempTable" in v._dirty
-    assert v._selected_char_name() == "tempTable"
+    
+    items = v.tree.selectedItems()
+    assert items[0].data(0, Qt.UserRole) == ("array_elem", "tempTable", 1)
     assert v.write_btn.isEnabled()
+
+
+def test_write_struct_aggregates_children(qtbot, connected_window: MainWindow) -> None:
+    """Test that writing a STRUCT parent packs all its children and writes to the base address."""
+    v = connected_window.calibration_view
+    
+    db = A2LDatabase()
+    db.characteristics["pid_kp"] = Characteristic("pid_kp", "", "VALUE", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    db.characteristics["pid_ki"] = Characteristic("pid_ki", "", "VALUE", MEM_BASE + 4, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    v.set_database(db)
+    
+    parent = v._char_items["pid"]
+    parent.child(0).setText(COL_VALUE, "1.0")
+    parent.child(1).setText(COL_VALUE, "2.0")
+    
+    writes = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    
+    v._write_parent("pid", parent)
+    
+    assert len(writes) == 1
+    name, addr, data = writes[0]
+    assert name == "pid"
+    assert addr == MEM_BASE
+    assert len(data) == 8
+
+
+def test_array_placeholder_edit_ignored(qtbot) -> None:
+    """Test that editing an array parent with placeholder '—' is ignored."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["arr"] = Characteristic("arr", "", "VAL_BLK", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=2)
+    v.set_database(db)
+    
+    parent = v._char_items["arr"]
+    assert parent.text(COL_VALUE) == "—"
+    
+    # Trigger item changed with the placeholder
+    v._on_item_changed(parent, COL_VALUE)
+    
+    # Child should remain intact
+    assert parent.child(0).text(COL_VALUE) == "—"
+    assert "arr" not in v._dirty
+
+
+def test_write_all_uses_queue(qtbot) -> None:
+    """Test that Write All queues writes sequentially."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic("a", "", "VALUE", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    db.characteristics["b"] = Characteristic("b", "", "VALUE", MEM_BASE + 4, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    v.set_database(db)
+    
+    item_a = v._char_items["a"]
+    item_b = v._char_items["b"]
+    item_a.setText(COL_VALUE, "1.0")
+    item_b.setText(COL_VALUE, "2.0")
+    v._dirty.add("a")
+    v._dirty.add("b")
+    
+    writes = []
+    def fake_write_parent(name, item):
+        writes.append(name)
+        
+    v._write_parent = fake_write_parent
+    
+    v._on_write_all()
+    
+    # Only the first one is popped and processed initially
+    assert len(writes) == 1
+    assert len(v._write_queue) == 1
+    
+    # Call on_write_done for the first one, which should trigger the second
+    v.on_write_done(writes[0])
+    
+    assert len(writes) == 2
+    assert len(v._write_queue) == 0
+
+
+def test_float_radix_decode_and_encode() -> None:
+    """Kiểm tra decode và encode kiểu FLOAT32 và FLOAT64 theo DEC, HEX, BIN, ASCII."""
+    # 1.0f trong IEEE 754 float32 little endian là 0x3F800000 -> bytes: 00 00 80 3F
+    f32_raw = struct.pack("<f", 1.0)
+    assert decode_value(f32_raw, "FLOAT32_IEEE", "little", "DEC") == "1"
+    assert decode_value(f32_raw, "FLOAT32_IEEE", "little", "HEX") == "0x3F800000"
+    assert decode_value(f32_raw, "FLOAT32_IEEE", "little", "BIN") == "0b00111111100000000000000000000000"
+
+    # Encode lại từ HEX string và DEC string
+    assert encode_value("1.0", "FLOAT32_IEEE", "little", 1) == f32_raw
+    assert encode_value("0x3F800000", "FLOAT32_IEEE", "little", 1) == f32_raw
+
+    # Float64: 1.0d -> 0x3FF0000000000000
+    f64_raw = struct.pack("<d", 1.0)
+    assert decode_value(f64_raw, "FLOAT64_IEEE", "little", "HEX") == "0x3FF0000000000000"
+    assert encode_value("0x3FF0000000000000", "FLOAT64_IEEE", "little", 1) == f64_raw
+
+
+def test_encode_value_ascii_support() -> None:
+    """Kiểm tra encode_value khi nhập ký tự ASCII cho kiểu số nguyên và số thực."""
+    # UINT16 nhập 'H' (mã 72 = 0x48) -> b'\x48\x00' (little endian)
+    assert encode_value("H", "UWORD", "little", 1) == b"\x48\x00"
+
+    # UINT8 nhập 'e' (mã 101 = 0x65) -> b'\x65'
+    assert encode_value("e", "UBYTE", "little", 1) == b"\x65"
+
+    # Array 3 phần tử: "H, e, l" -> b'\x48\x00\x65\x00\x6c\x00'
+    assert encode_value("H, e, l", "UWORD", "little", 3) == b"\x48\x00\x65\x00\x6c\x00"
+
+    # Nhập số thường (Dec/Hex) vẫn hoạt động hoàn hảo
+    assert encode_value("72", "UWORD", "little", 1) == b"\x48\x00"
+    assert encode_value("0x48", "UWORD", "little", 1) == b"\x48\x00"
 
 

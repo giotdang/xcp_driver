@@ -67,7 +67,7 @@ def test_set_database_items_have_datatype(view: MeasurementView) -> None:
         view.tree.topLevelItem(i).text(COL_DTYPE)
         for i in range(view.tree.topLevelItemCount())
     }
-    assert "UWORD" in dtypes or "FLOAT32_IEEE" in dtypes
+    assert "UINT16" in dtypes or "FLOAT32" in dtypes or "UWORD" in dtypes
 
 
 def test_set_database_unchecked_by_default(view: MeasurementView) -> None:
@@ -81,8 +81,8 @@ def test_set_database_unchecked_by_default(view: MeasurementView) -> None:
 def test_start_without_selection_shows_status(view: MeasurementView) -> None:
     view.set_database(_make_db())
     view.start_btn.click()
-    assert "tick" in view.status_label.text().lower() or \
-           "ô vuông" in view.status_label.text()
+    assert "select" in view.status_label.text().lower() or \
+           "signal" in view.status_label.text().lower()
 
 
 def test_start_emits_daq_start_requested(qtbot, view: MeasurementView) -> None:
@@ -293,6 +293,33 @@ def test_set_database_groups_struct_measurements(view: MeasurementView) -> None:
         "speedPidTelemetry_integral",
         "speedPidTelemetry_output",
     }
+
+
+def test_radix_change_updates_float_and_int_live_values(view: MeasurementView) -> None:
+    """Kiểm tra thay đổi Radix (HEX/BIN) lập tức cập nhật lại hiển thị cả kiểu FLOAT và INT."""
+    db = _make_db()
+    view.set_database(db)
+
+    # Nạp mẫu đo cho speed (int) và temp (float)
+    raw_int = struct.pack("<H", 0x1234)
+    raw_float = struct.pack("<f", 1.0)
+    sp_int = SamplePoint(name="speed", timestamp_ns=1000, value_raw=raw_int, datatype="UWORD")
+    sp_float = SamplePoint(name="temp", timestamp_ns=1000, value_raw=raw_float, datatype="FLOAT32_IEEE")
+
+    view.on_samples([sp_int, sp_float])
+
+    # Đổi sang HEX
+    view.radix_combo.setCurrentText("HEX")
+    item_int = view._tree_items["speed"]
+    item_float = view._tree_items["temp"]
+    assert item_int.text(COL_VALUE) == "0x1234"
+    assert item_float.text(COL_VALUE) == "0x3F800000"
+
+    # Đổi sang BIN
+    view.radix_combo.setCurrentText("BIN")
+    assert item_float.text(COL_VALUE) == "0b00111111100000000000000000000000"
+
+
 
 
 
