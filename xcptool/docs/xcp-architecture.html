@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kiến trúc xcptool</title>
+<title>Kiến trúc hệ thống — xcptool</title>
 <style>
   :root{
     --ground:#FAFBFB;
@@ -27,7 +27,7 @@
     --mono:"Cascadia Code","Cascadia Mono",Consolas,ui-monospace,"SF Mono",monospace;
 
     --measure:68ch;
-    --wide:1080px;
+    --wide:1120px;
   }
 
   @media (prefers-color-scheme: dark){
@@ -100,7 +100,7 @@
     margin:0 0 20px;
   }
   h1{
-    font-size:clamp(34px,5.2vw,52px);
+    font-size:clamp(34px,5.2vw,50px);
     line-height:1.08;
     letter-spacing:-.028em;
     font-weight:700;
@@ -108,7 +108,7 @@
     text-wrap:balance;
   }
   .standfirst{
-    font-size:19px;
+    font-size:18.5px;
     line-height:1.6;
     color:var(--ink-2);
     max-width:var(--measure);
@@ -144,10 +144,10 @@
     margin-bottom:10px;
   }
   h3{
-    font-size:18px;
+    font-size:19px;
     font-weight:640;
     letter-spacing:-.012em;
-    margin:34px 0 6px;
+    margin:34px 0 8px;
     line-height:1.3;
   }
   h4{
@@ -181,31 +181,22 @@
     background:var(--surface);
     border:1px solid var(--line-soft);
     border-radius:6px;
-    padding:14px 18px;
+    padding:16px 20px;
     overflow-x:auto;
     line-height:1.5;
-    margin:0 0 20px;
+    margin:0 0 24px;
   }
   pre code{background:transparent;padding:0;}
   a{color:var(--accent);text-decoration:none;}
   a:hover{text-decoration:underline;}
 
   strong{font-weight:640;}
-  kbd{
-    font-family:var(--mono);
-    font-size:.82em;
-    background:var(--surface-2);
-    border:1px solid var(--line);
-    border-bottom-width:2px;
-    border-radius:4px;
-    padding:1px 6px;
-  }
 
-  .scroll{overflow-x:auto;margin:0 0 24px;}
+  .scroll{overflow-x:auto;margin:0 0 28px;}
   table{
     border-collapse:collapse;
     width:100%;
-    min-width:600px;
+    min-width:680px;
     font-size:14.5px;
     font-variant-numeric:tabular-nums;
   }
@@ -234,7 +225,7 @@
   .note{
     background:var(--surface);
     border-left:3px solid var(--ink-3);
-    border-radius:0 4px 4px 0;
+    border-radius:0 6px 6px 0;
     padding:14px 18px;
     margin:22px 0 26px;
     max-width:var(--measure);
@@ -253,6 +244,23 @@
     margin-bottom:6px;
   }
 
+  .mermaid-box {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 24px 0 32px;
+    overflow-x: auto;
+    display: flex;
+    justify-content: center;
+  }
+  .mermaid {
+    width: 100%;
+    min-width: 600px;
+    display: flex;
+    justify-content: center;
+  }
+
   footer{
     margin-top:72px;
     padding-top:24px;
@@ -262,17 +270,29 @@
     color:var(--ink-3);
   }
 </style>
+<!-- Mermaid Support -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: isDark ? 'dark' : 'default',
+      securityLevel: 'loose',
+      fontFamily: 'Segoe UI, sans-serif'
+    });
+  });
+</script>
 </head>
 <body>
 <div class="wrap">
 
 <header class="masthead">
-  <div class="eyebrow">Tài liệu kiến trúc · xcptool</div>
-  <h1>Kiến trúc hệ thống</h1>
+  <div class="eyebrow">Tài liệu kiến trúc chi tiết · xcptool</div>
+  <h1>Kiến trúc phần mềm</h1>
   <p class="standfirst">
-    Tài liệu mô tả chi tiết thiết kế kiến trúc đa tầng, hợp đồng <code>session/api.py</code>,
-    <strong>ASAM A2L parser</strong>, <strong>DAQ engine</strong>, giao diện đồ họa <strong>PySide6 Fluent</strong>
-    và chiến lược kiểm thử tự động của <strong>xcptool</strong> (cập nhật sau khi hoàn thành M1 &rarr; M6).
+    Tài liệu đặc tả toàn diện cấu trúc phân tầng, phân rã module, các sơ đồ tương tác &amp; luồng dữ liệu thời gian thực,
+    mô hình đa luồng (threading model) và cơ chế phân định ranh giới AST của <strong>xcptool</strong> (hoàn tất M1 &rarr; M5).
   </p>
   <div class="xref">
     Xem thêm: <a href="xcp-user-manual.html">Hướng dẫn sử dụng (USER_MANUAL)</a> · <a href="xcp-dev-plan.html">Kế hoạch phát triển (DEV_PLAN)</a>
@@ -281,59 +301,112 @@
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">01 — Tổng quan</span>Hai nguyên tắc cốt lõi</h2>
+  <h2><span class="num">01 — Triết lý thiết kế</span>Bốn nguyên tắc cốt lõi</h2>
 
   <p class="lede">
-    xcptool là công cụ PC (Python + PySide6) thay thế CANape/INCA cho việc đo lường và hiệu chỉnh ECU
-    qua giao thức XCP trên CAN. Hai nguyên tắc chi phối mọi quyết định thiết kế:
+    xcptool là công cụ PC (Python 3.12 + PySide6 / Fluent UI) phục vụ đo lường và hiệu chỉnh ECU qua giao thức
+    <strong>ASAM XCP on CAN / CAN FD</strong>. Hệ thống được xây dựng dựa trên 4 nguyên tắc bất biến:
   </p>
 
   <ol>
-    <li><strong>Độc lập với firmware trong <code>driver/</code>:</strong> xcptool không import, không đọc, không giả định bất cứ thứ gì từ repo firmware ECU TC2xx. Quan hệ duy nhất là các gói tin XCP truyền trên bus CAN.</li>
-    <li><strong>Độc lập với một ECU cụ thể:</strong> Không hardcode MAX_CTO, CAN ID, byte order, hay đơn vị timestamp ở bất kỳ đâu trong logic. Mọi đặc tính đến từ cấu hình của user (<code>BusConfig</code>) hoặc đọc tự động từ ECU lúc CONNECT (<code>SlaveCaps</code>).</li>
+    <li><strong>Độc lập tuyệt đối với firmware ECU (<code>driver/</code>):</strong> xcptool hoàn toàn không import, không phụ thuộc và không giả định bất kỳ cấu trúc nội bộ nào từ thư mục firmware. Quan hệ duy nhất giữa Master và Slave là luồng byte giao tiếp chuẩn XCP trên bus CAN.</li>
+    <li><strong>ECU &amp; Hardware-Agnostic:</strong> Không hardcode các thông số kỹ thuật (<code>MAX_CTO</code>, <code>MAX_DTO</code>, <code>CAN ID</code>, Endianness, Timestamp unit) trong mã nguồn logic. Mọi đặc tính đến từ <code>BusConfig</code> và tự động khám phá qua <code>SlaveCaps</code> lúc CONNECT.</li>
+    <li><strong>FakeSession trước — RealSession sau:</strong> Khung giao tiếp chuẩn hóa qua hợp đồng <code>session/api.py</code> cho phép phát triển UI và Core song song độc lập. Chế độ <code>--session fake</code> cung cấp môi trường giả lập ECU thật (<code>FakeSlave</code>) khép vòng với mô hình động học xe (<code>PidPlant</code>).</li>
+    <li><strong>Kiểm soát ranh giới bằng phân tích cú pháp tĩnh (AST Boundary Enforcement):</strong> Toàn bộ ranh giới kiến trúc và quy tắc cấm phụ thuộc chéo giữa các tầng được kiểm tra tự động ở mức cây cú pháp trừu tượng qua <code>tests/test_boundaries.py</code>.</li>
   </ol>
-
-  <p>Cả hai nguyên tắc được <strong>cưỡng chế bằng test AST</strong> (<code>tests/test_boundaries.py</code>) trước mỗi commit.</p>
 </section>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">02 — Các tầng</span>Kiến trúc hệ thống</h2>
+  <h2><span class="num">02 — Phân tầng</span>Tổ chức Layer &amp; Phân rã Module</h2>
 
   <pre><code>┌────────────────────────────────────────────────────────────────────────┐
-│  ui/          MainWindow, CalibrationView, MeasurementView,            │
-│               TraceView, MemoryView, ConsoleView, DeviceDialog         │
-│  cli/         lệnh `xcptool …` — consumer thứ hai của contract          │
+│  Presentation Layer                                                    │
+│  - ui/   (MainWindow, CalibrationView, MeasurementView, TraceView,     │
+│           MemoryView, ConsoleView, DeviceDialog, DockManager, Theme)   │
+│  - cli/  (Command Line Interface: devices, connect, read, write, ...)  │
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │  chỉ qua session.api.Session (Protocol)
+                                    │  Chỉ tương tác qua Session Protocol
 ┌───────────────────────────────────▼────────────────────────────────────┐
-│  session/     api.py (CONTRACT) · real.py (backend) · fake.py          │
-│               a2l/ (parser & database symbols)                         │
+│  Contract & Session Layer                                              │
+│  - session/api.py      Contract giao diện, Dataclasses, Exception Tree │
+│  - session/real.py     RealSession (Cầu nối giữa Master, A2L, Driver)  │
+│  - session/fake.py     FakeSession (Stub nhẹ phục vụ test UI đơn lập)  │
 └───────┬────────────────────────────────────────────────┬───────────────┘
-        │ RealSession dùng cả ba                         │ FakeSession
+        │ RealSession điều phối                          │ FakeSession
 ┌───────▼──────────────────┐  ┌────────────────────────┐ ┌───────▼───────┐
-│  master/   protocol core │  │  a2l/                  │ │ (stub UI test │
-│  - core.py (XcpMaster)   │  │  - parser.py           │ │  thuần)       │
-│  - daq.py (DAQ engine)   │  │  - database.py         │ └───────────────┘
-│  - codec.py, trace.py    │  │  - types.py            │
-└───────┬──────────────────┘  └────────────────────────┘
-        │ Link Protocol (send/recv/close)
-┌───────▼──────────────────┐
-│  transport/  registry đa │
-│  backend, python-can     │
-└──────────────────────────┘</code></pre>
+│  Domain / Protocol Layer │  │  A2L Parser Layer      │ │ (UI Test Stub)│
+│  - master/core.py        │  │  - a2l/parser.py       │ └───────────────┘
+│    (XcpMaster, RX Thread)│  │  - a2l/database.py     │
+│  - master/daq.py         │  │  - a2l/types.py        │
+│    (DAQ Engine, Pack ODT)│  └────────────────────────┘
+│  - master/codec.py       │
+│  - master/trace.py       │
+└───────┬──────────────────┘
+        │ Giao thức Link (send/recv/close)
+┌───────▼──────────────────────────────────────────────┐
+│  Transport Layer                                     │
+│  - transport/registry.py (Quản lý đa backend)        │
+│  - transport/pycan.py    (Cầu nối python-can)        │
+│  - Backends: PEAK, Vector, ETAS, slcan, virtual      │
+└──────────────────────────────────────────────────────┘
+        ▲                                      ▲
+        │ CAN frames                           │ Virtual Bus
+┌───────┴──────────────────────────────────────┴───────┐
+│  Simulation & DevTools (Chỉ nạp khi test/demo)       │
+│  - devtools/fakeslave.py (ECU ảo chuẩn XCP)          │
+│  - devtools/pid_plant.py (Mô hình vật lý xe 50Hz)    │
+└──────────────────────────────────────────────────────┘</code></pre>
 
-  <h3>Ranh giới import cưỡng chế bằng AST</h3>
+  <h3>Trách nhiệm chi tiết của từng Module</h3>
   <div class="scroll">
   <table>
-    <thead><tr><th>Package</th><th>Cấm import</th></tr></thead>
+    <thead><tr><th>Module</th><th>File cốt lõi</th><th>Trách nhiệm kiến trúc</th></tr></thead>
     <tbody>
-      <tr><td><code>master/</code></td><td><code>can</code>, <code>PySide6</code>, <code>xcptool.ui</code>, <code>xcptool.cli</code>, <code>xcptool.transport</code></td></tr>
-      <tr><td><code>transport/</code></td><td><code>PySide6</code>, <code>xcptool.ui</code>, <code>xcptool.cli</code>, <code>xcptool.master</code></td></tr>
-      <tr><td><code>a2l/</code></td><td><code>can</code>, <code>PySide6</code>, <code>xcptool.ui</code>, <code>xcptool.cli</code>, <code>xcptool.master</code>, <code>xcptool.transport</code></td></tr>
-      <tr><td><code>ui/</code></td><td><code>can</code>, <code>xcptool.master</code>, <code>xcptool.transport</code>, <code>xcptool.a2l</code></td></tr>
-      <tr><td><code>cli/</code></td><td><code>can</code>, <code>xcptool.master</code>, <code>xcptool.transport</code>, <code>xcptool.a2l</code></td></tr>
-      <tr><td><code>session/api.py</code>, <code>fake.py</code></td><td><code>can</code>, <code>PySide6</code>, <code>xcptool.master</code>, <code>xcptool.transport</code></td></tr>
+      <tr>
+        <td><code>xcptool.session</code></td>
+        <td><code>api.py</code>, <code>real.py</code>, <code>fake.py</code></td>
+        <td><strong>Contract ranh giới duy nhất</strong>. Định nghĩa toàn bộ kiểu dữ liệu nghiệp vụ (<code>BusConfig</code>, <code>SlaveCaps</code>, <code>A2LDatabase</code>, <code>SamplePoint</code>), cây ngoại lệ chuẩn và lớp hiện thực <code>RealSession</code>. Tách rời hoàn toàn giao diện khỏi protocol.</td>
+      </tr>
+      <tr>
+        <td><code>xcptool.master</code></td>
+        <td><code>core.py</code>, <code>daq.py</code>, <code>codec.py</code>, <code>trace.py</code></td>
+        <td><strong>Domain Protocol &amp; DAQ Engine</strong>. Quản lý kết nối XCP, mã hóa/giải mã frame CTO, thực thi giao dịch đồng bộ chống reentrancy, luồng nhận RX nền, thuật toán đóng gói ODT (<code>pack_odts</code>), cấu hình DAQ (<code>configure_daq</code>), giải mã DTO (<code>decode_dto</code>) và <code>TimestampAccumulator</code>.</td>
+      </tr>
+      <tr>
+        <td><code>xcptool.a2l</code></td>
+        <td><code>parser.py</code>, <code>database.py</code>, <code>types.py</code></td>
+        <td><strong>ASAM MCD-2 MC Parser</strong>. Block-tree parser tokenizer chuẩn hóa, bóc tách các block <code>CHARACTERISTIC</code>, <code>MEASUREMENT</code>, <code>RECORD_LAYOUT</code>, <code>IF_DATA</code>, liên kết RecordLayout với biến và hỗ trợ phân rã mảng / struct.</td>
+      </tr>
+      <tr>
+        <td><code>xcptool.transport</code></td>
+        <td><code>registry.py</code>, <code>pycan.py</code>, <code>config.py</code>, <code>quiet.py</code></td>
+        <td><strong>Hardware Abstraction Layer</strong>. Quản lý driver CAN (PEAK PCAN, Vector XL, ETAS BOA, CANable slcan, Virtual CAN). Xử lý chuẩn hóa DLC (pad 8 byte CAN Classic hoặc pad 64 byte CAN FD), lọc thông điệp êm (<code>quiet.py</code>).</td>
+      </tr>
+      <tr>
+        <td><code>xcptool.ui</code></td>
+        <td><code>main_window.py</code>, <code>calibration_view.py</code>, <code>measurement_view.py</code>, <code>trace_view.py</code>, <code>dock_manager.py</code>, <code>theme.py</code></td>
+        <td><strong>Presentation Layer (PySide6 Fluent)</strong>. Giao diện đồ họa hiện đại, quản lý Docking, đồng bộ theme Dark/Light, điều phối tác vụ I/O qua <code>TaskRunner</code> (không bao giờ block UI thread), đồ thị real-time OpenGL/NumPy (<code>pyqtgraph</code>), phân cấp cây thông số Struct/Array.</td>
+      </tr>
+      <tr>
+        <td><code>xcptool.devtools</code></td>
+        <td><code>fakeslave.py</code>, <code>pid_plant.py</code></td>
+        <td><strong>Simulation Environment</strong>. Cung cấp <code>FakeSlave</code> xử lý lệnh XCP thật qua virtual CAN bus và <code>PidPlant</code> mô phỏng hành vi động học xe (PID controller, tốc độ xe, RPM, nhiệt độ nước) phục vụ kiểm thử end-to-end.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Ma trận ranh giới Import (AST Boundary Rules)</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Package</th><th>Được phép Import</th><th>Bị CẤM Import</th></tr></thead>
+    <tbody>
+      <tr><td><code>master/</code></td><td>Python stdlib, <code>session.api</code></td><td><code>can</code>, <code>PySide6</code>, <code>xcptool.ui</code>, <code>xcptool.transport</code>, <code>xcptool.cli</code></td></tr>
+      <tr><td><code>transport/</code></td><td>Python stdlib, <code>can</code> (python-can), <code>session.api</code></td><td><code>PySide6</code>, <code>xcptool.ui</code>, <code>xcptool.master</code>, <code>xcptool.cli</code></td></tr>
+      <tr><td><code>a2l/</code></td><td>Python stdlib</td><td><code>can</code>, <code>PySide6</code>, <code>xcptool.master</code>, <code>xcptool.ui</code>, <code>xcptool.session</code></td></tr>
+      <tr><td><code>ui/</code></td><td>Python stdlib, <code>PySide6</code>, <code>qfluentwidgets</code>, <code>pyqtgraph</code>, <code>session.api</code></td><td><code>can</code>, <code>xcptool.master</code>, <code>xcptool.transport</code>, <code>xcptool.a2l</code></td></tr>
+      <tr><td><code>session/api.py</code></td><td>Python stdlib (<code>typing</code>, <code>dataclasses</code>, <code>enum</code>, <code>pathlib</code>)</td><td><code>can</code>, <code>PySide6</code>, <code>xcptool.master</code>, <code>xcptool.transport</code>, <code>xcptool.ui</code></td></tr>
     </tbody>
   </table>
   </div>
@@ -341,48 +414,293 @@
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">03 — Contract</span>Hợp đồng <code>session/api.py</code></h2>
+  <h2><span class="num">03 — Đa luồng</span>Mô hình luồng &amp; An toàn luồng (Threading Model)</h2>
 
-  <h3>3.1 Luật Thread &amp; Non-reentrant</h3>
+  <p class="lede">
+    Để đảm bảo giao diện luôn mượt mà 60 FPS khi bus CAN bị flood hàng nghìn frame mỗi giây, `xcptool` phân chia các tác vụ vào các luồng độc lập:
+  </p>
+
+  <div class="mermaid-box">
+    <div class="mermaid">
+flowchart TB
+    subgraph UI_Thread["UI Thread (Qt Event Loop)"]
+        MW[MainWindow / Views]
+        TR[TaskRunner]
+        Timer[QTimer 40ms\n_poll_trace]
+        Scope[MeasurementView\nScope Render]
+    end
+
+    subgraph ThreadPool["Worker Thread Pool (QThreadPool)"]
+        Worker[QRunnable Worker\nConnect, Upload, Download,\nLoad A2L, Start/Stop DAQ]
+    end
+
+    subgraph Protocol_Threads["Master / Session Background Threads"]
+        RX[XcpMaster RX Thread\n_rx_loop: can.recv]
+        TraceRing[(TraceBuffer\nRing Buffer)]
+        DaqRing[(DaqRingBuffer\n10,000 samples)]
+    end
+
+    subgraph Hardware_Bus["CAN Hardware / Virtual Bus"]
+        CAN[CAN Driver / Bus]
+    end
+
+    MW -->|Yêu cầu I/O chặn| TR
+    TR -->|Submit Task| Worker
+    Worker -->|Gọi hàm đồng bộ| RealSession
+    RealSession -->|transact lock| CAN
+    Worker -->|Qt Signal on_ok/on_error| MW
+
+    CAN -->|Khung tin CAN đến| RX
+    RX -->|Phân loại: CTO| Worker
+    RX -->|Phân loại: Trace| TraceRing
+    RX -->|Phân loại: DTO| DaqRing
+
+    Timer -->|drain_trace 200| TraceRing
+    Timer -->|drain_daq| DaqRing
+    Timer -->|Update Curves & Live Values| Scope
+    </div>
+  </div>
+
+  <h3>Quy tắc an toàn luồng (Thread-Safety Rules)</h3>
   <ul>
-    <li><strong>Session không biết Qt:</strong> Không bao giờ gọi ngược lên UI.</li>
-    <li><strong>Nhóm chặn:</strong> (<code>connect</code>, <code>read</code>, <code>write</code>, <code>get_page</code>, <code>set_page</code>, <code>copy_page</code>, <code>load_a2l</code>, <code>start_daq</code>, <code>stop_daq</code>, <code>raw_command</code>): Phải chạy trên worker thread qua <code>TaskRunner</code>.</li>
-    <li><strong>Nhóm không chặn:</strong> (<code>state</code>, <code>caps</code>, <code>symbols</code>, <code>drain_trace()</code>, <code>drain_daq()</code>, <code>load_config()</code>): Được gọi trực tiếp trên UI thread.</li>
-    <li><strong>Non-reentrant:</strong> Nếu có lệnh đang chờ response mà bị gọi lệnh khác chồng lên &rarr; ném ngay <code>BusyError</code>.</li>
-    <li><strong><code>close()</code> idempotent:</strong> Không bao giờ ném ngoại lệ, an toàn khi gọi trong <code>closeEvent()</code>.</li>
+    <li><strong>Session không phụ thuộc Qt:</strong> Không bao giờ gọi ngược (callback) trực tiếp lên UI thread.</li>
+    <li><strong>I/O không chặn trên UI:</strong> Toàn bộ thao tác I/O bắt buộc bọc trong <code>TaskRunner</code> (<code>QRunnable</code>) tại <code>QThreadPool</code>, trả kết quả qua Signal/Slot (<code>on_ok</code>, <code>on_error</code>).</li>
+    <li><strong>Transaction Lock chống Reentrancy:</strong> <code>XcpMaster.transact()</code> được bảo vệ bởi <code>threading.Lock(blocking=False)</code>, ném ngay <code>BusyError</code> nếu có lệnh gửi đè khi lệnh trước chưa kết thúc.</li>
+    <li><strong>Xả đệm theo nhịp (Polling Throttling):</strong> UI định kỳ 40ms gọi <code>drain_trace(max_items=200)</code> và <code>drain_daq()</code>, tránh đơ UI khi khởi động DAQ.</li>
   </ul>
 </section>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">04 — Core &amp; DAQ</span>Protocol Core &amp; DAQ Engine</h2>
+  <h2><span class="num">04 — Luồng tương tác</span>Sơ đồ tuần tự các nghiệp vụ cốt lõi</h2>
 
-  <h3>1. XcpMaster (<code>master/core.py</code>)</h3>
-  <p>Quản lý vòng đời kết nối, kênh RX thread riêng biệt bắt và phân loại frame. Hỗ trợ toàn bộ tập lệnh XCP cơ bản và các lệnh nguyên tố DAQ (<code>alloc_daq</code>, <code>alloc_odt</code>, <code>alloc_odt_entry</code>, <code>write_daq</code>, <code>set_daq_list_mode</code>, <code>start_stop_daq_list</code>, <code>start_stop_synch</code>).</p>
+  <h3>1. Luồng Khởi tạo &amp; Kết nối Thiết bị (Device Connection &amp; Capability Discovery)</h3>
+  <div class="mermaid-box">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor User
+    participant DD as DeviceDialog
+    participant MW as MainWindow
+    participant TR as TaskRunner (Worker)
+    participant RS as RealSession
+    participant XM as XcpMaster
+    participant TP as PyCanTransport
+    participant ECU as CAN Bus / ECU
 
-  <h3>2. Thuật toán đóng gói ODT (<code>master/daq.py::pack_odts</code>)</h3>
-  <p>Tính toán overhead timestamp trên ODT 0 (5 byte overhead gồm PID + 4B timestamp &rarr; ngân sách còn lại 3B trên CAN DLC=8). Tách tín hiệu nhỏ và lớn để đóng gói tối ưu theo first-fit-decreasing.</p>
+    User->>DD: Chọn Interface & Bitrate -> Bấm Connect
+    DD->>MW: Trả về BusConfig
+    MW->>TR: submit(session.connect, cfg)
+    Note over MW: UI chuyển sang trạng thái CONNECTING (khóa nút)
+    
+    TR->>RS: connect(cfg)
+    RS->>TP: create_transport(cfg) -> mở kênh CAN
+    RS->>XM: start(transport) -> khởi chạy RX thread
+    RS->>XM: connect()
+    XM->>ECU: Gửi frame CONNECT (0xFF, 0x00)
+    ECU-->>XM: Trả lời RES (0xFF, Resource, CommMode, MAX_CTO, MAX_DTO, ...)
+    XM->>RS: Trả về SlaveCaps
+    RS->>TR: Hoàn tất connect
+    TR-->>MW: Signal on_ok(SlaveCaps)
+    
+    Note over MW: UI cập nhật trạng thái CONNECTED,\nenable các tab và hiển thị thông tin ECU
+    </div>
+  </div>
 
-  <h3>3. Cấu hình DAQ tuần tự &amp; DTO Decoding</h3>
-  <p>Thực thi chuỗi cấu hình chuẩn ASAM MCD-1b và xây dựng bảng tra cứu $O(1)$ <code>PID &rarr; PidEntry</code>. Bộ tích lũy <code>TimestampAccumulator</code> theo dõi và bù trừ tràn số 32-bit (rollover) mỗi 42.9 giây, giữ timestamp tăng đơn điệu tuyệt đối.</p>
+  <h3>2. Luồng Nạp A2L &amp; Liên kết Symbol (A2L Parsing &amp; Symbol Resolution)</h3>
+  <div class="mermaid-box">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor User
+    participant CV as CalibrationView
+    participant MW as MainWindow
+    participant TR as TaskRunner (Worker)
+    participant RS as RealSession
+    participant A2L as a2l.database
+    participant Parser as a2l.parser
+
+    User->>CV: Bấm "Load A2L…" -> Chọn file *.a2l
+    CV->>MW: Signal a2l_load_requested(filepath)
+    MW->>TR: submit(session.load_a2l, path)
+    
+    TR->>RS: load_a2l(path)
+    RS->>A2L: load(path)
+    A2L->>Parser: tokenize_and_build_tree(content)
+    Parser-->>A2L: Trả về Block Tree (CHARACTERISTIC, MEASUREMENT, RECORD_LAYOUT)
+    A2L->>A2L: _resolve(): Liên kết RecordLayout vào Characteristic,\ntính toán offset, byte size, data types
+    A2L-->>RS: A2LDatabase instance
+    RS-->>TR: Hoàn tất
+    TR-->>MW: Signal on_ok()
+    
+    MW->>CV: set_database(session.symbols) -> Dựng cây hiệu chỉnh
+    MW->>MW: measurement_view.set_database(session.symbols) -> Dựng cây tín hiệu
+    Note over MW: Đồng bộ Navigation & giữ nguyên tab hiện tại
+    </div>
+  </div>
+
+  <h3>3. Luồng Hiệu chỉnh Tham số &amp; Quản lý Trang (Calibration Read/Write &amp; Page Handling)</h3>
+  <div class="mermaid-box">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor User
+    participant CV as CalibrationView
+    participant MW as MainWindow
+    participant TR as TaskRunner (Worker)
+    participant RS as RealSession
+    participant XM as XcpMaster
+    participant ECU as ECU (Slave)
+
+    User->>CV: Double-click sửa giá trị -> Enter
+    CV->>CV: _encode_display_to_raw() -> raw_bytes
+    CV->>MW: Signal cal_write_requested(addr, ext, raw_bytes)
+    MW->>TR: submit(session.download, addr, ext, data)
+    
+    TR->>RS: download(addr, ext, data)
+    RS->>XM: download(addr, ext, data)
+    XM->>ECU: SET_MTA (0xF6, addr, ext)
+    ECU-->>XM: RES (0xFF)
+    XM->>ECU: DOWNLOAD (0xF0, size, data)
+    
+    alt Ghi thành công trên Working Page (RAM)
+        ECU-->>XM: RES (0xFF)
+        XM-->>RS: OK
+        RS-->>TR: OK
+        TR-->>MW: Signal on_ok()
+        MW->>CV: Đánh dấu dòng đã đồng bộ (bỏ dirty indicator)
+    else Ghi thất bại do trang Reference được bảo vệ (Flash/ROM)
+        ECU-->>XM: ERR (0xFE, ERR_WRITE_PROTECTED)
+        XM-->>RS: Ném WriteProtectedError
+        RS-->>TR: Ném WriteProtectedError
+        TR-->>MW: Signal on_error(WriteProtectedError)
+        MW->>User: Hiển thị Dialog: "Trang bị khóa ghi. Chuyển sang Working Page?"
+        User->>MW: Đồng ý
+        MW->>TR: submit(session.set_cal_page, seg, mode, page_ram)
+        TR->>RS: set_cal_page(...) -> XCP SET_CAL_PAGE
+    end
+    </div>
+  </div>
+
+  <h3>4. Luồng Cấu hình DAQ &amp; Thu thập Dữ liệu Tốc độ cao (DAQ Engine &amp; Scope 50–100Hz)</h3>
+  <div class="mermaid-box">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor User
+    participant MV as MeasurementView
+    participant MW as MainWindow
+    participant TR as TaskRunner
+    participant RS as RealSession
+    participant DAQ as master.daq
+    participant XM as XcpMaster
+    participant RX as XcpMaster RX Thread
+    participant ECU as ECU
+
+    User->>MV: Chọn các Checkbox tín hiệu -> Bấm "Bắt đầu đo"
+    MV->>MV: Tự động tách mảng MATRIX_DIM thành [0..N-1]
+    MV->>MW: Signal daq_start_requested(signals)
+    MW->>TR: submit(session.start_daq, daq_lists)
+    
+    TR->>RS: start_daq(daq_lists)
+    RS->>DAQ: pack_odts(daq_lists, max_dto=8, timestamp=True)
+    Note over DAQ: ODT 0: budget 3B (do trừ 1B PID + 4B TS)\nODT 1+: budget 7B (First-Fit-Decreasing)
+    
+    RS->>DAQ: configure_daq(transport, packed_lists)
+    DAQ->>XM: Chuỗi lệnh: FREE_DAQ -> ALLOC_DAQ -> ALLOC_ODT -> ALLOC_ODT_ENTRY\n-> SET_DAQ_PTR -> WRITE_DAQ -> SET_DAQ_LIST_MODE -> START_STOP_DAQ_LIST(select)
+    XM->>ECU: Gửi tuần tự chuỗi cấu hình DAQ
+    ECU-->>XM: Xác nhận và trả về first_pid cho từng list
+    DAQ->>DAQ: Dựng bảng tra cứu phẳng O(1): pid -> (signals, offsets, datatypes)
+    DAQ->>XM: START_STOP_SYNCH (0xDC, start)
+    XM->>ECU: START_STOP_SYNCH
+    ECU-->>XM: RES (0xFF)
+    
+    TR-->>MW: Signal on_ok() -> MV chuyển sang trạng thái "Đang đo"
+    
+    par Luồng nhận DTO nền (100Hz)
+        loop Khi ECU bắn DTO frame
+            ECU->>RX: DTO Frame (PID + TS + Payload)
+            RX->>RS: _on_daq_frame(frame)
+            RS->>DAQ: decode_dto(frame, pid_table, ts_accum)
+            DAQ->>DAQ: Trừ cờ overrun, giải mã timestamp qua TimestampAccumulator\n(tự cộng 2^32 khi tràn chu kỳ 42.9s)
+            DAQ-->>RS: List[SamplePoint]
+            RS->>RS: Đẩy vào DaqRingBuffer (10,000 samples)
+        end
+    and Luồng Timer UI (chu kỳ 40ms)
+        loop Mỗi 40ms (_poll_trace)
+            MW->>RS: drain_daq()
+            RS-->>MW: Trả về danh sách SamplePoint mới
+            MW->>MV: on_samples(samples)
+            MV->>MV: Cập nhật giá trị số thực cột "Giá trị" (Tree)
+            alt Chế độ Scope đang BẬT
+                MV->>MV: np.fromiter() chuyển đổi dữ liệu nhanh
+                MV->>MV: PyOpenGL Curve.setData() vẽ đồ thị thời gian thực
+            else Chế độ Scope đang TẮT
+                MV->>MV: Bỏ qua 100% việc tính toán và vẽ đồ thị (siêu nhẹ)
+            end
+        end
+    end
+    </div>
+  </div>
+
+  <h3>5. Luồng Giả lập Xe &amp; ECU khép vòng (<code>--session fake</code>)</h3>
+  <div class="mermaid-box">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant App as xcptool.ui.app
+    participant SF as session_factory
+    participant FakeSess as _FakeEcuSession (RealSession)
+    participant Slave as FakeSlave (ECU ảo)
+    participant Plant as PidPlant (Xe & PID 50Hz)
+    participant Bus as Virtual CAN Bus
+
+    App->>SF: create_session("fake")
+    SF->>Slave: Khởi tạo FakeSlave(mem_size=256MB) trên "virtual" bus
+    SF->>Plant: Khởi tạo PidPlant(slave)
+    SF->>FakeSess: Khởi tạo RealSession(BusConfig("virtual", ...))
+    
+    Plant->>Plant: Khởi chạy thread mô phỏng 50Hz
+    
+    loop Mỗi 20ms (50Hz)
+        Plant->>Slave: peek(0x80100050) -> Đọc speedPid_kp, speedPid_ki, outMin, outMax
+        Plant->>Plant: Tính toán sai số: error = target_speed (80km/h) - current_speed\nTính PID output & mô hình cản xe
+        Plant->>Slave: poke(0x90000000) -> Ghi vehicleSpeedKph, engineRpm,\nspeedPidTelemetry_*, coolantTempC
+    end
+    
+    Note over FakeSess,Slave: Khi Master gửi lệnh hiệu chỉnh kp/ki,\nFakeSlave nhận lệnh qua bus ảo, cập nhật RAM.\nPlant đọc được giá trị mới ngay ở chu kỳ sau\nvà làm thay đổi trực tiếp đồ thị đáp ứng tốc độ!
+    </div>
+  </div>
 </section>
 
 <!-- ============================================================ -->
 <section>
-  <h2><span class="num">05 — Giao diện</span>Tối ưu hóa UI &amp; Hiển thị</h2>
+  <h2><span class="num">05 — Cấu trúc file</span>Bản đồ mã nguồn dự án</h2>
 
-  <h3>1. CalibrationView (Panel Hiệu chỉnh)</h3>
-  <p>Tự động phân cấp nhóm biến Struct thành node cha <code>STRUCT (N)</code>, mở rộng mảng Array <code>[0..N-1]</code>. Hỗ trợ sửa inline (double-click), đánh dấu dirty màu cam, hiển thị kiểu dữ liệu chuẩn C (<code>UINT8</code>, <code>FLOAT32</code>) và cơ chế bảo vệ Working/Reference page.</p>
-
-  <h3>2. MeasurementView (Panel Đo lường &amp; Scope)</h3>
-  <p>Hiển thị danh mục tín hiệu kèm cột <strong>Giá trị thời gian thực (Live Value)</strong> cập nhật 40ms. Đồ thị scope đa đường vẽ bằng <code>pyqtgraph</code> tăng tốc OpenGL và NumPy <code>np.fromiter()</code>. Tích hợp công tắc bật/tắt scope giúp giải phóng 100% tài nguyên render khi chỉ quan sát bảng số liệu.</p>
-
-  <h3>3. TraceView Throttling</h3>
-  <p>Mặc định tắt bộ lọc loại frame <code>DAQ</code> để tránh flood 50–100 frame DTO/giây gây nghẽn UI thread. Tích hợp lazy <code>scrollToBottom()</code> chỉ chạy khi tab Trace đang thực sự hiển thị trên màn hình.</p>
+  <pre><code>xcptool/
+├── ARCHITECTURE.md              Tài liệu kiến trúc hệ thống
+├── USER_MANUAL.md                Hướng dẫn sử dụng chi tiết cho người dùng
+├── DEV_PLAN.md                   Kế hoạch phát triển & theo dõi milestone
+├── pyproject.toml                Khai báo dự án, dependencies & cấu hình pytest
+├── config.toml                   File lưu cấu hình runtime (bitrate, device, last A2L)
+├── setup.bat / run.bat           Script tự động cài đặt môi trường và khởi chạy
+├── tests/
+│   ├── test_boundaries.py        Kiểm tra ranh giới kiến trúc bằng AST
+│   ├── unit/                     Unit tests: parser A2L, pack ODT, decode DTO
+│   ├── integration/              Integration tests: RealSession + FakeSlave qua virtual bus
+│   └── ui/                       UI tests (PySide6 / pytest-qt headless)
+└── src/xcptool/
+    ├── session/                  CONTRACT & Quản lý phiên (api.py, real.py, fake.py)
+    ├── master/                   XCP Protocol Core & DAQ Engine (core.py, daq.py, codec.py)
+    ├── a2l/                      ASAM MCD-2 MC Parser (parser.py, types.py, database.py)
+    ├── transport/                Tầng trừu tượng phần cứng CAN (registry.py, pycan.py)
+    ├── devtools/                 Môi trường giả lập (fakeslave.py, pid_plant.py)
+    ├── ui/                       Giao diện đồ họa Fluent (views, dock_manager, theme.py)
+    └── cli/                      Giao diện dòng lệnh (main.py)</code></pre>
 </section>
 
 <footer>
-  xcptool Architecture Specification · Hoàn tất mốc M1 &rarr; M6 · Xem USER_MANUAL.md để biết hướng dẫn sử dụng
+  xcptool Architecture Specification · Hoàn tất M1 &rarr; M5 · Xem ARCHITECTURE.md để biết bản Markdown
 </footer>
 
 </div>

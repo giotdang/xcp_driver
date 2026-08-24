@@ -351,3 +351,4 @@ không nhảy theo Navigation; Dark theme vỡ khi Dock floating) đã fix, xem 
 | CLI xcptool command | Low priority, FakeSession test đủ | M5 |
 | Soak 30 phút đầy đủ (J2) | Đã có 5 phút sạch, đủ cho M1–M3 | Trước release |
 | PySide6-Fluent-Widgets license | Dual GPLv3/thương mại | Xác nhận trước M5 nếu dùng thương mại |
+| Winamp/Y2K skeuomorphic theme | Ý tưởng thẩm mỹ, không phục vụ mục tiêu M5; đọc số liệu chính xác quan trọng hơn hiệu ứng bevel/LCD font | Effort ước tính (2026-08-22): Mức 1 "retro tint" (chỉnh gradient trong `theme.py`) ~1–2 ngày; Mức 2 skeuomorphic đầy đủ (thay/custom-paint từng widget `qfluentwidgets`, vì lib này tự vẽ chứ không thuần QSS) ~1–2 tuần; Mức 3 "đúng chất" Winamp (borderless window tự vẽ, bitmap skin) ~3–4 tuần+, rủi ro cao |

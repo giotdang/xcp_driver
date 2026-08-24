@@ -182,13 +182,13 @@ class DeviceDialog(MessageBoxBase):
         self._custom_bit_timing = False
         self._f_clock = 80_000_000
         self._brp = 1
-        self._tseg1 = 14
-        self._tseg2 = 2
-        self._sjw = 1
+        self._tseg1 = 119
+        self._tseg2 = 40
+        self._sjw = 40
         self._dbrp = 1
-        self._dtseg1 = 14
-        self._dtseg2 = 2
-        self._dsjw = 1
+        self._dtseg1 = 29
+        self._dtseg2 = 10
+        self._dsjw = 10
 
         self._apply_initial_config()
 

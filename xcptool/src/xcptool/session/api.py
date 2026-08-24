@@ -142,15 +142,15 @@ class BusConfig:
     custom_bit_timing: bool = False
     f_clock: int = 80_000_000
     brp: int = 1
-    tseg1: int = 14
-    tseg2: int = 2
-    sjw: int = 1
+    tseg1: int = 119
+    tseg2: int = 40
+    sjw: int = 40
     
     # Custom Bit Timing (Data Phase - CAN FD only)
     dbrp: int = 1
-    dtseg1: int = 14
-    dtseg2: int = 2
-    dsjw: int = 1
+    dtseg1: int = 29
+    dtseg2: int = 10
+    dsjw: int = 10
 
 
 @dataclass

@@ -27,7 +27,7 @@ def open_pycan_bus(
     interface: str, cfg: BusConfig, package_hint: str, **extra: Any
 ) -> can.BusABC:
     """Mở `can.Bus` và quy mọi lỗi về cây ngoại lệ của contract."""
-    kwargs: dict[str, Any] = {"interface": interface, "channel": cfg.channel, **extra}
+    kwargs: dict[str, Any] = {"interface": interface, "channel": cfg.channel, "app_name":None,**extra}
     if cfg.is_fd:
         kwargs["fd"] = True
     if interface != "virtual":
@@ -38,12 +38,12 @@ def open_pycan_bus(
         if cfg.custom_bit_timing:
             if cfg.is_fd:
                 kwargs["timing"] = can.BitTimingFd(
-                    f_clock=80_000_000, brp=cfg.brp, tseg1=cfg.tseg1, tseg2=cfg.tseg2, sjw=cfg.sjw,
-                    dbrp=cfg.dbrp, dtseg1=cfg.dtseg1, dtseg2=cfg.dtseg2, dsjw=cfg.dsjw
+                    f_clock=cfg.f_clock, nom_brp=cfg.brp, nom_tseg1=cfg.tseg1, nom_tseg2=cfg.tseg2, nom_sjw=cfg.sjw,
+                    data_brp=cfg.dbrp, data_tseg1=cfg.dtseg1, data_tseg2=cfg.dtseg2, data_sjw=cfg.dsjw
                 )
             else:
                 kwargs["timing"] = can.BitTiming(
-                    f_clock=80_000_000, brp=cfg.brp, tseg1=cfg.tseg1, tseg2=cfg.tseg2, sjw=cfg.sjw, nosamp=1
+                    f_clock=cfg.f_clock, brp=cfg.brp, tseg1=cfg.tseg1, tseg2=cfg.tseg2, sjw=cfg.sjw, nof_samples=1
                 )
             
     # Filter out non-XCP frames at the hardware/OS level
