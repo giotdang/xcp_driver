@@ -18,7 +18,7 @@ from ..session.api import (
     DeviceNotFoundError,
     DriverMissingError,
 )
-from .base import CanFrame, Transport, round_to_can_fd_dlc
+from .base import CanFrame, Transport, floor_to_can_fd_dlc, round_to_can_fd_dlc
 
 __all__ = ["PyCanTransport", "open_pycan_bus"]
 
@@ -74,20 +74,26 @@ class PyCanTransport(Transport):
         self._send_lock = threading.Lock()
         self.max_frame_len = 64 if cfg.is_fd else 8
 
-    def send(self, can_id: int, data: bytes) -> bytes:
+    def send(self, can_id: int, data: bytes, max_len: int | None = None) -> bytes:
         payload = bytes(data)
         if self._cfg.is_fd:
             # CAN FD: tự động làm tròn lên nấc DLC hợp lệ (0..8, 12, 16, 20, 24, 32, 48, 64)
             target_len = round_to_can_fd_dlc(len(payload))
             if self._cfg.pad_dlc:
                 target_len = 64
+                if max_len is not None and max_len < 64:
+                    # ECU khai MAX_CTO nhỏ hơn 64 lúc CONNECT — buffer nhận của nó
+                    # chỉ lớn bằng đó dù bus vật lý là CAN FD. Đệm quá trần này có
+                    # thể tràn buffer phía ECU, nên chỉ đệm tới nấc DLC hợp lệ gần
+                    # nhất KHÔNG vượt quá max_len.
+                    target_len = max(floor_to_can_fd_dlc(max_len), round_to_can_fd_dlc(len(payload)))
             if len(payload) < target_len:
                 payload = payload.ljust(target_len, b"\x00")
         else:
             # Classic CAN: đệm 8 byte nếu ECU yêu cầu MAX_DLC_REQUIRED
-            max_len = 8
-            if self._cfg.pad_dlc and len(payload) < max_len:
-                payload = payload.ljust(max_len, b"\x00")
+            pad_len = 8
+            if self._cfg.pad_dlc and len(payload) < pad_len:
+                payload = payload.ljust(pad_len, b"\x00")
 
         msg = can.Message(
             arbitration_id=can_id,

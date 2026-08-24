@@ -93,6 +93,59 @@ def test_pycan_transport_classic_can_limit() -> None:
         transport.close()
 
 
+def test_pycan_transport_pad_dlc_capped_by_max_len() -> None:
+    """`max_len` (MAX_CTO thật của ECU) phải thắng target mặc định 64 byte khi
+    pad_dlc bật — ECU chỉ khai CTO=8 dù bus vật lý là CAN FD thì không được đệm
+    quá 8 byte, kẻo tràn buffer CTO cố định phía ECU."""
+    cfg = BusConfig(backend="virtual", channel="test_fd_pad_capped", is_fd=True, pad_dlc=True)
+    transport = open_virtual(cfg)
+    try:
+        sent = transport.send(0x600, bytes([1, 2, 3]), max_len=8)
+        assert sent == b"\x01\x02\x03\x00\x00\x00\x00\x00"
+
+        # max_len không phải nấc DLC hợp lệ -> làm tròn XUỐNG, không được vượt trần
+        sent2 = transport.send(0x600, bytes([1, 2]), max_len=10)
+        assert len(sent2) == 8
+
+        # Không truyền max_len (chưa CONNECT xong) -> giữ hành vi cũ, đệm hết 64
+        sent3 = transport.send(0x600, bytes([1, 2]))
+        assert len(sent3) == 64
+    finally:
+        transport.close()
+
+
+def test_pad_dlc_after_connect_respects_ecu_max_cto() -> None:
+    """Cổng end-to-end: ECU khai MAX_CTO=8 qua CONNECT dù bus là CAN FD với
+    pad_dlc bật -> mọi lệnh SAU CONNECT phải lên dây tối đa 8 byte, không phải
+    64 byte như XcpMaster từng đệm cứng trước khi biết MAX_CTO thật của ECU."""
+    channel = "can_fd_short_max_cto_test"
+    slave_cfg = SlaveConfig(channel=channel, max_cto=8, max_dto=8, is_fd=True, pad_dlc=True)
+    bus_cfg = BusConfig(
+        backend="virtual", channel=channel, is_fd=True,
+        cro_id=slave_cfg.cro_id, dto_id=slave_cfg.dto_id, pad_dlc=True,
+    )
+    with FakeSlave(slave_cfg) as slave:
+        transport = open_virtual(bus_cfg)
+        master = XcpMaster(transport, bus_cfg)
+        try:
+            caps = master.connect()
+            assert caps.max_cto == 8
+            master.trace.drain(200)  # bỏ CONNECT — trước đó chưa biết MAX_CTO nên đệm hết 64
+
+            master.write(0x8000_0000, bytes([1, 2, 3]))
+            assert slave.peek(0x8000_0000, 3) == bytes([1, 2, 3])
+
+            tx_frames = [e for e in master.trace.drain(200) if e.direction == "tx"]
+            assert tx_frames
+            for entry in tx_frames:
+                assert len(entry.data) <= 8, (
+                    f"frame {entry.data!r} dài {len(entry.data)} byte, vượt "
+                    f"MAX_CTO=8 mà ECU đã khai lúc CONNECT"
+                )
+        finally:
+            master.close()
+
+
 # ── 3. A2L Parser IF_DATA XCP_ON_CAN_FD ──────────────────────────────────────
 
 def test_a2l_parser_extracts_can_fd_parameters() -> None:

@@ -36,10 +36,10 @@ class FaultyTransport(Transport):
         self.recv_raises: BaseException | None = None
         self.send_raises: BaseException | None = None
 
-    def send(self, can_id: int, data: bytes) -> bytes:
+    def send(self, can_id: int, data: bytes, max_len: int | None = None) -> bytes:
         if self.send_raises is not None:
             raise self.send_raises
-        return self._inner.send(can_id, data)
+        return self._inner.send(can_id, data, max_len)
 
     def recv(self, timeout: float) -> CanFrame | None:
         if self.recv_raises is not None:
