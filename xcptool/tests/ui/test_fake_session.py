@@ -25,7 +25,14 @@ from xcptool.session.api import (
     WriteProtectedError,
     XcpTimeoutError,
 )
-from xcptool.session.fake import MEM_BASE, MEM_SIZE, FakeBehavior, FakeSession
+from xcptool.session.fake import (
+    MEM_BASE,
+    MEM_SIZE,
+    REFERENCE_PAGE,
+    WORKING_PAGE,
+    FakeBehavior,
+    FakeSession,
+)
 
 
 @pytest.fixture
@@ -66,6 +73,7 @@ def test_lenh_khi_chua_connect_nem_notconnected() -> None:
 def test_ghi_roi_doc_lai_dung_bit_for_bit(cfg: BusConfig) -> None:
     s = FakeSession()
     s.connect(cfg)
+    s.set_page(0, WORKING_PAGE, PageMode.XCP)  # boot ở REFERENCE
     payload = bytes(range(64))
     s.write(MEM_BASE + 0x100, payload)
     assert s.read(MEM_BASE + 0x100, 64) == payload
@@ -92,22 +100,25 @@ def test_dia_chi_ngoai_vung_nem_outofrange(cfg: BusConfig) -> None:
 def test_ghi_khi_xcp_o_reference_page_nem_writeprotected(cfg: BusConfig) -> None:
     s = FakeSession()
     s.connect(cfg)
-    s.set_page(0, 1, PageMode.XCP)
-    assert s.get_page(0, PageMode.XCP) == 1
+    # ECU đặt ở WORKING (1), XCP nhìn vào REFERENCE (0)
+    s.set_page(0, WORKING_PAGE, PageMode.ECU)
+    s.set_page(0, REFERENCE_PAGE, PageMode.XCP)
+    assert s.get_page(0, PageMode.XCP) == REFERENCE_PAGE
     with pytest.raises(WriteProtectedError) as ei:
         s.write(MEM_BASE, b"\x01")
     assert ei.value.name == "CRC_WRITE_PROTECTED"
     # trang ECU độc lập với trang XCP
-    assert s.get_page(0, PageMode.ECU) == 0
+    assert s.get_page(0, PageMode.ECU) == WORKING_PAGE
     s.close()
 
 
 def test_copy_page_mang_du_lieu_sang_trang_khac(cfg: BusConfig) -> None:
     s = FakeSession()
     s.connect(cfg)
+    s.set_page(0, WORKING_PAGE, PageMode.XCP)
     s.write(MEM_BASE, b"\xaa\xbb")
     assert s.read(MEM_BASE, 2) == b"\xaa\xbb"
-    s.copy_page(0, 1, 0, 0)                    # ROM → RAM: xoá thay đổi
+    s.copy_page(0, REFERENCE_PAGE, 0, WORKING_PAGE)  # ROM (0) → RAM (1): xoá thay đổi
     assert s.read(MEM_BASE, 2) != b"\xaa\xbb"
     s.close()
 

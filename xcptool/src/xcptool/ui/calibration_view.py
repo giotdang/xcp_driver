@@ -33,12 +33,14 @@ from ..session.api import A2LDatabase
 
 __all__ = ["CalibrationView", "WORKING_PAGE", "REFERENCE_PAGE"]
 
-WORKING_PAGE = 0
-REFERENCE_PAGE = 1
+REFERENCE_PAGE = 0
+WORKING_PAGE = 1
 
 # UI chỉ phân biệt Working/Reference (DESIGN.md §5) — routeKey của SegmentedWidget
 # ánh xạ trực tiếp tới hai giá trị trang duy nhất mà xcptool set (luôn set cả
 # ECU lẫn XCP cùng lúc, không lộ khái niệm "trang XCP"/"trang ECU" ra UI).
+# REFERENCE (0) = Flash ROM, giá trị mặc định nhà máy; ECU khởi động mặc định ở trang này.
+# WORKING   (1) = RAM shadow, phiên calibration ghi vào đây.
 _ROUTE_WORKING = "working"
 _ROUTE_REFERENCE = "reference"
 _ROUTE_BY_PAGE = {WORKING_PAGE: _ROUTE_WORKING, REFERENCE_PAGE: _ROUTE_REFERENCE}

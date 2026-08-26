@@ -51,8 +51,8 @@ __all__ = ["FakeBehavior", "FakeSession", "MEM_BASE", "MEM_SIZE"]
 MEM_BASE = 0x8000_0000
 MEM_SIZE = 0x20_0000
 
-WORKING_PAGE = 0
-REFERENCE_PAGE = 1
+REFERENCE_PAGE = 0
+WORKING_PAGE = 1
 SEGMENT_COUNT = 1
 PAGE_COUNT = 2
 
@@ -163,8 +163,10 @@ class FakeSession:
 
         # bộ nhớ: ghi đè lên giá trị mặc định, tách riêng theo trang
         self._mem: dict[int, dict[int, int]] = {WORKING_PAGE: {}, REFERENCE_PAGE: {}}
-        self._ecu_page = WORKING_PAGE
-        self._xcp_page = WORKING_PAGE
+        # ECU và XCP đều bắt đầu ở Reference page (Flash, boot default)
+        # Master phải gọi SET_CAL_PAGE trước khi ghi (đúng hành vi firmware thật)
+        self._ecu_page = REFERENCE_PAGE
+        self._xcp_page = REFERENCE_PAGE
 
         self._flood_thread: threading.Thread | None = None
         self._flood_stop = threading.Event()

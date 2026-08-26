@@ -235,8 +235,8 @@ def test_on_batch_read_done_co_loi_hien_so_loi(qtbot) -> None:
 
 def test_on_pages_dong_bo_hien_dung_toggle(qtbot) -> None:
     v = _make_view(qtbot)
-    v.on_pages(0, ecu_page=1, xcp_page=1)
-    assert v.page_toggle.currentRouteKey() == _ROUTE_REFERENCE
+    v.on_pages(0, ecu_page=WORKING_PAGE, xcp_page=WORKING_PAGE)
+    assert v.page_toggle.currentRouteKey() == _ROUTE_WORKING
     assert v.sync_warning_label.isHidden()
     assert v.sync_btn.isHidden()
 
@@ -450,6 +450,8 @@ def test_ghi_characteristic_qua_session(qtbot, connected_window: MainWindow) -> 
     db = _make_db()
     connected_window.session._a2l_db = db  # type: ignore[attr-defined]
     connected_window.calibration_view.set_database(db)
+    # FakeSession boot ở REFERENCE_PAGE — switch sang WORKING trước khi ghi
+    connected_window.session.set_page(0, WORKING_PAGE, PageMode.XCP)
     connected_window.write_characteristic("GAIN", MEM_BASE, bytes([0xAB]))
     qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
     assert connected_window.session.read(MEM_BASE, 1) == bytes([0xAB])
@@ -459,7 +461,8 @@ def test_cal_get_pages_cap_nhat_toggle(qtbot, connected_window: MainWindow) -> N
     v = connected_window.calibration_view
     connected_window.cal_get_pages(0)
     qtbot.waitUntil(lambda: v.page_toggle.currentRouteKey() is not None, timeout=5000)
-    assert v.page_toggle.currentRouteKey() == _ROUTE_WORKING
+    # FakeSession boot ở REFERENCE_PAGE (Flash, đúng XCP spec boot state)
+    assert v.page_toggle.currentRouteKey() == _ROUTE_REFERENCE
 
 
 def test_cal_set_page_dat_ca_ecu_lan_xcp(qtbot, connected_window: MainWindow) -> None:
@@ -477,7 +480,9 @@ def test_cal_set_page_dat_ca_ecu_lan_xcp(qtbot, connected_window: MainWindow) ->
 def test_cal_get_pages_phat_hien_khong_dong_bo(qtbot, connected_window: MainWindow) -> None:
     w = connected_window
     v = w.calibration_view
-    w.session.set_page(0, REFERENCE_PAGE, PageMode.XCP)   # chỉ set XCP, không set ECU
+    # Tạo desync: set ECU sang WORKING, giữ XCP ở REFERENCE (boot default)
+    # ECU_PAGE=WORKING (1) ≠ XCP_PAGE=REFERENCE (0) → cảnh báo phải hiện
+    w.session.set_page(0, WORKING_PAGE, PageMode.ECU)
     w.cal_get_pages(0)
     qtbot.waitUntil(lambda: not v.sync_warning_label.isHidden(), timeout=5000)
     assert not v.sync_btn.isHidden()
@@ -486,11 +491,13 @@ def test_cal_get_pages_phat_hien_khong_dong_bo(qtbot, connected_window: MainWind
 def test_sync_button_dong_bo_lai_qua_session(qtbot, connected_window: MainWindow) -> None:
     w = connected_window
     v = w.calibration_view
-    w.session.set_page(0, REFERENCE_PAGE, PageMode.XCP)   # desync thủ công
+    # Tạo desync: set ECU sang WORKING, giữ XCP ở REFERENCE (boot default)
+    w.session.set_page(0, WORKING_PAGE, PageMode.ECU)
     w.cal_get_pages(0)
     qtbot.waitUntil(lambda: not v.sync_btn.isHidden(), timeout=5000)
 
     v._on_sync_click()
+    # Sync đặt ECU theo XCP (REFERENCE) — kiểm tra cả hai đạt REFERENCE
     qtbot.waitUntil(
         lambda: w.session.get_page(0, PageMode.ECU) == REFERENCE_PAGE, timeout=5000
     )
@@ -507,6 +514,8 @@ def test_copy_ref_to_working_qua_session_khop_gia_tri_reference(
     w.session._a2l_db = db  # type: ignore[attr-defined]
     v.set_database(db)
 
+    # Switch sang WORKING để ghi (FakeSession boot ở REFERENCE, ghi REFERENCE = WriteProtected)
+    w.session.set_page(0, WORKING_PAGE, PageMode.XCP)
     w.write_characteristic("GAIN", MEM_BASE, bytes([0x11]))
     qtbot.waitUntil(lambda: not w.busy, timeout=5000)
     assert w.session.read(MEM_BASE, 1) == bytes([0x11])  # Working đã bị sửa
@@ -568,9 +577,10 @@ def test_connect_cap_nhat_ca_hai_panel_trang_tu_mot_lan_doc(
     qtbot, connected_window: MainWindow
 ) -> None:
     v = connected_window.calibration_view
-    assert v.page_toggle.currentRouteKey() == _ROUTE_WORKING
-    assert connected_window.memory_view.xcp_page_label.text() == str(WORKING_PAGE)
-    assert connected_window.memory_view.ecu_page_label.text() == str(WORKING_PAGE)
+    # FakeSession boot ở REFERENCE_PAGE (Flash, đúng XCP spec boot state)
+    assert v.page_toggle.currentRouteKey() == _ROUTE_REFERENCE
+    assert connected_window.memory_view.xcp_page_label.text() == str(REFERENCE_PAGE)
+    assert connected_window.memory_view.ecu_page_label.text() == str(REFERENCE_PAGE)
 
 
 def test_set_database_groups_struct_characteristics(qtbot) -> None:

@@ -10,7 +10,12 @@ import time
 
 import pytest
 
-from xcptool.devtools.fakeslave import FakeSlave, SlaveConfig
+from xcptool.devtools.fakeslave import (
+    REFERENCE_PAGE,
+    WORKING_PAGE,
+    FakeSlave,
+    SlaveConfig,
+)
 from xcptool.master.constants import Cmd
 from xcptool.session.api import (
     BusConfig,
@@ -19,6 +24,7 @@ from xcptool.session.api import (
     ConnState,
     DeviceNotFoundError,
     MalformedResponseError,
+    PageMode,
     TransportError,
     XcpTimeoutError,
     XcpToolError,
@@ -258,6 +264,7 @@ def test_flood_does_not_break_normal_commands(channel: str) -> None:
     try:
         with FakeSlave(cfg) as slave:
             session.connect(bus)
+            session.set_page(0, WORKING_PAGE, PageMode.XCP)  # boot ở REFERENCE
             for i in range(10):
                 payload = bytes([i]) * 8
                 session.write(cfg.mem_base, payload)

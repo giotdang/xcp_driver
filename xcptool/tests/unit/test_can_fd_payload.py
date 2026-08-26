@@ -6,7 +6,7 @@ import struct
 import pytest
 
 from xcptool.a2l.parser import parse
-from xcptool.devtools.fakeslave import FakeSlave, SlaveConfig
+from xcptool.devtools.fakeslave import FakeSlave, SlaveConfig, WORKING_PAGE
 from xcptool.master.core import XcpMaster
 from xcptool.master.daq import DaqSignal, pack_odts
 from xcptool.session.api import BusConfig
@@ -119,7 +119,7 @@ def test_pad_dlc_after_connect_respects_ecu_max_cto() -> None:
     pad_dlc bật -> mọi lệnh SAU CONNECT phải lên dây tối đa 8 byte, không phải
     64 byte như XcpMaster từng đệm cứng trước khi biết MAX_CTO thật của ECU."""
     channel = "can_fd_short_max_cto_test"
-    slave_cfg = SlaveConfig(channel=channel, max_cto=8, max_dto=8, is_fd=True, pad_dlc=True)
+    slave_cfg = SlaveConfig(channel=channel, max_cto=8, max_dto=8, is_fd=True, pad_dlc=True, xcp_page=WORKING_PAGE)
     bus_cfg = BusConfig(
         backend="virtual", channel=channel, is_fd=True,
         cro_id=slave_cfg.cro_id, dto_id=slave_cfg.dto_id, pad_dlc=True,
@@ -205,6 +205,7 @@ def test_can_fd_master_slave_short_download_and_short_upload() -> None:
         max_cto=64,
         max_dto=64,
         is_fd=True,
+        xcp_page=WORKING_PAGE,
     )
     bus_cfg = BusConfig(
         backend="virtual",

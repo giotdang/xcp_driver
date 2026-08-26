@@ -6,11 +6,12 @@ import time
 
 import pytest
 
-from xcptool.devtools.fakeslave import FakeSlave, SlaveConfig
+from xcptool.devtools.fakeslave import WORKING_PAGE, FakeSlave, SlaveConfig
 from xcptool.master.constants import Cmd, ErrCode
 from xcptool.session.api import (
     BusConfig,
     NotConnectedError,
+    PageMode,
     SlaveError,
     WriteProtectedError,
     XcpTimeoutError,
@@ -80,6 +81,7 @@ def test_timeout_raises_and_retries_through_synch(
 ) -> None:
     """ECU nuốt một lệnh → master gửi SYNCH rồi thử lại, không bỏ cuộc ngay."""
     session.connect(bus_cfg)
+    session.set_page(0, WORKING_PAGE, PageMode.XCP)  # boot ở REFERENCE
     slave.poke(slave.cfg.mem_base, b"\xde\xad\xbe\xef")
     slave.commands_seen.clear()
     slave.cfg.drop_responses = 1
@@ -178,6 +180,7 @@ def test_cto_is_clamped_to_what_a_frame_can_carry(channel: str) -> None:
     try:
         with FakeSlave(cfg) as s:
             caps = session.connect(bus)
+            session.set_page(0, WORKING_PAGE, PageMode.XCP)  # boot ở REFERENCE
             s.poke(cfg.mem_base, bytes(range(16)))
             assert caps.max_cto == 64
             assert session.read(cfg.mem_base, 16) == bytes(range(16))

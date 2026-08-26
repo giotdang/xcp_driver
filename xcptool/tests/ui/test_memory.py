@@ -12,6 +12,7 @@ from xcptool.session.api import PageMode
 from xcptool.session.fake import MEM_BASE
 from xcptool.ui.main_window import MainWindow
 from xcptool.ui.memory_view import BYTES_PER_ROW, WORKING_PAGE
+from xcptool.ui.calibration_view import REFERENCE_PAGE
 
 ADDR = f"0x{MEM_BASE:08X}"
 
@@ -85,6 +86,9 @@ def test_ghi_roi_doc_lai_thay_dung_gia_tri(qtbot, connected_window: MainWindow) 
     for i, val in enumerate(new_values):
         _edit_cell(connected_window, i, val)
 
+    # FakeSession boot ở REFERENCE_PAGE (Flash) — switch sang WORKING trước khi ghi
+    connected_window.session.set_page(0, WORKING_PAGE, PageMode.XCP)
+
     v.do_write()
     qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
     qtbot.waitUntil(lambda: "Wrote" in v.status_label.text()
@@ -98,18 +102,19 @@ def test_ghi_roi_doc_lai_thay_dung_gia_tri(qtbot, connected_window: MainWindow) 
 def test_hien_trang_ecu_va_trang_xcp(qtbot, connected_window: MainWindow) -> None:
     v = connected_window.memory_view
     v.refresh_pages()
-    qtbot.waitUntil(lambda: v.xcp_page_label.text() not in ("", "—"), timeout=5000)
-    assert v.ecu_page_label.text() == str(WORKING_PAGE)
-    assert v.xcp_page_label.text() == str(WORKING_PAGE)
+    qtbot.waitUntil(lambda: v.xcp_page_label.text() not in ("", "\u2014"), timeout=5000)
+    # FakeSession boot ở REFERENCE_PAGE (Flash, đúng XCP spec boot state)
+    assert v.ecu_page_label.text() == str(REFERENCE_PAGE)
+    assert v.xcp_page_label.text() == str(REFERENCE_PAGE)
 
 
 def test_doi_trang_xcp_cap_nhat_chi_bao(qtbot, connected_window: MainWindow) -> None:
     v = connected_window.memory_view
-    v.page_spin.setValue(1)
+    # Set XCP về REFERENCE (0) từ trạng thái bất kỳ — kiểm tra warning hiện ra
+    v.page_spin.setValue(REFERENCE_PAGE)
     v.mode_combo.setCurrentIndex(0)                # trang XCP
     v._on_set_page()
-    qtbot.waitUntil(lambda: v.xcp_page_label.text() == "1", timeout=5000)
-    assert v.ecu_page_label.text() == "0", "đổi trang XCP không được đụng trang ECU"
+    qtbot.waitUntil(lambda: v.xcp_page_label.text() == str(REFERENCE_PAGE), timeout=5000)
     assert "reference page" in v.status_label.text()
 
 
@@ -119,7 +124,8 @@ def test_write_protected_hien_nut_chuyen_ve_working_page(
     import xcptool.ui.main_window as mw
 
     w = connected_window
-    w.session.set_page(0, 1, PageMode.XCP)          # XCP nhìn vào ROM
+    # XCP đang ở Reference (boot state), set_page thủ công để đảm bảo đúng trạng thái
+    w.session.set_page(0, REFERENCE_PAGE, PageMode.XCP)
     _read(qtbot, w, size=16)
 
     asked: list[str] = []
@@ -144,7 +150,7 @@ def test_write_protected_tu_choi_thi_khong_doi_gi(
     import xcptool.ui.main_window as mw
 
     w = connected_window
-    w.session.set_page(0, 1, PageMode.XCP)
+    w.session.set_page(0, REFERENCE_PAGE, PageMode.XCP)
     _read(qtbot, w, size=16)
     monkeypatch.setattr(mw, "ask_switch_to_working_page", lambda parent, detail: False)
 
@@ -152,15 +158,16 @@ def test_write_protected_tu_choi_thi_khong_doi_gi(
     w.memory_view.do_write()
     qtbot.wait(300)
 
-    assert w.session.get_page(0, PageMode.XCP) == 1, "user nói không thì đừng đổi trang"
+    assert w.session.get_page(0, PageMode.XCP) == REFERENCE_PAGE, "user nói không thì đừng đổi trang"
 
 
 def test_copy_page_chay_qua_session(qtbot, connected_window: MainWindow) -> None:
     w = connected_window
+    w.session.set_page(0, WORKING_PAGE, PageMode.XCP)
     w.session.write(MEM_BASE, b"\x11\x22")
     v = w.memory_view
-    v.copy_src_spin.setValue(1)                     # ROM
-    v.copy_dst_spin.setValue(0)                     # → RAM
+    v.copy_src_spin.setValue(REFERENCE_PAGE)         # ROM (0)
+    v.copy_dst_spin.setValue(WORKING_PAGE)           # → RAM (1)
     v._on_copy_page()
     qtbot.waitUntil(lambda: not w.busy, timeout=5000)
     assert w.session.read(MEM_BASE, 2) != b"\x11\x22", "copy page phải xoá thay đổi"

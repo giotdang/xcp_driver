@@ -43,9 +43,10 @@ __all__ = ["MemoryView", "ask_switch_to_working_page", "WORKING_PAGE"]
 BYTES_PER_ROW = 16
 
 # XCP không chuẩn hoá "trang nào là working" — spec chỉ đánh số trang. Quy ước
-# 0 = working (RAM) / 1 = reference (ROM) là của slave XcpBasic trong dự án này;
-# ECU khác có thể đánh số khác nên đây là *gợi ý mặc định*, user đổi được.
-WORKING_PAGE = 0
+# REFERENCE (0) = ROM boot default / WORKING (1) = RAM shadow là của slave
+# XcpBasic trong dự án này — đúng theo XCP spec boot state. ECU khác có thể
+# đánh số khác nên đây là *gợi ý mặc định*, user đổi được.
+WORKING_PAGE = 1
 
 
 def ask_switch_to_working_page(parent: QWidget | None, detail: str) -> bool:
