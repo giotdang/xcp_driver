@@ -629,7 +629,8 @@ class MainWindow(QMainWindow):
         if not self._guard():
             return
         symbols = self.session.symbols
-        if not symbols.characteristics:
+        names = self.calibration_view.loaded_characteristic_names()
+        if not names:
             self.calibration_view.status_label.setText(
                 "No A2L loaded or file contains no CHARACTERISTICs."
             )
@@ -637,10 +638,11 @@ class MainWindow(QMainWindow):
 
         def _batch(task_ref: list[Any]) -> dict:
             results: dict[str, bytes | None] = {}
-            for name, char in symbols.characteristics.items():
+            for name in names:
                 if task_ref[0] and task_ref[0].cancelled:
                     break
-                if char.byte_size <= 0:
+                char = symbols.characteristics.get(name)
+                if char is None or char.byte_size <= 0:
                     results[name] = None
                     continue
                 try:

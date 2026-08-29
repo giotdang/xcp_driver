@@ -393,6 +393,15 @@ class CalibrationView(QWidget):
 
     # ── cập nhật dữ liệu (gọi từ MainWindow, UI thread) ─────────────────────
 
+    def loaded_characteristic_names(self) -> list[str]:
+        """Tên các CHARACTERISTIC đang thực sự có node trong tree.
+
+        Loại trừ key STRUCT-group cha (tên nhóm tổng hợp, không phải tên A2L
+        thật) — chỉ giữ những tên tồn tại trong `self._db.characteristics`,
+        tức đã qua parser hợp lệ VÀ đã được `set_database()` add vào tree.
+        """
+        return [name for name in self._char_items if name in self._db.characteristics]
+
     def set_database(self, db: A2LDatabase) -> None:
         """Điền tree từ A2LDatabase mới nạp. Gom nhóm Struct và phân rã Array."""
         self._db = db
