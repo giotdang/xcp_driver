@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 import pytest
@@ -10,6 +11,8 @@ from xcptool.devtools.fakeslave import WORKING_PAGE, FakeSlave, SlaveConfig
 from xcptool.master.constants import Cmd, ErrCode
 from xcptool.session.api import (
     BusConfig,
+    BusError,
+    ConnState,
     NotConnectedError,
     PageMode,
     SlaveError,
@@ -115,6 +118,35 @@ def test_dead_ecu_gives_up_with_a_timeout_error(
         session.read(slave.cfg.mem_base, 4)
     # Hai lần T1 chứ không phải treo vô hạn.
     assert time.perf_counter() - started < bus_cfg.t1_timeout_s * 4
+
+
+def test_5_lan_synch_that_bai_lien_tiep_tu_chuyen_sang_error(
+    session: RealSession, bus_cfg: BusConfig, slave: FakeSlave
+) -> None:
+    """ECU câm hoàn toàn (không trả lời cả lệnh lẫn SYNCH) — sau đúng 5 lần
+    SYNCH liên tiếp không có phản hồi, master phải tự chuyển ConnState.ERROR
+    thay vì cứ lặp lại timeout+SYNCH vô thời hạn.
+
+    Bug cũ: `_synch()` chỉ tăng bộ đếm khi `_await_response()` NÉM ngoại lệ —
+    nhưng một SYNCH không ai trả lời chỉ trả về `None` (timeout thường), không
+    ném gì cả, nên bộ đếm luôn bị reset về 0 và ngưỡng 5 lần không bao giờ
+    chạm tới trong đúng kịch bản nó được sinh ra để bắt."""
+    fast_cfg = dataclasses.replace(bus_cfg, t1_timeout_s=0.05)
+    session.connect(fast_cfg)
+    slave.cfg.drop_responses = 999  # ECU câm hoàn toàn từ giờ trở đi
+
+    for _ in range(4):
+        with pytest.raises(XcpTimeoutError):
+            session.read(slave.cfg.mem_base, 4)
+        assert session.state is ConnState.CONNECTED
+
+    with pytest.raises(XcpTimeoutError):
+        session.read(slave.cfg.mem_base, 4)  # lần thứ 5 — chạm ngưỡng
+
+    assert session.state is ConnState.ERROR
+
+    with pytest.raises(BusError):
+        session.read(slave.cfg.mem_base, 4)  # lần thứ 6 — fail nhanh, không đụng bus
 
 
 def test_timeout_leaves_a_note_in_the_trace(

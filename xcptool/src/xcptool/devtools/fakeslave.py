@@ -340,12 +340,12 @@ class FakeSlave:
         if self.cfg.log_commands:
             log.info("fake slave ← 0x%02X", cmd)
 
-        if cmd == Cmd.SYNCH:
-            self._err(ErrCode.CMD_SYNCH)
-            return
-
         if self.cfg.drop_responses > 0:
             self.cfg.drop_responses -= 1
+            return
+
+        if cmd == Cmd.SYNCH:
+            self._err(ErrCode.CMD_SYNCH)
             return
 
         if self.cfg.force_error is not None and cmd != Cmd.CONNECT:
