@@ -446,6 +446,49 @@ def test_doc_tat_ca_qua_session(qtbot, connected_window: MainWindow) -> None:
     assert items["OFFSET"].text(COL_VALUE) != "—"
 
 
+def test_huy_read_all_dung_dung_task_dang_chay(
+    qtbot, connected_window: MainWindow
+) -> None:
+    """Bug cũ: `_call()` chỉ gán `_connect_task` khi nó đang là None — sau khi
+    MỘT lệnh khác từng chạy xong trước đó (vd. đọc lẻ một characteristic),
+    biến này bị bỏ quên trỏ vào task đã xong. Cancel sau đó huỷ nhầm task cũ
+    (vô hại) thay vì task read-all thật đang chạy, nên bấm Cancel không dừng
+    được gì — read-all cứ chạy hết toàn bộ tham số, tiếp tục gửi lệnh lên bus."""
+    n = 30
+    db = A2LDatabase()
+    db.record_layouts["RL_UBYTE"] = RecordLayout(name="RL_UBYTE", datatype="UBYTE")
+    for i in range(n):
+        name = f"P{i}"
+        db.characteristics[name] = Characteristic(
+            name=name, description="", char_type="VALUE",
+            address=MEM_BASE + i, record_layout="RL_UBYTE",
+            lower_limit=0.0, upper_limit=255.0, datatype="UBYTE", array_size=1,
+        )
+    connected_window.session._a2l_db = db  # type: ignore[attr-defined]
+    connected_window.calibration_view.set_database(db)
+    connected_window.session.behavior.command_delay_s = 0.05
+
+    # Làm bẩn _connect_task đúng như kịch bản bug: một _call() khác đã chạy
+    # xong trước read-all.
+    connected_window.read_characteristic("P0")
+    qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
+
+    connected_window.read_all_characteristics()
+    qtbot.wait(120)  # để vài lệnh đầu của batch chạy qua
+    assert connected_window.busy, "read-all phải còn đang chạy lúc bấm Cancel"
+
+    connected_window.cancel_busy()
+    qtbot.waitUntil(lambda: not connected_window.busy, timeout=3000)
+    count_at_cancel = connected_window.session._command_count  # type: ignore[attr-defined]
+
+    qtbot.wait(int(n * 0.05 * 1000))  # đủ lâu để nếu bug tái phát, cả n lệnh sẽ chạy xong
+    count_after_wait = connected_window.session._command_count  # type: ignore[attr-defined]
+    assert count_after_wait <= count_at_cancel + 2, (
+        "Cancel phải chặn được các lệnh còn lại trong read-all, nhưng vẫn còn "
+        f"{count_after_wait - count_at_cancel} lệnh chạy tiếp sau khi Cancel"
+    )
+
+
 def test_ghi_characteristic_qua_session(qtbot, connected_window: MainWindow) -> None:
     db = _make_db()
     connected_window.session._a2l_db = db  # type: ignore[attr-defined]

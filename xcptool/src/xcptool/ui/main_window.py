@@ -59,7 +59,7 @@ from .measurement_view import MeasurementView
 from .memory_view import WORKING_PAGE, MemoryView, ask_switch_to_working_page
 from .theme import apply_theme
 from .trace_view import TraceView
-from .workers import TaskRunner
+from .workers import Task, TaskRunner
 
 log = logging.getLogger(__name__)
 
@@ -395,13 +395,22 @@ class MainWindow(QMainWindow):
     ) -> Any:
         """Chạy một lệnh Session trên worker, tự bật/tắt trạng thái bận."""
         self._begin_busy(label, cancellable=True)
+        task: Task | None = None
+
+        def _clear_tracking() -> None:
+            # Chỉ tự xoá nếu vẫn đang là task mà Cancel nhắm tới — task khác
+            # (vd. connect_to) có thể đã ghi đè _connect_task từ lúc đó.
+            if self._connect_task is task:
+                self._connect_task = None
 
         def ok(result: Any) -> None:
+            _clear_tracking()
             self._end_busy()
             if on_ok is not None:
                 on_ok(result)
 
         def err(exc: Exception) -> None:
+            _clear_tracking()
             self._end_busy()
             if on_err is not None:
                 on_err(exc)
@@ -409,8 +418,9 @@ class MainWindow(QMainWindow):
                 errors.show_error(self, exc)
 
         task = self.runner.run(fn, *args, on_ok=ok, on_err=err)
-        if self._connect_task is None:  # Track the current active task for cancellation
-            self._connect_task = task
+        # Luôn ghi đè — Cancel phải nhắm đúng task đang chạy, không phải task
+        # đầu tiên từng chạy qua _call() (bug cũ: chỉ gán khi None).
+        self._connect_task = task
         return task
 
     # ── kết nối ──────────────────────────────────────────────────────────────
