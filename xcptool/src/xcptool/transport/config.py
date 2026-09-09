@@ -35,6 +35,9 @@ DEFAULT_BUS_CONFIG = BusConfig(
     t1_timeout_s=1.0,
     is_fd=False,
     data_bitrate=2_000_000,
+    solve_timing=True,
+    sample_point=87.5,
+    data_sample_point=75.0,
 )
 
 DEFAULT_APP_CONFIG = AppConfig(
@@ -81,6 +84,8 @@ def _coerce_bus(raw: dict[str, object], base: BusConfig) -> BusConfig:
         ("custom_bit_timing", bool), ("f_clock", int),
         ("brp", int), ("tseg1", int), ("tseg2", int), ("sjw", int),
         ("dbrp", int), ("dtseg1", int), ("dtseg2", int), ("dsjw", int),
+        ("solve_timing", bool),
+        ("sample_point", float), ("data_sample_point", float),
     ):
         if key not in raw:
             continue
@@ -182,6 +187,9 @@ def dumps_bus_config(cfg: BusConfig) -> str:
         f"dtseg1 = {cfg.dtseg1}\n"
         f"dtseg2 = {cfg.dtseg2}\n"
         f"dsjw = {cfg.dsjw}\n"
+        f"solve_timing = {str(cfg.solve_timing).lower()}\n"
+        f"sample_point = {cfg.sample_point}\n"
+        f"data_sample_point = {cfg.data_sample_point}\n"
     )
 
 

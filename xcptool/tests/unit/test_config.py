@@ -92,6 +92,24 @@ def test_saving_creates_the_directory() -> None:
     assert config_path().is_file()
 
 
+def test_sample_point_solver_fields_round_trip() -> None:
+    cfg = replace(
+        DEFAULT_BUS_CONFIG,
+        solve_timing=False, sample_point=80.0, data_sample_point=62.5,
+    )
+    save_bus_config(cfg)
+    got = load_bus_config()
+    assert (got.solve_timing, got.sample_point, got.data_sample_point) == (
+        False, 80.0, 62.5,
+    )
+
+
+def test_integer_sample_point_is_accepted_as_float() -> None:
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text("[bus]\nsample_point = 88\n", encoding="utf-8")
+    assert load_bus_config().sample_point == 88.0
+
+
 # ── $XCPTOOL_CONFIG: chọn thẳng file cấu hình (run.bat -c <path>) ──────────────
 
 def test_config_env_var_points_at_an_exact_file(tmp_path, monkeypatch) -> None:

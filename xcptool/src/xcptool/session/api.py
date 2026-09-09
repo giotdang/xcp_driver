@@ -152,6 +152,12 @@ class BusConfig:
     dtseg2: int = 10
     dsjw: int = 10
 
+    # Sample-point solver (dialog Connect) — nhập bitrate + sample point, tự giải
+    # ra brp/tseg khớp qua python-can. Lưu lại để mở lại dialog thấy đúng % đã gõ.
+    solve_timing: bool = True
+    sample_point: float = 87.5          # % — nominal / arbitration phase
+    data_sample_point: float = 75.0     # % — data phase (CAN FD)
+
 
 @dataclass
 class AppConfig:
