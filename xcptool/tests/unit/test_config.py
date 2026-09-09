@@ -7,6 +7,7 @@ tắt máy giữa chừng, và mất cấu hình còn đỡ hơn không mở n�
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -89,3 +90,38 @@ def test_unknown_keys_do_not_break_loading() -> None:
 def test_saving_creates_the_directory() -> None:
     save_bus_config(DEFAULT_BUS_CONFIG)
     assert config_path().is_file()
+
+
+# ── $XCPTOOL_CONFIG: chọn thẳng file cấu hình (run.bat -c <path>) ──────────────
+
+def test_config_env_var_points_at_an_exact_file(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "profiles" / "bench.toml"
+    monkeypatch.setenv("XCPTOOL_CONFIG", str(target))
+    assert config_path() == target
+
+
+def test_config_env_var_beats_home_dir(tmp_path, monkeypatch) -> None:
+    # fixture `home` đã trỏ XCPTOOL_HOME vào tmp_path — file override phải thắng.
+    target = tmp_path / "elsewhere" / "custom.toml"
+    monkeypatch.setenv("XCPTOOL_CONFIG", str(target))
+    assert config_path() == target
+    assert config_path() != tmp_path / "config.toml"
+
+
+def test_config_env_var_round_trips_to_the_chosen_file(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "profiles" / "bench.toml"
+    monkeypatch.setenv("XCPTOOL_CONFIG", str(target))
+    cfg = replace(DEFAULT_BUS_CONFIG, backend="pcan", channel="PCAN_USBBUS2")
+    save_bus_config(cfg)
+    assert target.is_file()
+    assert load_bus_config() == cfg
+
+
+def test_config_env_var_expands_user(monkeypatch) -> None:
+    monkeypatch.setenv("XCPTOOL_CONFIG", "~/xcptool-test-profile/cfg.toml")
+    assert config_path() == Path("~/xcptool-test-profile/cfg.toml").expanduser()
+
+
+def test_empty_config_env_var_falls_back_to_default(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("XCPTOOL_CONFIG", "")
+    assert config_path() == tmp_path / "config.toml"

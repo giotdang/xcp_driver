@@ -49,6 +49,7 @@ DEFAULT_APP_CONFIG = AppConfig(
 )
 
 _ENV_DIR = "XCPTOOL_HOME"
+_ENV_FILE = "XCPTOOL_CONFIG"
 
 
 def config_dir() -> Path:
@@ -58,6 +59,14 @@ def config_dir() -> Path:
 
 
 def config_path() -> Path:
+    """File cấu hình đang dùng — điểm duy nhất cho cả đọc lẫn ghi.
+
+    `$XCPTOOL_CONFIG` (đường dẫn file đầy đủ, do `run.bat -c <path>` đặt) thắng
+    tất cả; không đặt thì lấy `config.toml` trong `config_dir()`.
+    """
+    override = os.environ.get(_ENV_FILE)
+    if override:
+        return Path(override).expanduser()
     return config_dir() / "config.toml"
 
 
