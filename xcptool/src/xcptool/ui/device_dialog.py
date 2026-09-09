@@ -114,10 +114,11 @@ class DeviceDialog(MessageBoxBase):
 
         # ── Flags ────────────────────────────────────────────────────────────
         self.ext_cb = CheckBox("29-bit CAN ID", self)
-        self.pad_cb = CheckBox("Pad short frames to 8 bytes", self)
+        self.pad_cb = CheckBox("Enable padding", self)
         self.pad_cb.setToolTip(
-            "Pad all CTO frames to at least 8 bytes.\n"
-            "Many AUTOSAR XCP stacks strictly require this even on CAN FD."
+            "Pad all CTO frames to at least: \n"
+            "- 8 bytes (Classical CAN).\n"
+            "- 64 bytes (CAN FD)."
         )
         self.pad_cb.setChecked(True)
 
