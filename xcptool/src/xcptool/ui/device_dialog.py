@@ -33,6 +33,7 @@ from qfluentwidgets import (
     MessageBoxBase,
     PrimaryPushButton,
     PushButton,
+    SingleDirectionScrollArea,
     SpinBox,
     StrongBodyLabel,
     SubtitleLabel,
@@ -75,7 +76,8 @@ class DeviceDialog(MessageBoxBase):
         self.titleLabel = SubtitleLabel("Select CAN Interface", self)
 
         self.list = ListWidget(self)
-        self.list.setMinimumHeight(200)
+        self.list.setMinimumHeight(76)
+        self.list.setMaximumHeight(132)
         self.list.currentRowChanged.connect(self._on_row_changed)
 
         self.spinner = IndeterminateProgressRing(self)
@@ -175,43 +177,59 @@ class DeviceDialog(MessageBoxBase):
         self.timing_preview = CaptionLabel("", self)
         self.timing_preview.setWordWrap(True)
 
-        grid = QGridLayout()
-        # Row 0
-        grid.addWidget(BodyLabel("Arbitration Bitrate:", self), 0, 0)
-        grid.addWidget(self.bitrate_combo, 0, 1)
-        grid.addWidget(BodyLabel("CRO (host→ECU):", self), 0, 2)
-        grid.addWidget(self.cro_edit, 0, 3)
-        grid.addWidget(BodyLabel("DTO (ECU→host):", self), 0, 4)
-        grid.addWidget(self.dto_edit, 0, 5)
-
-        # Row 1
-        grid.addWidget(self._fd_label, 1, 0)
-        grid.addWidget(self.data_bitrate_combo, 1, 1)
-        grid.addWidget(BodyLabel("Response Timeout T1:", self), 1, 2)
-        grid.addWidget(self.t1_spin, 1, 3)
-        grid.addWidget(self.ext_cb, 1, 4, 1, 2)
-        
-        # Row 2
-        self.adv_timing_btn = PushButton("Advanced Timing...", self)
+        self.adv_timing_btn = PushButton("Advanced Timing…", self)
         self.adv_timing_btn.clicked.connect(self._on_adv_timing)
         self.adv_timing_btn.setToolTip("Set BRP, TSEG1, TSEG2, SJW by hand (overrides the solver)")
-        grid.addWidget(self.adv_timing_btn, 2, 1)
-        grid.addWidget(self.fd_cb, 2, 2, 1, 2)
-        grid.addWidget(self.pad_cb, 2, 4, 1, 2)
 
-        # Row 3 — sample-point solver inputs
-        grid.addWidget(self.solve_cb, 3, 0, 1, 2)
-        grid.addWidget(BodyLabel("Clock:", self), 3, 2)
-        grid.addWidget(self.clock_spin, 3, 3)
+        # Một chiều cao chung cho mọi ô nhập — nếu không, layout thiếu chỗ sẽ bóp
+        # combo box xuống vài pixel và chúng đè lên hàng trên.
+        for w in (self.bitrate_combo, self.data_bitrate_combo, self.cro_edit,
+                  self.dto_edit, self.t1_spin, self.clock_spin, self.sp_spin,
+                  self.dsp_spin):
+            w.setFixedHeight(33)
 
-        # Row 4
-        grid.addWidget(BodyLabel("Sample Point:", self), 4, 0)
-        grid.addWidget(self.sp_spin, 4, 1)
-        grid.addWidget(self._dsp_label, 4, 2)
-        grid.addWidget(self.dsp_spin, 4, 3)
+        def _pair(grid, r, c, text, field):
+            grid.addWidget(BodyLabel(text, self), r, c)
+            grid.addWidget(field, r, c + 1)
 
-        # Row 5 — solved-timing preview / error
-        grid.addWidget(self.timing_preview, 5, 0, 1, 6)
+        # ── Bus parameters — grid 4 cột: label / field / label / field ───────
+        bus_grid = QGridLayout()
+        bus_grid.setHorizontalSpacing(12)
+        bus_grid.setVerticalSpacing(8)
+        bus_grid.setColumnMinimumWidth(0, 150)
+        bus_grid.setColumnMinimumWidth(2, 130)
+        bus_grid.setColumnStretch(1, 1)
+        bus_grid.setColumnStretch(3, 1)
+        _pair(bus_grid, 0, 0, "Arbitration Bitrate:", self.bitrate_combo)
+        _pair(bus_grid, 0, 2, "CRO (host→ECU):", self.cro_edit)
+        bus_grid.addWidget(self._fd_label, 1, 0)
+        bus_grid.addWidget(self.data_bitrate_combo, 1, 1)
+        _pair(bus_grid, 1, 2, "DTO (ECU→host):", self.dto_edit)
+        _pair(bus_grid, 2, 0, "Response Timeout T1:", self.t1_spin)
+        bus_grid.addWidget(self.ext_cb, 2, 2, 1, 2)
+        bus_grid.addWidget(self.fd_cb, 3, 0, 1, 2)
+        bus_grid.addWidget(self.pad_cb, 3, 2, 1, 2)
+
+        self.cro_edit.setToolTip("Command CAN ID (host → ECU).")
+        self.dto_edit.setToolTip(
+            "Response CAN ID (ECU → host). Often the same ID carries responses, "
+            "events and DAQ data — the tool classifies frames by byte 0.")
+
+        # ── Bit timing — header row + one row of three field pairs + preview ─
+        timing_hdr = QHBoxLayout()
+        timing_hdr.addWidget(self.solve_cb)
+        timing_hdr.addStretch(1)
+        timing_hdr.addWidget(self.adv_timing_btn)
+
+        timing_grid = QGridLayout()
+        timing_grid.setHorizontalSpacing(12)
+        for c in (1, 3, 5):
+            timing_grid.setColumnStretch(c, 1)
+        _pair(timing_grid, 0, 0, "Clock:", self.clock_spin)
+        _pair(timing_grid, 0, 2, "Sample Point:", self.sp_spin)
+        _pair(timing_grid, 0, 4, "Data Sample Pt:", self.dsp_spin)
+
+        self.timing_preview.setMinimumHeight(34)
 
         for w in (self.solve_cb, self.sp_spin, self.dsp_spin, self.clock_spin):
             sig = w.stateChanged if w is self.solve_cb else w.valueChanged
@@ -219,15 +237,36 @@ class DeviceDialog(MessageBoxBase):
         self.bitrate_combo.currentIndexChanged.connect(self._on_timing_inputs_changed)
         self.data_bitrate_combo.currentIndexChanged.connect(self._on_timing_inputs_changed)
 
+        # Cả khối tham số cuộn được → cửa sổ thấp thì cuộn chứ không đè lên nhau.
+        form_host = QWidget(self)
+        form_col = QVBoxLayout(form_host)
+        form_col.setContentsMargins(0, 0, 10, 0)
+        form_col.setSpacing(6)
+        form_col.addWidget(StrongBodyLabel("Bus Parameters", self))
+        form_col.addLayout(bus_grid)
+        form_col.addSpacing(6)
+        form_col.addWidget(StrongBodyLabel("Bit Timing", self))
+        form_col.addLayout(timing_hdr)
+        form_col.addLayout(timing_grid)
+        form_col.addWidget(self.timing_preview)
+        form_col.addStretch(1)
+
+        self.form_scroll = SingleDirectionScrollArea(self, orient=Qt.Vertical)
+        self.form_scroll.setWidget(form_host)
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.enableTransparentBackground()
+        self.form_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Cao bằng form ở cửa sổ bình thường (hiện trọn, không thanh cuộn);
+        # cửa sổ quá thấp thì QScrollArea tự hiện thanh cuộn thay vì cắt cụt.
+        self.form_scroll.setMinimumHeight(max(280, min(form_host.sizeHint().height(), 430)))
+
+        self.viewLayout.setSpacing(8)
         self.viewLayout.addWidget(self.titleLabel)
         self.viewLayout.addLayout(top_row)
         self.viewLayout.addWidget(self.list)
         self.viewLayout.addWidget(self.hint_label)
-        self.viewLayout.addWidget(StrongBodyLabel("Bus Parameters", self))
-        self.viewLayout.addLayout(grid)
-        self.viewLayout.addWidget(CaptionLabel(
-            "CRO and DTO typically share a single CAN ID for responses and DAQ data — "
-            "the tool classifies frames automatically based on byte 0.", self))
+        self.viewLayout.addWidget(self.form_scroll, 1)
 
         self.yesButton.setText("Connect")
         self.cancelButton.setText("Close")
