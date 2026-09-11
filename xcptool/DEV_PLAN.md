@@ -352,3 +352,38 @@ không nhảy theo Navigation; Dark theme vỡ khi Dock floating) đã fix, xem 
 | Soak 30 phút đầy đủ (J2) | Đã có 5 phút sạch, đủ cho M1–M3 | Trước release |
 | PySide6-Fluent-Widgets license | Dual GPLv3/thương mại | Xác nhận trước M5 nếu dùng thương mại |
 | Winamp/Y2K skeuomorphic theme | Ý tưởng thẩm mỹ, không phục vụ mục tiêu M5; đọc số liệu chính xác quan trọng hơn hiệu ứng bevel/LCD font | Effort ước tính (2026-08-22): Mức 1 "retro tint" (chỉnh gradient trong `theme.py`) ~1–2 ngày; Mức 2 skeuomorphic đầy đủ (thay/custom-paint từng widget `qfluentwidgets`, vì lib này tự vẽ chứ không thuần QSS) ~1–2 tuần; Mức 3 "đúng chất" Winamp (borderless window tự vẽ, bitmap skin) ~3–4 tuần+, rủi ro cao |
+
+---
+
+## 10. Kế hoạch tiếp theo — A2L struct thật (TYPEDEF_STRUCTURE/INSTANCE)
+
+**Trạng thái: chưa bắt đầu.** Spec đã duyệt: xem
+[`docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md`](docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md)
+(bản đầy đủ: ngữ pháp ASAP2, thuật toán resolve, data model, testing) và
+[`DESIGN.md §8`](DESIGN.md) (tóm tắt quyết định).
+
+**Vì sao:** `_group_by_prefix` (2 bản độc lập ở `calibration_view.py` và
+`measurement_view.py`) đoán "đây là struct" từ tên tham số — gây bug thật
+khi test với ECU thật (Write All báo "Size overflow", màu dirty dòng cha
+không tự dọn khi ghi lẻ 1 child). 2 bug đó đã vá tại chỗ (write-path an
+toàn với mọi input, xem `_split_into_contiguous_runs`/`on_write_done`
+trong `calibration_view.py`), nhưng gốc rễ — quyết định gộp nhóm dựa trên
+suy đoán tên — vẫn còn. A2L thật của ECU khai struct đúng chuẩn ASAP2
+(`TYPEDEF_STRUCTURE`/`INSTANCE`); quyết định là đọc dữ liệu đó thay vì đoán,
+và **bỏ hẳn fallback đoán theo tên** — file không có `INSTANCE` (kiểu cũ,
+ví dụ `examples/xcp_daq_example.a2l`) sẽ hiện phẳng, không gộp nhóm nữa.
+
+**3 phase triển khai (theo spec §9), mỗi phase xong mới sang phase kế, đủ
+test xanh mới coi là xong:**
+
+1. **Parser + data model + resolution** (`a2l/parser.py`, `a2l/types.py`,
+   `a2l/database.py`) — hoàn toàn độc lập UI, test được riêng.
+2. **`CalibrationView` tích hợp** — view đang có bug thật, làm trước.
+3. **`MeasurementView` tích hợp** — mirror phase 2, đọc trước code
+   `set_database()` hiện có của view này ở độ sâu tương đương phase 2.
+
+Migration cần nhớ: xoá `_group_by_prefix` ở CẢ HAI file (không phải import
+chung), sửa lại `test_set_database_groups_struct_characteristics` trong
+`test_calibration_view.py` (đang assert đúng hành vi bị thay thế) và test
+tương ứng trong `test_measurement_view.py` (kiểm tra lại bằng grep lúc
+implement).

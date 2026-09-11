@@ -162,6 +162,13 @@ Tab **Đo lường** (biểu tượng công cụ trên thanh điều hướng):
    - Gạt switch **Đồ thị: Tắt** khi bạn chỉ cần theo dõi các con số trong bảng hoặc đo số lượng lớn tín hiệu cùng lúc. Chế độ này ngắt hoàn toàn việc vẽ đồ thị để đạt tốc độ xử lý tối đa và không tốn CPU/GPU.
 4. **Dừng đo**: Bấm nút **Dừng**.
 
+> 📌 **Sắp thay đổi (kế hoạch, chưa triển khai — xem `DEV_PLAN.md §10`):** nhóm
+> "STRUCT" ở cả 2 panel trên hiện được suy đoán từ tên tham số (ví dụ `speedPid_kp`,
+> `speedPid_ki` → gộp thành `speedPid`). Sau khi cập nhật, việc gộp nhóm sẽ chỉ
+> dựa vào dữ liệu struct khai thật trong file A2L (`TYPEDEF_STRUCTURE`/`INSTANCE`
+> theo chuẩn ASAP2) — file A2L không khai struct kiểu này sẽ hiện từng tham số
+> độc lập, không gộp nhóm nữa, kể cả khi tên trùng tiền tố như ví dụ trên.
+
 ---
 
 ## 7. Cửa sổ Trace CAN
