@@ -20,6 +20,7 @@ from xcptool.ui.calibration_view import (
     COL_ADDR,
     _ROUTE_REFERENCE,
     _ROUTE_WORKING,
+    _split_into_contiguous_runs,
     decode_value,
     encode_value,
 )
@@ -720,6 +721,110 @@ def test_write_struct_aggregates_children(qtbot, connected_window: MainWindow) -
     assert name == "pid"
     assert addr == MEM_BASE
     assert len(data) == 8
+
+
+# ── _split_into_contiguous_runs — helper thuần, không cần Qt ────────────────
+
+def test_split_into_contiguous_runs_packed_gives_one_run() -> None:
+    entries = [(MEM_BASE, b"\x01\x00", "a"), (MEM_BASE + 2, b"\x02\x00", "b")]
+    runs = _split_into_contiguous_runs(entries, "grp")
+    assert runs == [(MEM_BASE, b"\x01\x00\x02\x00")]
+
+
+def test_split_into_contiguous_runs_splits_on_gap() -> None:
+    """INT16 @ base rồi INT32 @ base+4 (compiler chèn 2 byte align) → 2 đoạn,
+    không đoạn nào chứa 2 byte đệm ở giữa."""
+    entries = [
+        (MEM_BASE, b"\x2a\x00", "flag"),                    # 2 byte
+        (MEM_BASE + 4, b"\x39\x30\x00\x00", "threshold"),    # 4 byte, cách 2 byte
+    ]
+    runs = _split_into_contiguous_runs(entries, "grp")
+    assert runs == [
+        (MEM_BASE, b"\x2a\x00"),
+        (MEM_BASE + 4, b"\x39\x30\x00\x00"),
+    ]
+
+
+def test_split_into_contiguous_runs_raises_on_overlap() -> None:
+    entries = [(MEM_BASE, b"\x00\x00\x00\x00", "a"), (MEM_BASE + 2, b"\x00\x00", "b")]
+    with pytest.raises(ValueError, match="Overlapping members near b in struct grp"):
+        _split_into_contiguous_runs(entries, "grp")
+
+
+def test_write_struct_with_gap_sends_one_write_per_contiguous_run(qtbot) -> None:
+    """Trước fix: struct có gap từng ném 'Size overflow' và không ghi được gì.
+    Sau fix: mỗi đoạn liền khít ra đúng 1 lệnh WRITE riêng, không lệnh nào
+    đụng tới 2 byte đệm giữa 2 member."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_flag"] = Characteristic(
+        "grp_flag", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_threshold"] = Characteristic(
+        "grp_threshold", "", "VALUE", MEM_BASE + 4, "I32", 0, 100, datatype="SLONG", array_size=1)
+    v.set_database(db)
+
+    parent = v._char_items["grp"]
+    parent.child(0).setText(COL_VALUE, "42")     # grp_flag
+    parent.child(1).setText(COL_VALUE, "12345")  # grp_threshold
+    v._dirty.update({"grp_flag", "grp_threshold"})
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("grp", parent)
+
+    # Đoạn đầu bắn ngay trong _write_parent; đoạn 2 chỉ bắn tiếp khi
+    # on_write_done() báo đoạn 1 đã xong (mô phỏng ack bất đồng bộ của XCP).
+    assert len(writes) == 1
+    assert "grp" in v._pending_struct_runs and v._pending_struct_runs["grp"]
+    v.on_write_done("grp")
+    assert len(writes) == 2
+    assert "grp" not in v._pending_struct_runs or not v._pending_struct_runs["grp"]
+
+    addrs = {addr for _, addr, _ in writes}
+    assert addrs == {MEM_BASE, MEM_BASE + 4}
+    # Không lệnh nào ghi 2 byte đệm giữa hai member.
+    assert all(len(data) in (2, 4) for _, _, data in writes)
+
+    # Dirty phải hết sạch — kể cả sau nhiều đoạn.
+    assert "grp_flag" not in v._dirty
+    assert "grp_threshold" not in v._dirty
+
+
+def test_write_all_waits_for_every_run_before_next_queue_item(qtbot) -> None:
+    """'Write All' xếp 1 struct có gap + 1 scalar khác — scalar chỉ được ghi
+    SAU KHI mọi đoạn của struct hoàn tất, không chen ngang giữa chừng (Session
+    không reentrant, ghi chồng lên nhau sẽ ném BusyError)."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_flag"] = Characteristic(
+        "grp_flag", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_threshold"] = Characteristic(
+        "grp_threshold", "", "VALUE", MEM_BASE + 4, "I32", 0, 100, datatype="SLONG", array_size=1)
+    db.characteristics["solo"] = Characteristic(
+        "solo", "", "VALUE", MEM_BASE + 64, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+
+    v._char_items["grp"].child(0).setText(COL_VALUE, "42")
+    v._char_items["grp"].child(1).setText(COL_VALUE, "12345")
+    v._char_items["solo"].setText(COL_VALUE, "7")
+    v._dirty.update({"grp_flag", "grp_threshold", "solo"})
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    # Đặt thẳng hàng đợi (thay vì qua _on_write_all()) để cố định thứ tự —
+    # _on_write_all dùng set() nội bộ nên thứ tự không đảm bảo, không phải
+    # điều test này muốn kiểm tra.
+    v._write_queue = [v._char_items["grp"], v._char_items["solo"]]
+    v._process_write_queue()
+
+    # Chỉ đoạn đầu của "grp" được bắn — "solo" chưa được đụng tới.
+    assert [name for name, _, _ in writes] == ["grp"]
+
+    v.on_write_done("grp")  # đoạn 1 xong -> tự bắn đoạn 2, "solo" vẫn chưa tới lượt
+    assert [name for name, _, _ in writes] == ["grp", "grp"]
+
+    v.on_write_done("grp")  # đoạn 2 (cuối) xong -> mới tiến hàng đợi ngoài
+    assert [name for name, _, _ in writes] == ["grp", "grp", "solo"]
 
 
 def test_array_placeholder_edit_ignored(qtbot) -> None:

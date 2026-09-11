@@ -176,6 +176,43 @@ def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> 
     return bytes(buf)
 
 
+def _split_into_contiguous_runs(
+    entries: list[tuple[int, bytes, str]], struct_name: str
+) -> list[tuple[int, bytes]]:
+    """Gộp các member đã encode thành các đoạn (run) liền khít tối đa.
+
+    `_group_by_prefix` gom CHARACTERISTIC thành "STRUCT" thuần theo TÊN, không
+    biết layout C thật — nên không thể giả định các member luôn liền nhau
+    (compiler chèn padding để align, hoặc 2 tham số chỉ trùng tiền tố tên chứ
+    không thật sự cùng struct). Ghi đè một buffer to bằng cả nhóm sẽ ghi cả
+    những byte không thuộc CHARACTERISTIC nào (padding) — không an toàn cho
+    ECU thật.
+
+    Thay vào đó: sort theo địa chỉ, hễ address của member kế tiếp KHÔNG khớp
+    đúng điểm kết thúc của đoạn hiện tại thì cắt sang đoạn mới. Kết quả: mỗi
+    đoạn ghi bằng đúng 1 lệnh WRITE, không đoạn nào đụng byte ngoài các
+    CHARACTERISTIC đã khai báo. Struct đóng gói khít (trường hợp thường gặp)
+    → luôn ra đúng 1 đoạn, y hệt hành vi ghi gộp trước đây.
+
+    Ném `ValueError` nếu 2 member chồng lấn địa chỉ (A2L khai sai) — không
+    đoán, không ghi đè âm thầm.
+    """
+    ordered = sorted(entries, key=lambda e: e[0])
+    runs: list[list[Any]] = []  # [addr, bytearray, last_member_name]
+    for addr, val_bytes, name in ordered:
+        if runs:
+            run_addr, run_buf, _ = runs[-1]
+            run_end = run_addr + len(run_buf)
+            if addr == run_end:
+                run_buf.extend(val_bytes)
+                runs[-1][2] = name
+                continue
+            if addr < run_end:
+                raise ValueError(f"Overlapping members near {name} in struct {struct_name}")
+        runs.append([addr, bytearray(val_bytes), name])
+    return [(addr, bytes(buf)) for addr, buf, _ in runs]
+
+
 def _group_by_prefix(names: list[str]) -> list[tuple[str | None, list[str]]]:
     """Gom nhóm các tên theo struct prefix (dấu '.' hoặc tiền tố '_' nếu có >= 2 biến).
 
@@ -251,6 +288,9 @@ class CalibrationView(QWidget):
         self._original: dict[str, str] = {}                 # name → giá trị khi vừa đọc
         self._raw_data: dict[str, bytes] = {}               # name → raw bytes đã đọc
         self._dirty: set[str] = set()                       # tên characteristic đang sửa
+        # struct name → các đoạn (run) liền khít còn phải ghi, mỗi đoạn 1 lệnh WRITE
+        # riêng — xem _split_into_contiguous_runs().
+        self._pending_struct_runs: dict[str, list[tuple[int, bytes]]] = {}
         self._suspend_signals = False
         self._last_ecu_page: int | None = None
         self._last_xcp_page: int | None = None
@@ -510,7 +550,20 @@ class CalibrationView(QWidget):
         )
 
     def on_write_done(self, name: str) -> None:
-        """Clear dirty indicator after successful write."""
+        """Clear dirty indicator after successful write.
+
+        Struct bị tách nhiều đoạn (xem `_split_into_contiguous_runs`) gọi lại
+        hàm này sau MỖI đoạn ghi thành công — còn đoạn chờ thì bắn tiếp đoạn
+        kế tiếp và return ngay, CHƯA dọn dirty hay tiến hàng đợi ngoài; chỉ khi
+        đoạn cuối cùng xong mới chạy phần dọn dẹp bình thường bên dưới.
+        """
+        pending = self._pending_struct_runs.get(name)
+        if pending:
+            addr, buf = pending.pop(0)
+            self._write_cb(name, addr, buf)
+            return
+        self._pending_struct_runs.pop(name, None)
+
         item = self._char_items.get(name)
         if item is None:
             return
@@ -543,7 +596,7 @@ class CalibrationView(QWidget):
         self._dirty.discard(name)
         self._update_write_btn()
         self.status_label.setText(f"Successfully wrote '{name}' to ECU.")
-        
+
         if hasattr(self, '_write_queue') and self._write_queue:
             self._process_write_queue()
 
@@ -658,41 +711,45 @@ class CalibrationView(QWidget):
     def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
         if item.text(COL_TYPE).startswith("STRUCT"):
             try:
-                min_addr = int(item.text(COL_ADDR), 16)
-                total_size = int(item.text(COL_SIZE))
-                buf = bytearray(total_size)
-                
+                entries: list[tuple[int, bytes, str]] = []
                 for i in range(item.childCount()):
                     child = item.child(i)
                     c_name = child.data(COL_NAME, Qt.UserRole)
                     c_def = self._db.characteristics.get(c_name)
                     if not c_def: continue
-                    
+
                     if c_def.array_size > 1 and child.childCount() > 0:
                         children_values = [child.child(j).text(COL_VALUE) for j in range(child.childCount())]
                         val_bytes = encode_value(",".join(children_values), c_def.datatype, self._byte_order, c_def.array_size)
                     else:
                         val_bytes = encode_value(child.text(COL_VALUE).strip(), c_def.datatype, self._byte_order, c_def.array_size)
-                        
-                    offset = c_def.address - min_addr
-                    if offset + len(val_bytes) > total_size:
-                        raise ValueError(f"Size overflow for {c_name} in struct {char_name}")
-                    buf[offset:offset+len(val_bytes)] = val_bytes
-                    
-                self._write_cb(char_name, min_addr, bytes(buf))
-                
-                # Cleanup dirty state
-                for i in range(item.childCount()):
-                    c_name = item.child(i).data(COL_NAME, Qt.UserRole)
-                    self._dirty.discard(c_name)
-                    item.child(i).setForeground(COL_VALUE, QBrush())
-                self._update_write_btn()
-                if not self._dirty:
-                    self.write_all_btn.setEnabled(False)
+                    entries.append((c_def.address, val_bytes, c_name))
+
+                runs = _split_into_contiguous_runs(entries, char_name)
             except ValueError as e:
                 self.status_label.setText(f"Invalid value in STRUCT: {e}")
                 if hasattr(self, '_write_queue') and self._write_queue:
                     self._process_write_queue()
+                return
+            if not runs:
+                return
+
+            # Mỗi đoạn liền khít là 1 lệnh WRITE riêng — struct đóng gói khít
+            # (không gap) luôn ra đúng 1 đoạn, y hệt hành vi ghi gộp trước đây.
+            # Các đoạn còn lại (nếu có) được bắn tiếp tuần tự từ on_write_done(),
+            # theo đúng đoạn 1 ghi xong mới tới đoạn kế — Session không reentrant.
+            first_addr, first_bytes = runs[0]
+            self._pending_struct_runs[char_name] = runs[1:]
+            self._write_cb(char_name, first_addr, first_bytes)
+
+            # Cleanup dirty state
+            for i in range(item.childCount()):
+                c_name = item.child(i).data(COL_NAME, Qt.UserRole)
+                self._dirty.discard(c_name)
+                item.child(i).setForeground(COL_VALUE, QBrush())
+            self._update_write_btn()
+            if not self._dirty:
+                self.write_all_btn.setEnabled(False)
             return
 
         char_def = self._db.characteristics.get(char_name)
