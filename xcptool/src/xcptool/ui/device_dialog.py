@@ -576,7 +576,7 @@ class DeviceDialog(MessageBoxBase):
         n = sol.nominal
         d = sol.data
         return {
-            "custom_bit_timing": True,
+            "custom_bit_timing": False,
             "f_clock": self.clock_spin.value() * 1_000_000,
             "brp": n.brp, "tseg1": n.tseg1, "tseg2": n.tseg2, "sjw": n.sjw,
             "dbrp": d.brp if d else self._dbrp,

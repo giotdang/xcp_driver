@@ -235,7 +235,13 @@ def _dialog_with_selected_device(host, initial=None) -> DeviceDialog:
 
 
 def test_solver_fills_registers_from_sample_point(qtbot, host) -> None:
-    """solve_cb bật → build_config() giải brp/tseg từ sample point, custom_bit_timing=True."""
+    """solve_cb bật → build_config() giải brp/tseg từ sample point.
+
+    `custom_bit_timing` chỉ đánh dấu override thủ công qua Advanced Timing —
+    đường solver để nó là False và dùng `solve_timing=True` riêng, để mở lại
+    dialog không hiện nhầm trạng thái "manual override" (bitrate combo bị khoá).
+    `pycan.py` áp `timing=` khi `custom_bit_timing OR solve_timing`.
+    """
     from xcptool.session.bit_timing import solve as solve_bt
 
     dlg = _dialog_with_selected_device(host)
@@ -246,7 +252,8 @@ def test_solver_fills_registers_from_sample_point(qtbot, host) -> None:
 
     cfg = dlg.build_config()
     assert cfg is not None
-    assert cfg.custom_bit_timing is True
+    assert cfg.custom_bit_timing is False
+    assert cfg.solve_timing is True
     ref = solve_bt(80_000_000, 500_000, 87.5).nominal
     assert (cfg.brp, cfg.tseg1, cfg.tseg2, cfg.sjw) == (ref.brp, ref.tseg1, ref.tseg2, ref.sjw)
     assert cfg.solve_timing is True

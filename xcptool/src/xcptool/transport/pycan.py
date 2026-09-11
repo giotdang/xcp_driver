@@ -35,7 +35,7 @@ def open_pycan_bus(
         if cfg.is_fd:
             kwargs["data_bitrate"] = cfg.data_bitrate
             
-        if cfg.custom_bit_timing:
+        if cfg.custom_bit_timing or cfg.solve_timing:
             if cfg.is_fd:
                 kwargs["timing"] = can.BitTimingFd(
                     f_clock=cfg.f_clock, nom_brp=cfg.brp, nom_tseg1=cfg.tseg1, nom_tseg2=cfg.tseg2, nom_sjw=cfg.sjw,
