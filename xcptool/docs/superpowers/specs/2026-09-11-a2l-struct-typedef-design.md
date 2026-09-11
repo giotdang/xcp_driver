@@ -421,3 +421,46 @@ flat, same as `CalibrationView`'s equivalent case (§6).
   `CalibrationView` integration (the view with the actual reported bugs);
   (3) `MeasurementView` integration. Each phase should land with full test
   suite green before the next starts.
+
+## 10. Addendum — resolution also builds the display tree (found while planning)
+
+§7 originally had each view (`CalibrationView`, `MeasurementView`) walk
+`db.instances` + `db.struct_types` itself to rebuild the tree shape,
+recomputing element addresses for arrays (`base + i * size_of(type_name)`)
+independently of §5's resolution. That duplicates the naming/address-math
+logic in three places (resolution, and both views) that must stay in
+lockstep — a real risk, caught while turning this spec into an
+implementation plan (`DEV_PLAN.md §10`), not before.
+
+**Fix:** resolution (§5) also builds an explicit tree and exposes it, so
+neither view ever recomputes an address or a hierarchical name — they only
+render what resolution already decided.
+
+```python
+@dataclass
+class InstanceNode:
+    """One resolved node — a struct/array parent or a leaf. Built once by
+    _resolve_instances(); CalibrationView/MeasurementView only read it."""
+    name: str                  # full hierarchical name, e.g. "grp.member[0]"
+    address: int
+    leaf_name: str | None      # key into characteristics/measurements if
+                                # this node IS a leaf; None for struct/array parents
+    is_measurement: bool       # which dict `leaf_name` is in — meaningless
+                                # when leaf_name is None
+    struct_size: int | None    # real StructTypeDef.size if this node is a
+                                # struct parent; None otherwise
+    children: list["InstanceNode"] = field(default_factory=list)
+```
+
+`A2LDatabase` gains `instance_trees: dict[str, InstanceNode]`, keyed by each
+`Instance.name` — one entry per top-level `INSTANCE` block, mirroring
+`db.instances`' own keys.
+
+`_resolve_one`/`_resolve_type` (§5) build one `InstanceNode` per call
+alongside the `Characteristic`/`Measurement` materialization they already
+do, and return it so the caller (parent struct, or `_resolve_instances`
+itself) can attach it as a child. Same recursion, same guards (§5) — this
+is additive to §5's algorithm, not a different one: every point where §5
+already computes a real address and a real hierarchical name now also
+wraps them in an `InstanceNode` instead of throwing that information away
+once the leaf dict entry is written.

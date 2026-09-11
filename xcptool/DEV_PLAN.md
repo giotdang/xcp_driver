@@ -357,33 +357,1705 @@ không nhảy theo Navigation; Dark theme vỡ khi Dock floating) đã fix, xem 
 
 ## 10. Kế hoạch tiếp theo — A2L struct thật (TYPEDEF_STRUCTURE/INSTANCE)
 
-**Trạng thái: chưa bắt đầu.** Spec đã duyệt: xem
-[`docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md`](docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md)
-(bản đầy đủ: ngữ pháp ASAP2, thuật toán resolve, data model, testing) và
-[`DESIGN.md §8`](DESIGN.md) (tóm tắt quyết định).
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> `superpowers:subagent-driven-development` (recommended) or
+> `superpowers:executing-plans` to implement this task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking. Mark each `- [x]` as it lands.
 
-**Vì sao:** `_group_by_prefix` (2 bản độc lập ở `calibration_view.py` và
-`measurement_view.py`) đoán "đây là struct" từ tên tham số — gây bug thật
-khi test với ECU thật (Write All báo "Size overflow", màu dirty dòng cha
-không tự dọn khi ghi lẻ 1 child). 2 bug đó đã vá tại chỗ (write-path an
-toàn với mọi input, xem `_split_into_contiguous_runs`/`on_write_done`
-trong `calibration_view.py`), nhưng gốc rễ — quyết định gộp nhóm dựa trên
-suy đoán tên — vẫn còn. A2L thật của ECU khai struct đúng chuẩn ASAP2
-(`TYPEDEF_STRUCTURE`/`INSTANCE`); quyết định là đọc dữ liệu đó thay vì đoán,
-và **bỏ hẳn fallback đoán theo tên** — file không có `INSTANCE` (kiểu cũ,
-ví dụ `examples/xcp_daq_example.a2l`) sẽ hiện phẳng, không gộp nhóm nữa.
+**Trạng thái: chưa bắt đầu.**
 
-**3 phase triển khai (theo spec §9), mỗi phase xong mới sang phase kế, đủ
-test xanh mới coi là xong:**
+**Goal:** Thay `_group_by_prefix` (đoán "struct" từ tên tham số, 2 bản độc
+lập ở `calibration_view.py`/`measurement_view.py`) bằng dữ liệu struct THẬT
+đọc từ ASAP2 `TYPEDEF_STRUCTURE`/`STRUCTURE_COMPONENT`/`TYPEDEF_CHARACTERISTIC`/
+`TYPEDEF_MEASUREMENT`/`INSTANCE` — không còn fallback đoán theo tên cho bất
+kỳ file nào.
 
-1. **Parser + data model + resolution** (`a2l/parser.py`, `a2l/types.py`,
-   `a2l/database.py`) — hoàn toàn độc lập UI, test được riêng.
-2. **`CalibrationView` tích hợp** — view đang có bug thật, làm trước.
-3. **`MeasurementView` tích hợp** — mirror phase 2, đọc trước code
-   `set_database()` hiện có của view này ở độ sâu tương đương phase 2.
+**Architecture:** `a2l/parser.py` đọc 5 block ASAP2 mới thành dataclass mới
+trong `a2l/types.py`. `a2l/database.py` resolve đệ quy (struct lồng struct,
+mảng struct/component) thành `Characteristic`/`Measurement` thật (địa chỉ
+tuyệt đối) trong các dict hiện có — session/master/transport không đổi gì.
+Resolve cũng dựng luôn cây hiển thị (`InstanceNode`) để `CalibrationView`/
+`MeasurementView` không phải tự suy lại địa chỉ/tên phân cấp (xem spec §10 —
+phát hiện lúc viết plan này, spec gốc để UI tự suy, rủi ro trùng logic 3 nơi).
 
-Migration cần nhớ: xoá `_group_by_prefix` ở CẢ HAI file (không phải import
-chung), sửa lại `test_set_database_groups_struct_characteristics` trong
-`test_calibration_view.py` (đang assert đúng hành vi bị thay thế) và test
-tương ứng trong `test_measurement_view.py` (kiểm tra lại bằng grep lúc
-implement).
+**Tech Stack:** Python 3.12 dataclasses, parser tự viết sẵn có (không thêm
+dependency), pytest + pytest-qt cho UI.
+
+**Spec:** [`docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md`](docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md)
+— đọc CẢ spec lẫn phần dưới đây; plan lập luận dựa trên spec, không lặp lại
+phần lý thuyết (ngữ pháp ASAP2 đầy đủ nằm ở spec §3).
+
+### Ràng buộc chung (áp dụng cho MỌI task dưới đây)
+
+- Venv: `xcptool\.venv\Scripts\python.exe`, không phải `python` trần.
+- `QT_QPA_PLATFORM=offscreen` cho mọi test UI (đã set sẵn trong
+  `tests/ui/conftest.py` — không cần set tay).
+- Sau MỖI task: chạy đúng test file vừa đụng trước, roll-up cả
+  `pytest tests/ -x -q` cuối task 9 (hết phase 1), cuối task 12 (hết
+  phase 2), cuối task 14 (hết phase 3) — không được đỏ mới coi task xong.
+- Không renumber section nào trong `DEV_PLAN.md`/`DESIGN.md` — bị code
+  comment tham chiếu theo số (`DEV_PLAN.md §3/§5.1/§6/§7`, `DESIGN.md §5`).
+- Không sửa `examples/xcp_daq_example.a2l` (file chia sẻ, nhiều test khác
+  đếm số lượng CHARACTERISTIC/MEASUREMENT cố định trong đó) — mọi A2L text
+  dùng để test tính năng struct-typedef mới là snippet tự tạo trong test,
+  không load từ file chung.
+
+---
+
+### Task 1: Data model — 5 dataclass mới + field mới trên `A2LDatabase`
+
+**Files:**
+- Modify: `src/xcptool/a2l/types.py` (chèn sau `Characteristic`, trước `XcpProtocolInfo` — hiện ở dòng 73; thêm field vào `A2LDatabase`, hiện bắt đầu dòng 85)
+- Test: `tests/unit/test_a2l_parser.py` (thêm cuối file — dataclass thuần, không cần fixture `db`)
+
+**Interfaces:**
+- Produces: `StructComponent(name, type_name, offset, matrix_dim=[])` với `.array_size` (property); `StructTypeDef(name, size, components=[])`; `CharacteristicTypeDef(name, description, char_type, record_layout, lower_limit, upper_limit, compu_method="NO_COMPU_METHOD", array_size=1, datatype=None)`; `MeasurementTypeDef(name, description, datatype, lower_limit, upper_limit, compu_method="NO_COMPU_METHOD", matrix_dim=[])` với `.array_size`; `Instance(name, description, type_name, address, matrix_dim=[])` với `.array_size`; `InstanceNode(name, address, leaf_name, is_measurement, struct_size, children=[])`. `A2LDatabase` có thêm `struct_types`, `characteristic_types`, `measurement_types`, `instances`, `instance_trees` — đều `dict[str, T]` mặc định rỗng.
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+def test_struct_typedef_dataclasses_exist_with_defaults() -> None:
+    from xcptool.a2l.types import (
+        A2LDatabase, CharacteristicTypeDef, Instance, InstanceNode,
+        MeasurementTypeDef, StructComponent, StructTypeDef,
+    )
+    comp = StructComponent(name="kp", type_name="T_Float", offset=0)
+    assert comp.array_size == 1
+    comp_arr = StructComponent(name="samples", type_name="T_I16", offset=4, matrix_dim=[3])
+    assert comp_arr.array_size == 3
+
+    struct = StructTypeDef(name="PidTelemetry_t", size=12, components=[comp, comp_arr])
+    assert struct.components == [comp, comp_arr]
+
+    ctd = CharacteristicTypeDef(
+        name="T_Float", description="", char_type="VALUE",
+        record_layout="RL_F32", lower_limit=0.0, upper_limit=1.0)
+    assert ctd.array_size == 1 and ctd.datatype is None
+
+    mtd = MeasurementTypeDef(
+        name="T_I16", description="", datatype="SWORD",
+        lower_limit=-100.0, upper_limit=100.0)
+    assert mtd.array_size == 1
+
+    inst = Instance(name="tel", description="", type_name="PidTelemetry_t", address=0x1000)
+    assert inst.array_size == 1
+
+    node = InstanceNode(name="tel", address=0x1000, leaf_name=None,
+                        is_measurement=False, struct_size=12)
+    assert node.children == []
+
+    db = A2LDatabase()
+    assert db.struct_types == {} and db.characteristic_types == {}
+    assert db.measurement_types == {} and db.instances == {}
+    assert db.instance_trees == {}
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py::test_struct_typedef_dataclasses_exist_with_defaults -v`
+Expected: FAIL — `ImportError: cannot import name 'StructComponent'`
+
+- [ ] **Step 3: Thêm dataclass vào `types.py`**
+
+Chèn ngay sau dòng 71 (`return DATATYPE_SIZES.get(self.datatype, 1) * self.array_size` — cuối `Characteristic.byte_size`), trước `@dataclass\nclass XcpProtocolInfo:`:
+
+```python
+@dataclass
+class StructComponent:
+    """Một thành viên của TYPEDEF_STRUCTURE — ASAP2 STRUCTURE_COMPONENT."""
+    name: str
+    type_name: str        # -> StructTypeDef | CharacteristicTypeDef | MeasurementTypeDef, theo tên
+    offset: int
+    matrix_dim: list[int] = field(default_factory=list)
+
+    @property
+    def array_size(self) -> int:
+        s = 1
+        for d in self.matrix_dim:
+            s *= d
+        return s
+
+
+@dataclass
+class StructTypeDef:
+    """ASAP2 TYPEDEF_STRUCTURE — một KIỂU struct, không phải instance đã đặt."""
+    name: str
+    size: int              # byte size khai thật trong A2L — không tự tính
+    components: list[StructComponent] = field(default_factory=list)
+
+
+@dataclass
+class CharacteristicTypeDef:
+    """ASAP2 TYPEDEF_CHARACTERISTIC — giống Characteristic, bỏ `address`
+    (là template STRUCTURE_COMPONENT/INSTANCE tham chiếu tới, không phải giá
+    trị đã đặt vào bộ nhớ)."""
+    name: str
+    description: str
+    char_type: str
+    record_layout: str
+    lower_limit: float
+    upper_limit: float
+    compu_method: str = "NO_COMPU_METHOD"
+    array_size: int = 1
+    datatype: DataType | None = None
+
+
+@dataclass
+class MeasurementTypeDef:
+    """ASAP2 TYPEDEF_MEASUREMENT — giống Measurement, bỏ `address`."""
+    name: str
+    description: str
+    datatype: DataType
+    lower_limit: float
+    upper_limit: float
+    compu_method: str = "NO_COMPU_METHOD"
+    matrix_dim: list[int] = field(default_factory=list)
+
+    @property
+    def array_size(self) -> int:
+        s = 1
+        for d in self.matrix_dim:
+            s *= d
+        return s
+
+
+@dataclass
+class Instance:
+    """ASAP2 INSTANCE — đặt một TYPEDEF_* vào địa chỉ ECU thật."""
+    name: str
+    description: str
+    type_name: str          # -> StructTypeDef | CharacteristicTypeDef | MeasurementTypeDef
+    address: int
+    matrix_dim: list[int] = field(default_factory=list)
+
+    @property
+    def array_size(self) -> int:
+        s = 1
+        for d in self.matrix_dim:
+            s *= d
+        return s
+
+
+@dataclass
+class InstanceNode:
+    """Cây đã resolve cho 1 INSTANCE — dựng bởi a2l/database.py duy nhất;
+    UI chỉ đọc, không tự suy địa chỉ/tên phân cấp (xem spec §10)."""
+    name: str                  # tên phân cấp đầy đủ, VD "grp.member[0]"
+    address: int
+    leaf_name: str | None      # key trong characteristics/measurements nếu là lá; None nếu là struct/mảng cha
+    is_measurement: bool       # leaf_name thuộc measurements (True) hay characteristics (False) — vô nghĩa nếu leaf_name None
+    struct_size: int | None    # StructTypeDef.size thật nếu node này là struct cha; None nếu không phải
+    children: list["InstanceNode"] = field(default_factory=list)
+```
+
+Thêm field vào `A2LDatabase` (chèn trước `protocol_info`, giữ `protocol_info` là field cuối như hiện tại):
+
+```python
+@dataclass
+class A2LDatabase:
+    measurements: dict[str, Measurement] = field(default_factory=dict)
+    characteristics: dict[str, Characteristic] = field(default_factory=dict)
+    record_layouts: dict[str, RecordLayout] = field(default_factory=dict)
+    struct_types: dict[str, StructTypeDef] = field(default_factory=dict)
+    characteristic_types: dict[str, CharacteristicTypeDef] = field(default_factory=dict)
+    measurement_types: dict[str, MeasurementTypeDef] = field(default_factory=dict)
+    instances: dict[str, Instance] = field(default_factory=dict)
+    instance_trees: dict[str, InstanceNode] = field(default_factory=dict)
+    protocol_info: XcpProtocolInfo | None = None
+```
+
+- [ ] **Step 4: Chạy lại, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py -v`
+Expected: PASS toàn bộ (test cũ + test mới)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/types.py xcptool/tests/unit/test_a2l_parser.py
+git commit -m "feat(xcptool): add ASAP2 struct-typedef dataclasses to a2l/types.py"
+```
+
+---
+
+### Task 2: Parser — `TYPEDEF_STRUCTURE`/`STRUCTURE_COMPONENT` + gộp `MATRIX_DIM` helper
+
+**Files:**
+- Modify: `src/xcptool/a2l/parser.py`
+- Test: `tests/unit/test_a2l_parser.py`
+
+**Interfaces:**
+- Consumes: `StructTypeDef`, `StructComponent` (Task 1).
+- Produces: `_extract_matrix_dim(tokens: list[str]) -> list[int]` (helper dùng lại ở Task 4, Task 5); `_extract_struct_type(b: _Block) -> StructTypeDef | None`; `_extract_struct_component(b: _Block) -> StructComponent | None`; `db.struct_types[name] -> StructTypeDef` sau `parse()`.
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+def test_typedef_structure_parses_components_and_matrix_dim() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_STRUCTURE PidTelemetry_t "PID telemetry" 0x10
+        /begin STRUCTURE_COMPONENT error T_Float32 0x0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT samples T_I16 0x4
+            MATRIX_DIM 3
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    """
+    db = parse(text)
+    struct = db.struct_types["PidTelemetry_t"]
+    assert struct.size == 0x10
+    assert [c.name for c in struct.components] == ["error", "samples"]
+    assert struct.components[0].type_name == "T_Float32"
+    assert struct.components[0].offset == 0
+    assert struct.components[0].matrix_dim == []
+    assert struct.components[1].offset == 4
+    assert struct.components[1].matrix_dim == [3]
+    assert struct.components[1].array_size == 3
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py::test_typedef_structure_parses_components_and_matrix_dim -v`
+Expected: FAIL — `KeyError: 'PidTelemetry_t'` (chưa parse block này, `struct_types` rỗng)
+
+- [ ] **Step 3: Thêm helper `_extract_matrix_dim` + extractor, tái dùng cho `_extract_measurement`**
+
+Trong `parser.py`, thêm helper NGAY TRƯỚC `_extract_measurement` (tránh trùng logic — `_extract_measurement` hiện tự lặp tìm `MATRIX_DIM` inline, sửa nó gọi helper chung):
+
+```python
+def _extract_matrix_dim(t: list[str]) -> list[int]:
+    """MATRIX_DIM <n> [<m> …] — 0 hoặc nhiều số nguyên theo sau keyword."""
+    for i, tok in enumerate(t):
+        if tok == "MATRIX_DIM":
+            dims: list[int] = []
+            j = i + 1
+            while j < len(t):
+                try:
+                    dims.append(int(t[j]))
+                    j += 1
+                except ValueError:
+                    break
+            return dims
+    return []
+```
+
+Sửa `_extract_measurement` — thay đoạn vòng lặp `MATRIX_DIM` inline (dòng ~192-203 hiện tại) bằng:
+
+```python
+    matrix_dim = _extract_matrix_dim(t)
+```
+
+(xoá 10 dòng vòng lặp thủ công cũ, hành vi giữ nguyên y hệt — `test_torqueSamples_matrix_dim` đã cover).
+
+Thêm 2 extractor mới, đặt ngay sau `_extract_measurement`:
+
+```python
+def _extract_struct_component(b: _Block) -> StructComponent | None:
+    t = b.tokens
+    if len(t) < 3:
+        return None
+    return StructComponent(
+        name=t[0], type_name=t[1], offset=_to_int(t[2]),
+        matrix_dim=_extract_matrix_dim(t),
+    )
+
+
+def _extract_struct_type(b: _Block) -> StructTypeDef | None:
+    t = b.tokens
+    if len(t) < 3:
+        return None
+    components = [
+        c for c in (
+            _extract_struct_component(child)
+            for child in b.children if child.name == "STRUCTURE_COMPONENT"
+        ) if c is not None
+    ]
+    return StructTypeDef(name=t[0], size=_to_int(t[2]), components=components)
+```
+
+Cập nhật import ở đầu file:
+```python
+from .types import (
+    A2LDatabase, Characteristic, Instance, InstanceNode, Measurement,
+    RecordLayout, StructComponent, StructTypeDef, XcpProtocolInfo,
+)
+```
+(giữ chỗ cho `Instance`/`InstanceNode` — dùng ở Task 5; import thừa trước khi dùng không lỗi, chỉ là import sớm).
+
+Thêm case trong `_visit()` (`parse()`), đặt cạnh case `RECORD_LAYOUT`:
+
+```python
+        elif block.name == "TYPEDEF_STRUCTURE":
+            try:
+                st = _extract_struct_type(block)
+                if st:
+                    db.struct_types[st.name] = st
+            except Exception as exc:
+                _log.warning("Skipping TYPEDEF_STRUCTURE %r: %s", bname, exc)
+```
+
+- [ ] **Step 4: Chạy lại toàn bộ file test, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py -v`
+Expected: PASS toàn bộ, kể cả `test_torqueSamples_matrix_dim` (đảm bảo refactor helper không đổi hành vi)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/parser.py xcptool/tests/unit/test_a2l_parser.py
+git commit -m "feat(xcptool): parse TYPEDEF_STRUCTURE/STRUCTURE_COMPONENT"
+```
+
+---
+
+### Task 3: Parser — `TYPEDEF_CHARACTERISTIC`
+
+**Files:**
+- Modify: `src/xcptool/a2l/parser.py`
+- Test: `tests/unit/test_a2l_parser.py`
+
+**Interfaces:**
+- Consumes: `CharacteristicTypeDef` (Task 1), `_to_int`/`_to_float` (đã có).
+- Produces: `_extract_characteristic_type(b: _Block) -> CharacteristicTypeDef | None`; `db.characteristic_types[name] -> CharacteristicTypeDef`.
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+def test_typedef_characteristic_parses_like_characteristic_minus_address() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain leaf type" VALUE RL_F32 0 CM_LINEAR 0.0 10.0
+    /end TYPEDEF_CHARACTERISTIC
+    """
+    db = parse(text)
+    ct = db.characteristic_types["T_Gain"]
+    assert ct.char_type == "VALUE"
+    assert ct.record_layout == "RL_F32"
+    assert ct.compu_method == "CM_LINEAR"
+    assert ct.lower_limit == 0.0 and ct.upper_limit == 10.0
+    assert ct.array_size == 1
+    assert ct.datatype is None  # resolve() (Task 6) mới điền
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py::test_typedef_characteristic_parses_like_characteristic_minus_address -v`
+Expected: FAIL — `KeyError: 'T_Gain'`
+
+- [ ] **Step 3: Thêm extractor + hook `_visit()`**
+
+Đặt ngay sau `_extract_characteristic`:
+
+```python
+def _extract_characteristic_type(b: _Block) -> CharacteristicTypeDef | None:
+    t = b.tokens
+    if len(t) < 8:
+        return None
+    number_tok = b.get("NUMBER", 1)
+    return CharacteristicTypeDef(
+        name=t[0], description=t[1].strip('"'), char_type=t[2],
+        record_layout=t[3], compu_method=t[5],
+        lower_limit=_to_float(t[6]), upper_limit=_to_float(t[7]),
+        array_size=int(number_tok[0]) if number_tok else 1,
+    )
+```
+
+Thêm `CharacteristicTypeDef` vào import từ `.types`. Thêm case trong `_visit()`:
+
+```python
+        elif block.name == "TYPEDEF_CHARACTERISTIC":
+            try:
+                ct = _extract_characteristic_type(block)
+                if ct:
+                    db.characteristic_types[ct.name] = ct
+            except Exception as exc:
+                _log.warning("Skipping TYPEDEF_CHARACTERISTIC %r: %s", bname, exc)
+```
+
+- [ ] **Step 4: Chạy lại, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py -v`
+Expected: PASS toàn bộ
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/parser.py xcptool/tests/unit/test_a2l_parser.py
+git commit -m "feat(xcptool): parse TYPEDEF_CHARACTERISTIC"
+```
+
+---
+
+### Task 4: Parser — `TYPEDEF_MEASUREMENT`
+
+**Files:**
+- Modify: `src/xcptool/a2l/parser.py`
+- Test: `tests/unit/test_a2l_parser.py`
+
+**Interfaces:**
+- Consumes: `MeasurementTypeDef` (Task 1), `_extract_matrix_dim` (Task 2).
+- Produces: `_extract_measurement_type(b: _Block) -> MeasurementTypeDef | None`; `db.measurement_types[name] -> MeasurementTypeDef`.
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+def test_typedef_measurement_parses_matrix_dim() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_MEASUREMENT T_Samples "sample leaf type" SWORD CM_NONE 0 0 -100 100
+        MATRIX_DIM 4
+    /end TYPEDEF_MEASUREMENT
+    """
+    db = parse(text)
+    mt = db.measurement_types["T_Samples"]
+    assert mt.datatype == "SWORD"
+    assert mt.lower_limit == -100.0 and mt.upper_limit == 100.0
+    assert mt.matrix_dim == [4]
+    assert mt.array_size == 4
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py::test_typedef_measurement_parses_matrix_dim -v`
+Expected: FAIL — `KeyError: 'T_Samples'`
+
+- [ ] **Step 3: Thêm extractor + hook**
+
+Đặt ngay sau `_extract_measurement`:
+
+```python
+def _extract_measurement_type(b: _Block) -> MeasurementTypeDef | None:
+    t = b.tokens
+    if len(t) < 8:
+        return None
+    return MeasurementTypeDef(
+        name=t[0], description=t[1].strip('"'), datatype=t[2],
+        compu_method=t[3], lower_limit=_to_float(t[6]), upper_limit=_to_float(t[7]),
+        matrix_dim=_extract_matrix_dim(t),
+    )
+```
+
+Thêm `MeasurementTypeDef` vào import từ `.types`. Thêm case trong `_visit()`:
+
+```python
+        elif block.name == "TYPEDEF_MEASUREMENT":
+            try:
+                mt = _extract_measurement_type(block)
+                if mt:
+                    db.measurement_types[mt.name] = mt
+            except Exception as exc:
+                _log.warning("Skipping TYPEDEF_MEASUREMENT %r: %s", bname, exc)
+```
+
+- [ ] **Step 4: Chạy lại, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py -v`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/parser.py xcptool/tests/unit/test_a2l_parser.py
+git commit -m "feat(xcptool): parse TYPEDEF_MEASUREMENT"
+```
+
+---
+
+### Task 5: Parser — `INSTANCE`
+
+**Files:**
+- Modify: `src/xcptool/a2l/parser.py`
+- Test: `tests/unit/test_a2l_parser.py`
+
+**Interfaces:**
+- Consumes: `Instance` (Task 1), `_extract_matrix_dim` (Task 2).
+- Produces: `_extract_instance(b: _Block) -> Instance | None`; `db.instances[name] -> Instance`.
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+def test_instance_parses_type_ref_address_and_array() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin INSTANCE speedPidTelemetry "PID telemetry instance" PidTelemetry_t 0x90001000
+    /end INSTANCE
+    /begin INSTANCE tempSensors "sensor array" T_Gain 0x90002000
+        MATRIX_DIM 3
+    /end INSTANCE
+    """
+    db = parse(text)
+    inst = db.instances["speedPidTelemetry"]
+    assert inst.type_name == "PidTelemetry_t"
+    assert inst.address == 0x90001000
+    assert inst.array_size == 1
+
+    arr_inst = db.instances["tempSensors"]
+    assert arr_inst.matrix_dim == [3]
+    assert arr_inst.array_size == 3
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py::test_instance_parses_type_ref_address_and_array -v`
+Expected: FAIL — `KeyError: 'speedPidTelemetry'`
+
+- [ ] **Step 3: Thêm extractor + hook**
+
+Đặt ngay sau `_extract_struct_type` (hoặc bất kỳ đâu cạnh nhóm extractor mới):
+
+```python
+def _extract_instance(b: _Block) -> Instance | None:
+    t = b.tokens
+    if len(t) < 4:
+        return None
+    return Instance(
+        name=t[0], description=t[1].strip('"'), type_name=t[2],
+        address=_to_int(t[3]), matrix_dim=_extract_matrix_dim(t),
+    )
+```
+
+Thêm case trong `_visit()`:
+
+```python
+        elif block.name == "INSTANCE":
+            try:
+                inst = _extract_instance(block)
+                if inst:
+                    db.instances[inst.name] = inst
+            except Exception as exc:
+                _log.warning("Skipping INSTANCE %r: %s", bname, exc)
+```
+
+(`Instance` đã có sẵn trong import từ Task 2.)
+
+- [ ] **Step 4: Chạy lại, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_parser.py -v`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/parser.py xcptool/tests/unit/test_a2l_parser.py
+git commit -m "feat(xcptool): parse INSTANCE"
+```
+
+---
+
+### Task 6: Resolution — mở rộng `_resolve()` để resolve luôn `characteristic_types`
+
+**Files:**
+- Modify: `src/xcptool/a2l/database.py`
+- Test: `tests/unit/test_a2l_database.py` (file mới — resolution chưa có test file riêng)
+
+**Interfaces:**
+- Consumes: `db.characteristic_types` (Task 3), `db.record_layouts` (đã có).
+- Produces: `CharacteristicTypeDef.datatype` được điền — cần thiết TRƯỚC Task 8 (struct resolution cần biết size thật của leaf template).
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+"""Unit tests cho a2l/database.py — resolve() và struct-instance resolution."""
+from __future__ import annotations
+
+from xcptool.a2l.database import load
+from xcptool.a2l.parser import parse
+from xcptool.a2l.types import A2LDatabase
+
+
+def _resolve(text: str) -> A2LDatabase:
+    """Parse + chạy đúng pipeline resolve của load() (không cần file thật)."""
+    from xcptool.a2l.database import _resolve as resolve_fn
+    db = parse(text)
+    resolve_fn(db)
+    return db
+
+
+def test_resolve_fills_datatype_for_characteristic_type_templates() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_LINEAR 0.0 10.0
+    /end TYPEDEF_CHARACTERISTIC
+    """)
+    assert db.characteristic_types["T_Gain"].datatype == "FLOAT32_IEEE"
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py::test_resolve_fills_datatype_for_characteristic_type_templates -v`
+Expected: FAIL — `assert None == "FLOAT32_IEEE"`
+
+- [ ] **Step 3: Sửa `_resolve()`**
+
+```python
+def _resolve(db: A2LDatabase) -> None:
+    """Propagate RecordLayout.datatype → Characteristic.datatype (và tương tự
+    cho CharacteristicTypeDef — struct-leaf template cần datatype thật
+    TRƯỚC khi _resolve_instances() cần tính byte size của nó)."""
+    for char in db.characteristics.values():
+        rl = db.record_layouts.get(char.record_layout)
+        if rl:
+            char.datatype = rl.datatype
+    for tmpl in db.characteristic_types.values():
+        rl = db.record_layouts.get(tmpl.record_layout)
+        if rl:
+            tmpl.datatype = rl.datatype
+```
+
+- [ ] **Step 4: Chạy lại, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py tests/unit/test_a2l_parser.py -v`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/database.py xcptool/tests/unit/test_a2l_database.py
+git commit -m "feat(xcptool): resolve datatype for TYPEDEF_CHARACTERISTIC templates too"
+```
+
+---
+
+### Task 7: Resolution — INSTANCE phẳng (không struct, không mảng), cả 2 nhánh char/measurement
+
+**Files:**
+- Modify: `src/xcptool/a2l/database.py`
+- Test: `tests/unit/test_a2l_database.py`
+
+**Interfaces:**
+- Consumes: `Instance`, `CharacteristicTypeDef`, `MeasurementTypeDef`, `InstanceNode` (Task 1); `db.instances` (Task 5).
+- Produces: `_resolve_instances(db) -> None`; `_resolve_one(db, type_name, base_addr, name, matrix_dim, seen) -> InstanceNode | None`; `_resolve_type(db, type_name, addr, name, seen) -> InstanceNode | None`; `_array_len(matrix_dim: list[int]) -> int`; ghi thẳng vào `db.characteristics`/`db.measurements`/`db.instance_trees`. `load()` gọi `_resolve_instances(db)` ngay sau `_resolve(db)`.
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+def test_flat_instance_of_characteristic_type_materializes_real_characteristic() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_LINEAR 0.0 10.0
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE mainGain "main gain instance" T_Gain 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+
+    char = db.characteristics["mainGain"]
+    assert char.address == 0x80100000
+    assert char.datatype == "FLOAT32_IEEE"
+    assert char.char_type == "VALUE"
+
+    node = db.instance_trees["mainGain"]
+    assert node.leaf_name == "mainGain"
+    assert node.is_measurement is False
+    assert node.address == 0x80100000
+    assert node.children == []
+
+
+def test_flat_instance_of_measurement_type_materializes_real_measurement() -> None:
+    db = _resolve("""
+    /begin TYPEDEF_MEASUREMENT T_Speed "speed" FLOAT32_IEEE CM_NONE 0 0 0 300
+    /end TYPEDEF_MEASUREMENT
+    /begin INSTANCE vehicleSpeed "speed instance" T_Speed 0x90000000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+
+    meas = db.measurements["vehicleSpeed"]
+    assert meas.address == 0x90000000
+    assert meas.datatype == "FLOAT32_IEEE"
+
+    node = db.instance_trees["vehicleSpeed"]
+    assert node.leaf_name == "vehicleSpeed"
+    assert node.is_measurement is True
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py -k flat_instance -v`
+Expected: FAIL — `ImportError: cannot import name '_resolve_instances'`
+
+- [ ] **Step 3: Viết `_resolve_instances`/`_resolve_one`/`_resolve_type`**
+
+Thêm vào `database.py` (import `InstanceNode` từ `.types` — đã import `A2LDatabase` sẵn, mở rộng dòng import):
+
+```python
+def _array_len(matrix_dim: list[int]) -> int:
+    n = 1
+    for d in matrix_dim:
+        n *= d
+    return n
+
+
+def _resolve_instances(db: A2LDatabase) -> None:
+    """Đệ quy flatten mọi INSTANCE thành Characteristic/Measurement thật
+    (địa chỉ tuyệt đối) + InstanceNode (cây hiển thị cho UI). Struct lồng
+    struct và mảng (component lẫn instance) xem Task 8/9/11."""
+    for inst in db.instances.values():
+        node = _resolve_one(db, inst.type_name, inst.address, inst.name,
+                            inst.matrix_dim, frozenset())
+        if node is not None:
+            db.instance_trees[inst.name] = node
+
+
+def _resolve_one(
+    db: A2LDatabase, type_name: str, base_addr: int, name: str,
+    matrix_dim: list[int], seen: frozenset[str],
+) -> InstanceNode | None:
+    n = _array_len(matrix_dim)
+    if n == 1:
+        return _resolve_type(db, type_name, base_addr, name, seen)
+    return None  # mảng — xem Task 9
+
+
+def _resolve_type(
+    db: A2LDatabase, type_name: str, addr: int, name: str, seen: frozenset[str],
+) -> InstanceNode | None:
+    if type_name in db.characteristic_types:
+        tmpl = db.characteristic_types[type_name]
+        if name in db.characteristics:
+            _log.warning("INSTANCE-resolved name %r collides with an existing "
+                        "CHARACTERISTIC, skipping", name)
+            return None
+        db.characteristics[name] = Characteristic(
+            name=name, description=tmpl.description, char_type=tmpl.char_type,
+            address=addr, record_layout=tmpl.record_layout,
+            lower_limit=tmpl.lower_limit, upper_limit=tmpl.upper_limit,
+            compu_method=tmpl.compu_method, array_size=tmpl.array_size,
+            datatype=tmpl.datatype)
+        return InstanceNode(name=name, address=addr, leaf_name=name,
+                            is_measurement=False, struct_size=None)
+    if type_name in db.measurement_types:
+        tmpl = db.measurement_types[type_name]
+        if name in db.measurements:
+            _log.warning("INSTANCE-resolved name %r collides with an existing "
+                        "MEASUREMENT, skipping", name)
+            return None
+        db.measurements[name] = Measurement(
+            name=name, description=tmpl.description, datatype=tmpl.datatype,
+            address=addr, lower_limit=tmpl.lower_limit, upper_limit=tmpl.upper_limit,
+            compu_method=tmpl.compu_method, matrix_dim=tmpl.matrix_dim)
+        return InstanceNode(name=name, address=addr, leaf_name=name,
+                            is_measurement=True, struct_size=None)
+    _log.warning("INSTANCE/STRUCTURE_COMPONENT %r references unknown type %r, skipping",
+                name, type_name)
+    return None
+```
+
+(Nhánh struct trong `_resolve_type` thêm ở Task 8; nhánh mảng trong `_resolve_one` thêm ở Task 9; `seen` chưa dùng tới khi chưa có đệ quy struct — giữ tham số sẵn để Task 8/11 không phải đổi chữ ký.)
+
+Sửa `load()` gọi thêm bước mới, ngay sau `_resolve(db)`:
+
+```python
+def load(path: str | Path) -> A2LDatabase:
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    db = parse(text)
+    _resolve(db)
+    _resolve_instances(db)
+    return db
+```
+
+- [ ] **Step 4: Chạy lại, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py tests/unit/test_a2l_parser.py -v`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/database.py xcptool/tests/unit/test_a2l_database.py
+git commit -m "feat(xcptool): resolve flat INSTANCE into real Characteristic/Measurement"
+```
+
+---
+
+### Task 8: Resolution — INSTANCE của struct (1 tầng, member scalar)
+
+**Files:**
+- Modify: `src/xcptool/a2l/database.py`
+- Test: `tests/unit/test_a2l_database.py`
+
+**Interfaces:**
+- Consumes: `StructTypeDef`, `StructComponent` (Task 1/2); `_resolve_type` (Task 7).
+- Produces: nhánh struct trong `_resolve_type` — member địa chỉ = `addr + component.offset`, tên = `f"{name}.{component.name}"`.
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+def test_struct_instance_resolves_each_member_to_a_real_address() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_LINEAR 0.0 10.0
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Pid_t "pid gains" 8
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ki T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE speedPid "speed pid" Pid_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+
+    assert db.characteristics["speedPid.kp"].address == 0x80100000
+    assert db.characteristics["speedPid.ki"].address == 0x80100004
+
+    node = db.instance_trees["speedPid"]
+    assert node.leaf_name is None
+    assert node.struct_size == 8
+    assert [c.name for c in node.children] == ["speedPid.kp", "speedPid.ki"]
+    assert all(c.leaf_name == c.name for c in node.children)
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py::test_struct_instance_resolves_each_member_to_a_real_address -v`
+Expected: FAIL — `KeyError: 'speedPid.kp'` (rơi vào nhánh "unknown type" vì chưa có nhánh struct)
+
+- [ ] **Step 3: Thêm nhánh struct vào `_resolve_type`, TRƯỚC 2 nhánh `if type_name in ...types`**
+
+```python
+def _resolve_type(
+    db: A2LDatabase, type_name: str, addr: int, name: str, seen: frozenset[str],
+) -> InstanceNode | None:
+    if type_name in db.struct_types:
+        struct = db.struct_types[type_name]
+        children: list[InstanceNode] = []
+        for comp in struct.components:
+            child = _resolve_one(db, comp.type_name, addr + comp.offset,
+                                 f"{name}.{comp.name}", comp.matrix_dim,
+                                 seen | {type_name})
+            if child is not None:
+                children.append(child)
+        return InstanceNode(name=name, address=addr, leaf_name=None,
+                            is_measurement=False, struct_size=struct.size,
+                            children=children)
+    if type_name in db.characteristic_types:
+        ...  # giữ nguyên Task 7
+```
+
+(`seen | {type_name}` chưa được `_resolve_type` kiểm tra — vòng lặp thật sự chỉ chặn ở Task 11; ở đây chỉ cần TRUYỀN đúng `seen` xuống để chữ ký nhất quán, không phá test Task 7.)
+
+- [ ] **Step 4: Chạy lại, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py -v`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/database.py xcptool/tests/unit/test_a2l_database.py
+git commit -m "feat(xcptool): resolve struct INSTANCE members to real addresses"
+```
+
+---
+
+### Task 9: Resolution — mảng (component có `MATRIX_DIM`, và instance có `MATRIX_DIM`)
+
+**Files:**
+- Modify: `src/xcptool/a2l/database.py`
+- Test: `tests/unit/test_a2l_database.py`
+
+**Interfaces:**
+- Consumes: `_resolve_one` (Task 7), `_size_of` (mới).
+- Produces: `_size_of(db, type_name) -> int | None`; nhánh `n > 1` trong `_resolve_one` — dùng CHUNG cho mảng ở cấp component lẫn cấp instance (cùng một hàm, không code riêng cho 2 case).
+
+- [ ] **Step 1: Viết test thất bại**
+
+```python
+def test_array_component_expands_to_indexed_addresses() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_I16
+        FNC_VALUES 1 SWORD ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_I16 "i16" VALUE RL_I16 0 CM_NONE -100 100
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE WithArray_t "has array member" 6
+        /begin STRUCTURE_COMPONENT samples T_I16 0
+            MATRIX_DIM 3
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE grp "grp" WithArray_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+
+    assert db.characteristics["grp.samples[0]"].address == 0x80100000
+    assert db.characteristics["grp.samples[1]"].address == 0x80100002
+    assert db.characteristics["grp.samples[2]"].address == 0x80100004
+
+    node = db.instance_trees["grp"]
+    samples_node = node.children[0]
+    assert samples_node.leaf_name is None  # mảng — không phải lá
+    assert [c.name for c in samples_node.children] == [
+        "grp.samples[0]", "grp.samples[1]", "grp.samples[2]"]
+
+
+def test_array_instance_of_struct_expands_each_element() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Pid_t "pid" 4
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE pids "array of pid" Pid_t 0x80100000
+        MATRIX_DIM 2
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+
+    assert db.characteristics["pids[0].kp"].address == 0x80100000
+    assert db.characteristics["pids[1].kp"].address == 0x80100004
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py -k array -v`
+Expected: FAIL — `KeyError: 'grp.samples[0]'` (nhánh `n > 1` trong `_resolve_one` hiện `return None`)
+
+- [ ] **Step 3: Thêm `_size_of` + sửa nhánh mảng trong `_resolve_one`**
+
+Thêm ngay trước `_resolve_one` (cần `DATATYPE_SIZES` — mở rộng import từ `.types`):
+
+```python
+def _size_of(db: A2LDatabase, type_name: str) -> int | None:
+    """Byte size của 1 phần tử — cần để stride qua mảng."""
+    if type_name in db.struct_types:
+        return db.struct_types[type_name].size
+    if type_name in db.characteristic_types:
+        tmpl = db.characteristic_types[type_name]
+        if tmpl.datatype is None:
+            return None
+        return DATATYPE_SIZES.get(tmpl.datatype, 1) * tmpl.array_size
+    if type_name in db.measurement_types:
+        tmpl = db.measurement_types[type_name]
+        return DATATYPE_SIZES.get(tmpl.datatype, 1) * tmpl.array_size
+    return None
+```
+
+Sửa `_resolve_one`:
+
+```python
+def _resolve_one(
+    db: A2LDatabase, type_name: str, base_addr: int, name: str,
+    matrix_dim: list[int], seen: frozenset[str],
+) -> InstanceNode | None:
+    n = _array_len(matrix_dim)
+    if n == 1:
+        return _resolve_type(db, type_name, base_addr, name, seen)
+
+    size = _size_of(db, type_name)
+    if size is None:
+        _log.warning("Cannot size array element type %r for %r, skipping", type_name, name)
+        return None
+    children: list[InstanceNode] = []
+    for i in range(n):
+        child = _resolve_type(db, type_name, base_addr + i * size, f"{name}[{i}]", seen)
+        if child is not None:
+            children.append(child)
+    if not children:
+        return None
+    return InstanceNode(name=name, address=base_addr, leaf_name=None,
+                        is_measurement=False, struct_size=None, children=children)
+```
+
+- [ ] **Step 4: Chạy lại, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py -v`
+
+- [ ] **Step 5: Chạy full suite Phase 1 — chốt phase 1**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ -x -q`
+Expected: PASS toàn bộ (phase 1 chưa đụng UI — không có test nào khác nên đỏ)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/database.py xcptool/tests/unit/test_a2l_database.py
+git commit -m "feat(xcptool): resolve array components and array instances"
+```
+
+---
+
+### Task 10: Resolution — struct lồng struct + guard (circular / unknown type / collision)
+
+**Files:**
+- Modify: `src/xcptool/a2l/database.py`
+- Test: `tests/unit/test_a2l_database.py`
+
+**Interfaces:**
+- Consumes: `_resolve_type` struct branch (Task 8), `seen: frozenset[str]` (đã truyền sẵn từ Task 8, giờ mới THẬT SỰ kiểm tra).
+- Produces: struct-trong-struct hoạt động đúng; 3 guard ném warning + trả `None`, không crash, không đè dữ liệu.
+
+- [ ] **Step 1: Viết test thất bại (4 case trong 1 task — cùng 1 mạch guard)**
+
+```python
+def test_nested_struct_resolves_recursively() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 4
+        /begin STRUCTURE_COMPONENT val T_Gain 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 4
+        /begin STRUCTURE_COMPONENT inner Inner_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE thing "nested" Outer_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+    assert db.characteristics["thing.inner.val"].address == 0x80100000
+
+
+def test_circular_struct_reference_warns_and_skips(caplog) -> None:
+    db = _resolve("""
+    /begin TYPEDEF_STRUCTURE A_t "a" 4
+        /begin STRUCTURE_COMPONENT b B_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE B_t "b" 4
+        /begin STRUCTURE_COMPONENT a A_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE thing "circular" A_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)  # KHÔNG được raise / đệ quy vô hạn
+    assert db.characteristics == {}
+    assert "circular" in caplog.text.lower() or "recursion" in caplog.text.lower()
+
+
+def test_unknown_type_name_warns_and_skips(caplog) -> None:
+    db = _resolve("""
+    /begin INSTANCE thing "bad type ref" NotDefinedAnywhere_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+    assert db.instance_trees == {}
+    assert "unknown" in caplog.text.lower() or "NotDefinedAnywhere_t" in caplog.text
+
+
+def test_name_collision_keeps_original_and_warns(caplog) -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin CHARACTERISTIC dup "already exists" VALUE 0x12345678 RL_F32 0 CM_NONE 0 10
+    /end CHARACTERISTIC
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE dup "collides with the CHARACTERISTIC above" T_Gain 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+    assert db.characteristics["dup"].address == 0x12345678  # KHÔNG bị ghi đè
+    assert "collide" in caplog.text.lower() or "collision" in caplog.text.lower()
+```
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py -k "nested or circular or unknown_type or collision" -v`
+Expected: `test_nested_struct_resolves_recursively` đã PASS (Task 8 đã handle đệ quy struct-tầng-nào-cũng-được về mặt cơ chế); `test_circular_...` FAIL — `RecursionError` (chưa chặn); 2 test còn lại đã PASS sẵn (Task 7 guard đã viết). Nếu `nested`/`unknown_type`/`collision` đã xanh — bỏ qua Step 3 phần tương ứng, chỉ cần thêm chặn circular.
+
+- [ ] **Step 3: Thêm guard circular vào nhánh struct của `_resolve_type`**
+
+```python
+    if type_name in db.struct_types:
+        if type_name in seen:
+            _log.warning("Circular TYPEDEF_STRUCTURE reference at %r via %r, skipping",
+                        name, type_name)
+            return None
+        struct = db.struct_types[type_name]
+        ...  # phần còn lại giữ nguyên Task 8
+```
+
+- [ ] **Step 4: Chạy lại toàn bộ, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/unit/test_a2l_database.py -v`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/a2l/database.py xcptool/tests/unit/test_a2l_database.py
+git commit -m "feat(xcptool): guard circular TYPEDEF_STRUCTURE references"
+```
+
+**→ Phase 1 xong khi Task 10 commit xanh.** `a2l/` giờ đọc được toàn bộ ASAP2
+struct-typedef thật, độc lập UI, test riêng đầy đủ.
+
+---
+
+### Task 11: `CalibrationView` — dựng cây từ `db.instance_trees`, bỏ `_group_by_prefix`
+
+**Files:**
+- Modify: `src/xcptool/ui/calibration_view.py` (`set_database()` hiện ở dòng 445; `_group_by_prefix` hiện ở dòng 216 — xoá; hàm mới `_build_tree_item_from_node`)
+- Test: `tests/ui/test_calibration_view.py`
+
+**Interfaces:**
+- Consumes: `InstanceNode` (Task 1), `db.instance_trees` (Task 7-10), `_make_item`/`_build_array_children` (đã có, KHÔNG đổi chữ ký).
+- Produces: `CalibrationView._build_tree_item_from_node(node: InstanceNode) -> QTreeWidgetItem`. `set_database()` không còn gọi `_group_by_prefix`.
+
+- [ ] **Step 1: Viết test thất bại**
+
+Thay thế hoàn toàn `test_set_database_groups_struct_characteristics` (đang assert đúng hành vi bị xoá) bằng:
+
+```python
+def test_set_database_builds_struct_tree_from_instance_data(qtbot) -> None:
+    """Thay test cũ (đoán struct theo tên) — giờ struct đến từ INSTANCE thật."""
+    from xcptool.a2l.database import load as a2l_load
+    import tempfile, textwrap
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Pid_t "pid" 8
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ki T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE speedPid "speed pid" Pid_t 0x80100000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    assert v.tree.topLevelItemCount() == 1
+    parent = v.tree.topLevelItem(0)
+    assert parent.text(COL_NAME) == "speedPid"
+    assert "STRUCT" in parent.text(COL_TYPE)
+    assert parent.text(COL_SIZE) == "8"
+    assert parent.childCount() == 2
+    assert {parent.child(i).data(COL_NAME, Qt.UserRole) for i in range(2)} == {
+        "speedPid.kp", "speedPid.ki"}
+
+
+def test_set_database_no_instance_renders_flat_even_with_shared_name_prefix(qtbot) -> None:
+    """Quyết định spec §6: CHARACTERISTIC không có INSTANCE hiện phẳng, dù
+    tên trùng tiền tố — KHÔNG còn heuristic đoán theo tên."""
+    db = A2LDatabase()
+    for param in ("kp", "ki", "kd"):
+        db.characteristics[f"speedPid_{param}"] = Characteristic(
+            name=f"speedPid_{param}", description="", char_type="VALUE",
+            address=MEM_BASE, record_layout="RL_F32", lower_limit=-10.0,
+            upper_limit=10.0, datatype="FLOAT32_IEEE")
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    assert v.tree.topLevelItemCount() == 3  # KHÔNG gộp — trước đây sẽ là 1
+    names = {v.tree.topLevelItem(i).text(COL_NAME) for i in range(3)}
+    assert names == {"speedPid_kp", "speedPid_ki", "speedPid_kd"}
+```
+
+Xoá hẳn `test_set_database_groups_struct_characteristics` (thay bằng 2 test trên).
+
+- [ ] **Step 2: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ui/test_calibration_view.py -k "instance_data or shared_name_prefix" -v`
+Expected: `no_instance_renders_flat` đã PASS (nếu `_group_by_prefix` vẫn còn thì FAIL — group thành 1 node); `instance_data` FAIL vì `set_database` chưa đọc `db.instance_trees`.
+
+- [ ] **Step 3: Sửa `set_database()`, thêm `_build_tree_item_from_node`, xoá `_group_by_prefix`**
+
+Thay toàn bộ khối `groups = _group_by_prefix(...)` … hết vòng `for group_name, members in groups:` (dòng 455-494 hiện tại) bằng:
+
+```python
+            handled: set[str] = set()
+            for inst_name, node in db.instance_trees.items():
+                item = self._build_tree_item_from_node(node)
+                self.tree.addTopLevelItem(item)
+                handled |= self._leaf_names(node)
+
+            for name, char in sorted(db.characteristics.items()):
+                if name in handled:
+                    continue
+                item = self._make_item(name, char)
+                self.tree.addTopLevelItem(item)
+                self._char_items[name] = item
+                if char.array_size > 1:
+                    self._build_array_children(item, char)
+```
+
+Thêm 2 method mới trong class (cạnh `_make_item`):
+
+```python
+    def _leaf_names(self, node: "InstanceNode") -> set[str]:
+        if node.leaf_name is not None:
+            return {node.leaf_name}
+        names: set[str] = set()
+        for child in node.children:
+            names |= self._leaf_names(child)
+        return names
+
+    def _build_tree_item_from_node(self, node: "InstanceNode") -> QTreeWidgetItem:
+        """Dựng QTreeWidgetItem từ InstanceNode đã resolve (a2l/database.py) —
+        KHÔNG tự suy địa chỉ hay tên, chỉ đọc lại những gì resolve() đã
+        quyết định (xem spec §10)."""
+        if node.leaf_name is not None:
+            char = self._db.characteristics[node.leaf_name]
+            item = self._make_item(node.leaf_name, char,
+                                   display_name=node.name.rsplit(".", 1)[-1])
+            self._char_items[node.leaf_name] = item
+            if char.array_size > 1:
+                self._build_array_children(item, char)
+            return item
+
+        item = QTreeWidgetItem()
+        item.setData(COL_NAME, Qt.UserRole, node.name)
+        item.setText(COL_NAME, node.name.rsplit(".", 1)[-1] if "." in node.name else node.name)
+        if node.struct_size is not None:
+            item.setText(COL_TYPE, f"STRUCT ({len(node.children)})")
+            item.setText(COL_SIZE, str(node.struct_size))
+        else:
+            item.setText(COL_TYPE, f"ARRAY[{len(node.children)}]")
+        item.setText(COL_ADDR, f"0x{node.address:08X}")
+        item.setText(COL_VALUE, "—")
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        self._char_items[node.name] = item
+        for child_node in node.children:
+            item.addChild(self._build_tree_item_from_node(child_node))
+        item.setExpanded(True)
+        return item
+```
+
+Xoá hoàn toàn hàm `_group_by_prefix` (dòng 216-247 hiện tại). Thêm `InstanceNode` vào import từ `..session.api` (kiểm tra `session/api.py` đã re-export `InstanceNode` chưa — nếu chưa, dùng `from ..a2l.types import InstanceNode` trực tiếp; `a2l.types` là stdlib-thuần, không vi phạm ranh giới `ui/` cấm import `xcptool.a2l` theo `test_boundaries.py` §... — **CHỖ NÀY CẦN QUYẾT ĐỊNH TRƯỚC KHI CODE**: `test_boundaries.py` cấm `ui/` import `xcptool.a2l` (xem hàng `ui/` trong bảng FORBIDDEN của `tests/test_boundaries.py`) — `InstanceNode` PHẢI được re-export qua `session/api.py` giống `A2LDatabase` đã làm, KHÔNG import thẳng từ `a2l.types`. Thêm `from ..a2l.types import InstanceNode` vào `session/api.py` và thêm `InstanceNode` vào `__all__` của `api.py` (file lead-owned — xin duyệt trước khi sửa nếu làm việc theo quy trình nhóm; ở đây tự làm vì đang là agent duy nhất). `ui/calibration_view.py` import `from ..session.api import A2LDatabase, DeviceInfo, InstanceNode`.
+
+- [ ] **Step 4: Chạy lại toàn bộ file test, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ui/test_calibration_view.py -v`
+Expected: PASS toàn bộ — kể cả các test write-path cũ (`_split_into_contiguous_runs`, `on_write_done` parent color) không đổi hành vi, vì chúng test `_write_parent`/`on_write_done` trực tiếp, không phụ thuộc `set_database()`.
+
+- [ ] **Step 5: Chạy `test_boundaries.py` — xác nhận không phá ranh giới**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/test_boundaries.py -v`
+Expected: PASS — đặc biệt `test_package_boundary[ui]` (nếu lỡ import thẳng `a2l.types` thay vì qua `session.api` thì đỏ ngay đây)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add xcptool/src/xcptool/ui/calibration_view.py xcptool/src/xcptool/session/api.py xcptool/tests/ui/test_calibration_view.py
+git commit -m "feat(xcptool): CalibrationView builds STRUCT tree from real INSTANCE data"
+```
+
+---
+
+### Task 12: `CalibrationView` — struct lồng/mảng trong cây UI + hồi quy toàn diện
+
+**Files:**
+- Modify: `src/xcptool/ui/calibration_view.py` (không đổi code — `_build_tree_item_from_node` ở Task 11 đã đệ quy đúng cho mọi độ sâu/mảng, vì nó chỉ đi theo `InstanceNode.children` đã resolve sẵn)
+- Test: `tests/ui/test_calibration_view.py`
+
+**Interfaces:**
+- Consumes: `_build_tree_item_from_node` (Task 11) — không đổi.
+
+- [ ] **Step 1: Viết test xác nhận hành vi đã đúng (không cần sửa code nếu Task 11 đúng)**
+
+```python
+def test_set_database_renders_nested_and_array_struct(qtbot) -> None:
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 4
+        /begin STRUCTURE_COMPONENT val T_Gain 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 4
+        /begin STRUCTURE_COMPONENT inner Inner_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE pids "array of outer" Outer_t 0x80100000
+        MATRIX_DIM 2
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    assert v.tree.topLevelItemCount() == 1
+    array_parent = v.tree.topLevelItem(0)
+    assert array_parent.childCount() == 2  # pids[0], pids[1]
+    outer0 = array_parent.child(0)
+    assert outer0.childCount() == 1        # inner
+    inner0 = outer0.child(0)
+    assert inner0.childCount() == 1        # val
+    leaf = inner0.child(0)
+    assert leaf.data(COL_NAME, Qt.UserRole) == "pids[0].inner.val"
+```
+
+- [ ] **Step 2: Chạy test**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ui/test_calibration_view.py::test_set_database_renders_nested_and_array_struct -v`
+Expected: PASS ngay (Task 11 đã tổng quát đúng) — nếu FAIL, lỗi nằm ở `_build_tree_item_from_node`, sửa tại đó cho tới khi xanh.
+
+- [ ] **Step 3: Lỗ hổng thật cần vá — mảng scalar KHÔNG bọc trong struct (bare array INSTANCE) chưa ghi được**
+
+`_build_tree_item_from_node` (Task 11) gắn `COL_TYPE = f"ARRAY[{n}]"` (không
+phải `"STRUCT (...)"`) khi `INSTANCE` có `MATRIX_DIM` nhưng `type_name` trỏ
+tới `CharacteristicTypeDef` (scalar), không phải struct — VD `INSTANCE
+tempSensors "..." T_Gain 0x80100000 MATRIX_DIM 3`. `_write_parent`/
+`on_write_done`/`_on_write_all` hiện chỉ nhận diện combine-write qua
+`item.text(COL_TYPE).startswith("STRUCT")` — node "ARRAY[3]" này sẽ KHÔNG
+đi qua nhánh combine, rơi vào nhánh scalar đơn, tìm
+`self._db.characteristics.get("tempSensors")` → `None` (chỉ có
+`"tempSensors[0]"`, `"tempSensors[1]"`, `"tempSensors[2]"` là key thật) →
+ghi không làm gì, không lỗi, không thông báo — loại bug im lặng nguy hiểm
+nhất. Struct-lồng-mảng (test Step 1-2) KHÔNG dính lỗi này vì nó luôn có 1
+struct cha thật (`COL_TYPE` bắt đầu bằng `"STRUCT"`) bọc ngoài mảng.
+
+Viết test thất bại trước:
+
+```python
+def test_write_bare_array_instance_without_enclosing_struct(qtbot) -> None:
+    """INSTANCE ... MATRIX_DIM của kiểu scalar (không bọc trong struct nào)
+    vẫn phải ghi được qua đúng cơ chế combine-write, y hệt STRUCT."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE tempSensors "3 sensor gains, no struct" T_Gain 0x80100000
+        MATRIX_DIM 3
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+    parent = v._char_items["tempSensors"]
+    assert parent.text(COL_TYPE).startswith("ARRAY")
+
+    for i in range(3):
+        parent.child(i).setText(COL_VALUE, str(1.0 + i))
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("tempSensors", parent)
+
+    assert len(writes) == 1          # 3 phần tử liền khít -> 1 lần ghi
+    name, addr, data = writes[0]
+    assert addr == 0x80100000
+    assert len(data) == 12            # 3 x FLOAT32 (4 byte)
+```
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ui/test_calibration_view.py::test_write_bare_array_instance_without_enclosing_struct -v`
+Expected: FAIL — `writes == []` (rơi vào nhánh scalar, `char_def` là `None`, `_write_parent` return sớm không làm gì)
+
+Sửa 3 chỗ trong `calibration_view.py` — mở rộng điều kiện nhận diện "node
+combine-write được" từ chỉ `"STRUCT"` sang `"STRUCT"` HOẶC `"ARRAY["`:
+
+```python
+# _write_parent — dòng đầu hàm
+if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
+```
+```python
+# on_write_done — nhánh dọn dirty cho parent nhiều con
+if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
+```
+```python
+# _on_write_all — điều kiện promote dirty child lên parent
+if item.parent() is not None and (
+    item.parent().text(COL_TYPE).startswith("STRUCT")
+    or item.parent().text(COL_TYPE).startswith("ARRAY[")
+):
+```
+
+Chạy lại test vừa viết + toàn bộ `test_calibration_view.py`, xác nhận PASS.
+`_split_into_contiguous_runs`/`_pending_struct_runs` không cần đổi gì — cả
+hai chỉ quan tâm (address, bytes) của từng con, không quan tâm parent là
+"STRUCT" hay "ARRAY[" về mặt ngữ nghĩa.
+
+- [ ] **Step 4: Roll-up Phase 2 — full suite**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ -x -q`
+Expected: PASS toàn bộ.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add xcptool/src/xcptool/ui/calibration_view.py xcptool/tests/ui/test_calibration_view.py
+git commit -m "fix(xcptool): route bare array-of-scalar INSTANCE writes through combine-write"
+```
+
+**→ Phase 2 xong khi Task 12 commit xanh.**
+
+---
+
+### Task 13: `MeasurementView` — bỏ `_group_by_prefix` (bản riêng), dùng `db.instance_trees`
+
+**Files:**
+- Modify: `src/xcptool/ui/measurement_view.py` (`_group_by_prefix` ở dòng 129 — bản ĐỘC LẬP với bản trong `calibration_view.py`, xoá; `set_database()` ở dòng 310; `_checked_names()` ở dòng 535)
+- Test: `tests/ui/test_measurement_view.py` — fixture view có sẵn: `view(qtbot) -> MeasurementView` (dòng 36-41, dùng `MeasurementView()` trực tiếp, không cần factory riêng)
+
+**⚠️ Chi tiết dễ bỏ sót — đọc trước khi code:** tick checkbox ở dòng CHA
+(struct/mảng) phải kéo theo TẤT CẢ signal con vào DAQ list khi bấm "Bắt đầu
+đo" — cơ chế này KHÔNG phải duyệt cây lúc bấm nút, mà đọc thẳng
+`item.data(COL_NAME, Qt.UserRole)` trong `_checked_names()` (dòng 535-545):
+nếu giá trị là `list` thì `extend` cả list đó vào signal cần gửi, nếu là
+`str` thì `append` đúng 1 tên. `_build_tree_item_from_node` PHẢI giữ đúng
+hợp đồng này — node struct/mảng set `Qt.UserRole` = **list tên MEASUREMENT
+lá thật** (không phải tên hiển thị của node), node lá set `Qt.UserRole` =
+tên nó (`str`, y hệt hiện tại). Bỏ qua chi tiết này thì tick dòng cha xong
+bấm "Bắt đầu đo" sẽ gửi DAQ list RỖNG — không lỗi, không crash, chỉ âm
+thầm không đo được gì (loại lỗi khó phát hiện nếu không có test).
+
+**Interfaces:**
+- Consumes: `InstanceNode`, `db.instance_trees` (Task 11, re-export qua `session/api.py`); `_leaf_names()` — VIẾT LẠI Ở ĐÂY (không import từ `calibration_view.py`, 2 file không phụ thuộc nhau).
+- Produces: `MeasurementView._build_tree_item_from_node(node) -> QTreeWidgetItem`; `MeasurementView._leaf_names(node) -> list[str]`.
+
+- [ ] **Step 1: Đọc lại nguyên văn `set_database()` + `_checked_names()`/`_build_daq_lists()` thật trước khi sửa**
+
+Dùng tool đọc file (không dùng lại mô tả trong plan này) — file có thể đã
+đổi khác chút kể từ lúc viết plan.
+
+- [ ] **Step 2: Viết test thất bại — thay `test_set_database_groups_struct_measurements` (dòng 241)**
+
+Xoá `test_set_database_groups_struct_measurements` hiện có (đang assert
+hành vi `_group_by_prefix` sẽ bị xoá), thay bằng:
+
+```python
+def test_set_database_builds_struct_tree_from_instance_data(view: MeasurementView) -> None:
+    """Thay test cũ (đoán struct theo tên) — struct từ INSTANCE thật, và
+    tick dòng cha vẫn phải kéo đủ cả 3 signal con vào DAQ list."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin TYPEDEF_MEASUREMENT T_F32 "f32" FLOAT32_IEEE CM_NONE 0 0 -100 100
+    /end TYPEDEF_MEASUREMENT
+    /begin TYPEDEF_STRUCTURE Telemetry_t "telemetry" 12
+        /begin STRUCTURE_COMPONENT error T_F32 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT integral T_F32 4
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT output T_F32 8
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE speedPidTelemetry "telemetry instance" Telemetry_t 0x90001000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+    view.set_database(db)
+
+    assert view.tree.topLevelItemCount() == 1
+    parent = view.tree.topLevelItem(0)
+    assert parent.text(COL_NAME) == "speedPidTelemetry"
+    assert "STRUCT" in parent.text(COL_DTYPE)
+    assert parent.childCount() == 3
+
+    for i in range(3):
+        child = parent.child(i)
+        assert child.checkState(COL_NAME) == Qt.Unchecked or child.data(COL_NAME, Qt.CheckStateRole) is None
+
+    parent.setCheckState(COL_NAME, Qt.Checked)
+    emitted: list[list] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert len(emitted) == 1
+    sigs = emitted[0][0].signals
+    assert len(sigs) == 3
+    assert {s.name for s in sigs} == {
+        "speedPidTelemetry.error", "speedPidTelemetry.integral", "speedPidTelemetry.output",
+    }
+```
+
+(Tên leaf giờ có dấu `.` — `speedPidTelemetry.error`, không phải
+`speedPidTelemetry_error` như test cũ, vì đây là tên do `_resolve_type`
+sinh ra — spec §5. Import `MeasurementView` đã có sẵn ở đầu file test.)
+
+- [ ] **Step 3: Chạy test, xác nhận FAIL**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ui/test_measurement_view.py::test_set_database_builds_struct_tree_from_instance_data -v`
+Expected: FAIL — cây rỗng hoặc lỗi import, vì `set_database()` chưa đọc `instance_trees`.
+
+- [ ] **Step 4: Sửa `set_database()`, thêm `_build_tree_item_from_node`/`_leaf_names`, xoá `_group_by_prefix`**
+
+Thay khối `groups = _group_by_prefix(...)` … hết vòng lặp (dòng ~316-369
+hiện tại) bằng cấu trúc giống Task 11 (`handled` set, loop
+`db.instance_trees` trước, `db.measurements` còn lại sau) — nhưng dựng
+node theo ĐÚNG cột/checkbox của file này:
+
+```python
+    def _leaf_names(self, node) -> list[str]:
+        if node.leaf_name is not None:
+            return [node.leaf_name]
+        names: list[str] = []
+        for child in node.children:
+            names.extend(self._leaf_names(child))
+        return names
+
+    def _build_tree_item_from_node(self, node, top_level: bool) -> QTreeWidgetItem:
+        """`top_level=True` CHỈ khi item này được add thẳng bằng
+        `self.tree.addTopLevelItem(...)` — checkbox chỉ tồn tại ở đó, y hệt
+        hành vi cũ (con của struct/mảng KHÔNG có checkbox riêng, xem
+        `USER_MANUAL.md §6`). Không dùng cờ True/False nào khác để quyết
+        checkbox — quyết định 100% bởi vị trí trong cây, không phải bởi
+        node là lá hay không (một INSTANCE scalar độc lập, không thuộc
+        struct nào, VẪN cần checkbox vì nó là top-level)."""
+        if node.leaf_name is not None:
+            meas = self._db.measurements[node.leaf_name]
+            item = QTreeWidgetItem()
+            item.setData(COL_NAME, Qt.UserRole, node.leaf_name)
+            item.setText(COL_NAME, node.name.rsplit(".", 1)[-1] if "." in node.name else node.name)
+            if top_level:
+                item.setCheckState(COL_NAME, Qt.Unchecked)
+            friendly = _FRIENDLY_DTYPE.get(meas.datatype, meas.datatype)
+            item.setText(COL_DTYPE, friendly)
+            item.setText(COL_ADDR, f"0x{meas.address:08X}")
+            item.setText(COL_VALUE, "-")
+            item.setToolTip(COL_NAME, meas.description)
+            self._tree_items[node.leaf_name] = item
+            return item
+
+        leaves = self._leaf_names(node)
+        parent = QTreeWidgetItem()
+        parent.setData(COL_NAME, Qt.UserRole, leaves)   # list -> _checked_names() extend hết
+        parent.setText(COL_NAME, node.name.rsplit(".", 1)[-1] if "." in node.name else node.name)
+        if top_level:
+            parent.setCheckState(COL_NAME, Qt.Unchecked)
+        parent.setText(COL_DTYPE,
+            f"STRUCT ({len(node.children)})" if node.struct_size is not None
+            else f"ARRAY[{len(node.children)}]")
+        parent.setText(COL_ADDR, f"0x{node.address:08X}")
+        parent.setText(COL_VALUE, "-")
+        for child_node in node.children:
+            parent.addChild(self._build_tree_item_from_node(child_node, top_level=False))
+        return parent
+```
+
+Trong `set_database()`:
+
+```python
+        handled: set[str] = set()
+        for node in db.instance_trees.values():
+            item = self._build_tree_item_from_node(node, top_level=True)
+            self.tree.addTopLevelItem(item)
+            handled.update(self._leaf_names(node))
+
+        for name in sorted(db.measurements):
+            if name in handled:
+                continue
+            meas = db.measurements[name]
+            item = QTreeWidgetItem()
+            item.setData(COL_NAME, Qt.UserRole, name)
+            item.setText(COL_NAME, name)
+            item.setCheckState(COL_NAME, Qt.Unchecked)
+            friendly = _FRIENDLY_DTYPE.get(meas.datatype, meas.datatype)
+            item.setText(
+                COL_DTYPE,
+                friendly if meas.array_size == 1 else f"{friendly}[{meas.array_size}]"
+            )
+            item.setText(COL_ADDR, f"0x{meas.address:08X}")
+            item.setText(COL_VALUE, "-")
+            item.setToolTip(COL_NAME, meas.description)
+            self.tree.addTopLevelItem(item)
+            if meas.array_size == 1:
+                self._tree_items[name] = item
+            else:
+                elem_size = meas.byte_size // meas.array_size
+                for i in range(meas.array_size):
+                    child_name = f"{meas.name}[{i}]"
+                    # … giữ NGUYÊN VĂN logic mở rộng mảng độc lập đã có (đọc ở Step 1),
+                    # chỉ thay phần group-by-prefix ở trên, không đụng phần này.
+```
+
+(Đoạn mở rộng mảng độc lập `elem_size = meas.byte_size // meas.array_size`
+trở xuống giữ y hệt code hiện tại — chỉ paste lại nguyên văn sau khi đọc ở
+Step 1, không viết lại từ đầu.)
+
+Xoá hoàn toàn `_group_by_prefix` (dòng 129 hiện tại — bản của file NÀY;
+bản trong `calibration_view.py` đã xoá ở Task 11, không liên quan).
+
+- [ ] **Step 5: Chạy lại toàn bộ file test, xác nhận PASS**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ui/test_measurement_view.py -v`
+Expected: PASS toàn bộ — đặc biệt các test KHÔNG liên quan struct (scalar
+tree, array độc lập `torqueSamples`, scope, DAQ start/stop) không được đổi
+hành vi.
+
+- [ ] **Step 6: `test_boundaries.py`**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/test_boundaries.py -v`
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add xcptool/src/xcptool/ui/measurement_view.py xcptool/tests/ui/test_measurement_view.py
+git commit -m "feat(xcptool): MeasurementView builds STRUCT tree from real INSTANCE data"
+```
+
+---
+
+### Task 14: Hồi quy toàn bộ + cập nhật trạng thái tài liệu
+
+**Files:**
+- Modify: `DEV_PLAN.md` (mục này — đổi "chưa bắt đầu" thành xong), `DESIGN.md §8`, `ARCHITECTURE.md §7`, `USER_MANUAL.md` (bỏ ghi chú "📌 Sắp thay đổi" — hành vi mới đã là hiện tại)
+
+- [ ] **Step 1: Full suite + tiêu chí "không crash" liên quan A2L**
+
+Run: `xcptool\.venv\Scripts\python.exe -m pytest tests/ -x -q`
+Expected: PASS toàn bộ, không test nào bị skip ngoài dự kiến.
+
+Thủ công (mục 5 trong `DEV_PLAN.md §6` — nạp A2L không hợp lệ): nạp 1 file A2L có `INSTANCE` tham chiếu `type_name` không tồn tại → app không crash, hiện cảnh báo qua log, CHARACTERISTIC/MEASUREMENT khác trong file vẫn nạp bình thường.
+
+- [ ] **Step 2: Cập nhật trạng thái 4 doc**
+
+`DEV_PLAN.md` §10 — sửa dòng `**Trạng thái: chưa bắt đầu.**` thành `**Trạng thái: hoàn thành (YYYY-MM-DD).**` kèm số test cuối cùng.
+
+`DESIGN.md §8` — sửa `> **Trạng thái: kế hoạch — spec đã duyệt...**` thành mô tả kiến trúc chính thức (bỏ chữ "kế hoạch"), giữ nguyên phần giải thích lý do.
+
+`ARCHITECTURE.md §7.1` — sửa `**Trạng thái: spec đã duyệt..., chưa triển khai.**` thành đã triển khai; cân nhắc gộp nội dung §7.1 vào §2.1/§4.2 chính thức rồi xoá §7 nếu không còn mục nào khác trong "kế hoạch chờ triển khai" (kiểm tra trước khi xoá — không tự xoá section nếu còn nội dung khác).
+
+`USER_MANUAL.md` — xoá khối `> 📌 **Sắp thay đổi...**` (hành vi mới đã là hành vi hiện tại, không còn "sắp").
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add xcptool/DEV_PLAN.md xcptool/DESIGN.md xcptool/ARCHITECTURE.md xcptool/USER_MANUAL.md
+git commit -m "docs(xcptool): mark ASAP2 struct-typedef feature as shipped"
+```
+
+**→ Toàn bộ tính năng xong khi Task 14 commit xanh.** `_group_by_prefix` không còn tồn tại ở đâu trong codebase (`grep -rn "_group_by_prefix" src/` phải ra rỗng).
