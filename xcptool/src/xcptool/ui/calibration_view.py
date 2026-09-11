@@ -592,8 +592,27 @@ class CalibrationView(QWidget):
                 self._original[name] = ", ".join(child_vals)
         else:
             self._original[name] = item.text(COL_VALUE)
-            
+
         self._dirty.discard(name)
+
+        # `name` có thể là MỘT member ghi riêng lẻ (chọn dòng con rồi "Write
+        # Selected", không đi qua nhánh STRUCT của _write_parent) — khi đó
+        # dòng cha vẫn đang tô cam từ lúc _on_item_changed() bật dirty, và
+        # phải tự đi ngược lên tính lại giống hệt logic ở _on_item_changed(),
+        # nếu không dòng cha sẽ kẹt màu cam mãi dù mọi con đã sạch.
+        struct_parent = item.parent()
+        if struct_parent is not None:
+            any_dirty = False
+            for i in range(struct_parent.childCount()):
+                sibling_name = struct_parent.child(i).data(COL_NAME, Qt.UserRole)
+                if isinstance(sibling_name, str) and sibling_name in self._dirty:
+                    any_dirty = True
+                    break
+            dirty_color = QColor("#FFB86C") if isDarkTheme() else QColor("#B35C00")
+            struct_parent.setForeground(
+                COL_NAME, dirty_color if any_dirty else self.tree.palette().text()
+            )
+
         self._update_write_btn()
         self.status_label.setText(f"Successfully wrote '{name}' to ECU.")
 

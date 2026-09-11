@@ -827,6 +827,72 @@ def test_write_all_waits_for_every_run_before_next_queue_item(qtbot) -> None:
     assert [name for name, _, _ in writes] == ["grp", "grp", "solo"]
 
 
+def test_write_selected_single_struct_child_clears_parent_name_color(qtbot) -> None:
+    """Bug thật gặp: chọn 1 dòng con trong STRUCT rồi 'Write Selected' — ghi
+    chỉ đúng member đó (không qua nhánh STRUCT của _write_parent), nên dòng
+    cha đang tô cam từ lúc sửa vẫn không được on_write_done() đi ngược lên
+    dọn — kẹt cam mãi dù mọi con đã sạch."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+
+    parent = v._char_items["grp"]
+    child_a = parent.child(0)
+    v._original["grp_a"] = child_a.text(COL_VALUE)
+
+    child_a.setText(COL_VALUE, "99")
+    v._on_item_changed(child_a, COL_VALUE)
+    neutral = v.tree.palette().text().color()
+    assert parent.foreground(COL_NAME).color() != neutral  # cha đã tô cam khi sửa
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v.tree.setCurrentItem(child_a)
+    v._on_write()
+    assert len(writes) == 1 and writes[0][0] == "grp_a"  # ghi lẻ 1 child, không qua STRUCT
+
+    v.on_write_done("grp_a")
+    assert child_a.foreground(COL_NAME).color() == neutral
+    assert parent.foreground(COL_NAME).color() == neutral  # trước fix: vẫn cam
+
+
+def test_write_selected_single_child_keeps_parent_dirty_if_sibling_still_dirty(qtbot) -> None:
+    """Ghi xong 1 child nhưng sibling khác vẫn đang sửa dở -> cha PHẢI còn cam,
+    không được vô tình dọn sạch cha khi vẫn còn con dirty."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+
+    parent = v._char_items["grp"]
+    child_a, child_b = parent.child(0), parent.child(1)
+    v._original["grp_a"] = child_a.text(COL_VALUE)
+    v._original["grp_b"] = child_b.text(COL_VALUE)
+
+    child_a.setText(COL_VALUE, "99")
+    v._on_item_changed(child_a, COL_VALUE)
+    child_b.setText(COL_VALUE, "42")
+    v._on_item_changed(child_b, COL_VALUE)
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v.tree.setCurrentItem(child_a)
+    v._on_write()
+    v.on_write_done("grp_a")
+
+    neutral = v.tree.palette().text().color()
+    assert child_a.foreground(COL_NAME).color() == neutral
+    assert "grp_b" in v._dirty
+    assert parent.foreground(COL_NAME).color() != neutral  # grp_b vẫn dirty -> cha còn cam
+
+
 def test_array_placeholder_edit_ignored(qtbot) -> None:
     """Test that editing an array parent with placeholder '—' is ignored."""
     v = _make_view(qtbot)
