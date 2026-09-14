@@ -511,7 +511,7 @@ class CalibrationView(QWidget):
             self._suspend_signals = False
             
         if item.childCount() > 0:
-            if item.text(COL_TYPE).startswith("STRUCT"):
+            if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
                 for i in range(item.childCount()):
                     child = item.child(i)
                     child_name = child.data(COL_NAME, Qt.UserRole)
@@ -645,7 +645,10 @@ class CalibrationView(QWidget):
             item = self._char_items.get(char_name)
             if not item: continue
             
-            if item.parent() is not None and item.parent().text(COL_TYPE).startswith("STRUCT"):
+            if item.parent() is not None and (
+                item.parent().text(COL_TYPE).startswith("STRUCT")
+                or item.parent().text(COL_TYPE).startswith("ARRAY[")
+            ):
                 items_to_write.add(item.parent())
             else:
                 items_to_write.add(item)
@@ -662,7 +665,7 @@ class CalibrationView(QWidget):
         self._write_parent(char_name, item)
 
     def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
-        if item.text(COL_TYPE).startswith("STRUCT"):
+        if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
             try:
                 entries: list[tuple[int, bytes, str]] = []
                 for i in range(item.childCount()):

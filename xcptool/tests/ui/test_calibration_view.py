@@ -702,6 +702,84 @@ def test_set_database_no_instance_renders_flat_even_with_shared_name_prefix(qtbo
     assert names == {"speedPid_kp", "speedPid_ki", "speedPid_kd"}
 
 
+def test_set_database_renders_nested_and_array_struct(qtbot) -> None:
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 4
+        /begin STRUCTURE_COMPONENT val T_Gain 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 4
+        /begin STRUCTURE_COMPONENT inner Inner_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE pids "array of outer" Outer_t 0x80100000
+        MATRIX_DIM 2
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    assert v.tree.topLevelItemCount() == 1
+    array_parent = v.tree.topLevelItem(0)
+    assert array_parent.childCount() == 2  # pids[0], pids[1]
+    outer0 = array_parent.child(0)
+    assert outer0.childCount() == 1        # inner
+    inner0 = outer0.child(0)
+    assert inner0.childCount() == 1        # val
+    leaf = inner0.child(0)
+    assert leaf.data(COL_NAME, Qt.UserRole) == "pids[0].inner.val"
+
+
+def test_write_bare_array_instance_without_enclosing_struct(qtbot) -> None:
+    """INSTANCE ... MATRIX_DIM của kiểu scalar (không bọc trong struct nào)
+    vẫn phải ghi được qua đúng cơ chế combine-write, y hệt STRUCT."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE tempSensors "3 sensor gains, no struct" T_Gain 0x80100000
+        MATRIX_DIM 3
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+    parent = v._char_items["tempSensors"]
+    assert parent.text(COL_TYPE).startswith("ARRAY")
+
+    for i in range(3):
+        parent.child(i).setText(COL_VALUE, str(1.0 + i))
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("tempSensors", parent)
+
+    assert len(writes) == 1          # 3 phần tử liền khít -> 1 lần ghi
+    name, addr, data = writes[0]
+    assert addr == 0x80100000
+    assert len(data) == 12            # 3 x FLOAT32 (4 byte)
+
+
 def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
     """Kiểm tra Array CHARACTERISTIC (VAL_BLK) có các node con và sửa con đồng bộ."""
     db = A2LDatabase()
