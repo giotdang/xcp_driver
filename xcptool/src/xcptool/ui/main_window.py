@@ -786,7 +786,18 @@ class MainWindow(QMainWindow):
             "Stopping DAQ…",
             self.session.stop_daq,
             on_ok=lambda _: self.measurement_view.on_daq_stopped(),
+            on_err=self._on_stop_daq_error,
         )
+
+    def _on_stop_daq_error(self, exc: Exception) -> None:
+        """ECU có thể từ chối STOP_SYNCH (lỗi bus, resource busy…), nhưng
+        `RealSession.stop_daq()` đã tự dọn callback/pid table của CHÍNH NÓ
+        TRƯỚC KHI gửi lệnh này — việc đọc DAQ đã ngừng thật dù ECU từ chối.
+        UI phải reset theo ngay, không được kẹt ở 'đang đo' khiến Start
+        Acquisition không bấm lại được — nhưng vẫn hiện lỗi để user biết ECU
+        đã từ chối, không âm thầm nuốt."""
+        self.measurement_view.on_daq_stopped()
+        errors.show_error(self, exc)
 
     # ── trace ────────────────────────────────────────────────────────────────
 
@@ -823,6 +834,16 @@ class MainWindow(QMainWindow):
         caps = self.session.caps
         self.caps_label.setText(self._caps_summary(caps) if caps else "")
         self.act_disconnect.setEnabled(state is ConnState.CONNECTED and not self.busy)
+
+        if state is not ConnState.CONNECTED and self.measurement_view.daq_running:
+            # Mất kết nối (bấm Disconnect, rớt bus, lỗi giữa chừng…) trong khi
+            # DAQ đang chạy — phiên đã đóng thì chắc chắn không còn đọc được
+            # gì nữa, UI phải reset theo dù CHƯA bấm Stop. Gọi từ đây (không
+            # phải trực tiếp trong do_disconnect()) để bắt được MỌI đường dẫn
+            # tới trạng thái không-CONNECTED, không chỉ nút Disconnect —
+            # _refresh_state() đã chạy ngay sau mỗi _call() (qua _end_busy())
+            # và mỗi 40ms qua _poll_trace(), nên reset gần như tức thời.
+            self.measurement_view.on_daq_stopped()
 
     @staticmethod
     def _caps_summary(caps: SlaveCaps | None) -> str:

@@ -388,6 +388,12 @@ class MeasurementView(QWidget):
     def set_byte_order(self, byte_order: str) -> None:
         self._byte_order = byte_order
 
+    @property
+    def daq_running(self) -> bool:
+        """MainWindow đọc cờ này để biết có cần reset UI khi mất kết nối
+        (xem `_refresh_state()`) — không đụng trực tiếp `_daq_running`."""
+        return self._daq_running
+
     def on_daq_started(self) -> None:
         """Called from MainWindow after start_daq() succeeds."""
         self._daq_running = True
