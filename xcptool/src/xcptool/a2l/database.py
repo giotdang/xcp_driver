@@ -101,6 +101,10 @@ def _resolve_type(
     db: A2LDatabase, type_name: str, addr: int, name: str, seen: frozenset[str],
 ) -> InstanceNode | None:
     if type_name in db.struct_types:
+        if type_name in seen:
+            _log.warning("Circular TYPEDEF_STRUCTURE reference at %r via %r, skipping",
+                        name, type_name)
+            return None
         struct = db.struct_types[type_name]
         children: list[InstanceNode] = []
         for comp in struct.components:

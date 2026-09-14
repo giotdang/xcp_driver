@@ -147,3 +147,74 @@ def test_array_instance_of_struct_expands_each_element() -> None:
 
     assert db.characteristics["pids[0].kp"].address == 0x80100000
     assert db.characteristics["pids[1].kp"].address == 0x80100004
+
+
+def test_nested_struct_resolves_recursively() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 4
+        /begin STRUCTURE_COMPONENT val T_Gain 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 4
+        /begin STRUCTURE_COMPONENT inner Inner_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE thing "nested" Outer_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+    assert db.characteristics["thing.inner.val"].address == 0x80100000
+
+
+def test_circular_struct_reference_warns_and_skips(caplog) -> None:
+    db = _resolve("""
+    /begin TYPEDEF_STRUCTURE A_t "a" 4
+        /begin STRUCTURE_COMPONENT b B_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE B_t "b" 4
+        /begin STRUCTURE_COMPONENT a A_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE thing "circular" A_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)  # KHÔNG được raise / đệ quy vô hạn
+    assert db.characteristics == {}
+    assert "circular" in caplog.text.lower() or "recursion" in caplog.text.lower()
+
+
+def test_unknown_type_name_warns_and_skips(caplog) -> None:
+    db = _resolve("""
+    /begin INSTANCE thing "bad type ref" NotDefinedAnywhere_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+    assert db.instance_trees == {}
+    assert "unknown" in caplog.text.lower() or "NotDefinedAnywhere_t" in caplog.text
+
+
+def test_name_collision_keeps_original_and_warns(caplog) -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin CHARACTERISTIC dup "already exists" VALUE 0x12345678 RL_F32 0 CM_NONE 0 10
+    /end CHARACTERISTIC
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE dup "collides with the CHARACTERISTIC above" T_Gain 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+    assert db.characteristics["dup"].address == 0x12345678  # KHÔNG bị ghi đè
+    assert "collide" in caplog.text.lower() or "collision" in caplog.text.lower()
