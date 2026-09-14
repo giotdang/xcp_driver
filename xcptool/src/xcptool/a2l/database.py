@@ -72,6 +72,18 @@ def _resolve_one(
 def _resolve_type(
     db: A2LDatabase, type_name: str, addr: int, name: str, seen: frozenset[str],
 ) -> InstanceNode | None:
+    if type_name in db.struct_types:
+        struct = db.struct_types[type_name]
+        children: list[InstanceNode] = []
+        for comp in struct.components:
+            child = _resolve_one(db, comp.type_name, addr + comp.offset,
+                                 f"{name}.{comp.name}", comp.matrix_dim,
+                                 seen | {type_name})
+            if child is not None:
+                children.append(child)
+        return InstanceNode(name=name, address=addr, leaf_name=None,
+                            is_measurement=False, struct_size=struct.size,
+                            children=children)
     if type_name in db.characteristic_types:
         tmpl = db.characteristic_types[type_name]
         if name in db.characteristics:

@@ -67,3 +67,32 @@ def test_flat_instance_of_measurement_type_materializes_real_measurement() -> No
     node = db.instance_trees["vehicleSpeed"]
     assert node.leaf_name == "vehicleSpeed"
     assert node.is_measurement is True
+
+
+def test_struct_instance_resolves_each_member_to_a_real_address() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_LINEAR 0.0 10.0
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Pid_t "pid gains" 8
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ki T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE speedPid "speed pid" Pid_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+
+    assert db.characteristics["speedPid.kp"].address == 0x80100000
+    assert db.characteristics["speedPid.ki"].address == 0x80100004
+
+    node = db.instance_trees["speedPid"]
+    assert node.leaf_name is None
+    assert node.struct_size == 8
+    assert [c.name for c in node.children] == ["speedPid.kp", "speedPid.ki"]
+    assert all(c.leaf_name == c.name for c in node.children)
