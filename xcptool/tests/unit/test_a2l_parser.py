@@ -204,3 +204,23 @@ def test_struct_typedef_dataclasses_exist_with_defaults() -> None:
     assert db.struct_types == {} and db.characteristic_types == {}
     assert db.measurement_types == {} and db.instances == {}
     assert db.instance_trees == {}
+
+
+# ---------------------------------------------------------------------------
+# TYPEDEF_CHARACTERISTIC checks (Task 3)
+# ---------------------------------------------------------------------------
+
+def test_typedef_characteristic_parses_like_characteristic_minus_address() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain leaf type" VALUE RL_F32 0 CM_LINEAR 0.0 10.0
+    /end TYPEDEF_CHARACTERISTIC
+    """
+    db = parse(text)
+    ct = db.characteristic_types["T_Gain"]
+    assert ct.char_type == "VALUE"
+    assert ct.record_layout == "RL_F32"
+    assert ct.compu_method == "CM_LINEAR"
+    assert ct.lower_limit == 0.0 and ct.upper_limit == 10.0
+    assert ct.array_size == 1
+    assert ct.datatype is None  # resolve() (Task 6) mới điền

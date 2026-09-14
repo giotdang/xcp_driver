@@ -51,8 +51,8 @@ import re
 from dataclasses import dataclass, field
 
 from .types import (
-    A2LDatabase, Characteristic, Measurement, RecordLayout, StructComponent,
-    StructTypeDef, XcpProtocolInfo,
+    A2LDatabase, Characteristic, CharacteristicTypeDef, Measurement, RecordLayout,
+    StructComponent, StructTypeDef, XcpProtocolInfo,
 )
 
 _log = logging.getLogger(__name__)
@@ -276,6 +276,19 @@ def _extract_characteristic(b: _Block) -> Characteristic | None:
     )
 
 
+def _extract_characteristic_type(b: _Block) -> CharacteristicTypeDef | None:
+    t = b.tokens
+    if len(t) < 8:
+        return None
+    number_tok = b.get("NUMBER", 1)
+    return CharacteristicTypeDef(
+        name=t[0], description=t[1].strip('"'), char_type=t[2],
+        record_layout=t[3], compu_method=t[5],
+        lower_limit=_to_float(t[6]), upper_limit=_to_float(t[7]),
+        array_size=int(number_tok[0]) if number_tok else 1,
+    )
+
+
 def _extract_record_layout(b: _Block) -> RecordLayout | None:
     if not b.tokens:
         return None
@@ -382,6 +395,14 @@ def parse(text: str) -> A2LDatabase:
                     db.struct_types[st.name] = st
             except Exception as exc:
                 _log.warning("Skipping TYPEDEF_STRUCTURE %r: %s", bname, exc)
+
+        elif block.name == "TYPEDEF_CHARACTERISTIC":
+            try:
+                ct = _extract_characteristic_type(block)
+                if ct:
+                    db.characteristic_types[ct.name] = ct
+            except Exception as exc:
+                _log.warning("Skipping TYPEDEF_CHARACTERISTIC %r: %s", bname, exc)
 
         elif block.name == "IF_DATA" and block.tokens and block.tokens[0] == "XCP":
             try:
