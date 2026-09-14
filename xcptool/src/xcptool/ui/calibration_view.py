@@ -29,7 +29,7 @@ from qfluentwidgets import (
     isDarkTheme,
 )
 
-from ..session.api import A2LDatabase
+from ..session.api import A2LDatabase, InstanceNode
 
 __all__ = ["CalibrationView", "WORKING_PAGE", "REFERENCE_PAGE"]
 
@@ -211,46 +211,6 @@ def _split_into_contiguous_runs(
                 raise ValueError(f"Overlapping members near {name} in struct {struct_name}")
         runs.append([addr, bytearray(val_bytes), name])
     return [(addr, bytes(buf)) for addr, buf, _ in runs]
-
-
-def _group_by_prefix(names: list[str]) -> list[tuple[str | None, list[str]]]:
-    """Gom nhóm các tên theo struct prefix (dấu '.' hoặc tiền tố '_' nếu có >= 2 biến).
-
-    Trả về danh sách (group_name, [full_name1, full_name2, ...]):
-    - Nếu là struct: ("speedPid", ["speedPid_kp", "speedPid_ki", ...])
-    - Nếu là biến đơn/mảng: (None, ["tempCompTable"])
-    """
-    prefixes: dict[str, list[str]] = {}
-    for name in names:
-        if "." in name:
-            p = name.split(".", 1)[0]
-            prefixes.setdefault(p, []).append(name)
-        elif "_" in name:
-            p = name.rsplit("_", 1)[0]
-            prefixes.setdefault(p, []).append(name)
-        else:
-            prefixes.setdefault("", []).append(name)
-
-    valid_groups = {p: member_list for p, member_list in prefixes.items() if p and len(member_list) >= 2}
-
-    handled: set[str] = set()
-    result: list[tuple[str | None, list[str]]] = []
-    for name in names:
-        if name in handled:
-            continue
-        found = None
-        for p, members in valid_groups.items():
-            if name in members:
-                found = (p, members)
-                break
-        if found is not None:
-            p, members = found
-            result.append((p, members))
-            handled.update(members)
-        else:
-            result.append((None, [name]))
-            handled.add(name)
-    return result
 
 
 class CalibrationView(QWidget):
@@ -452,46 +412,20 @@ class CalibrationView(QWidget):
         self._suspend_signals = True
         try:
             self.tree.clear()
-            groups = _group_by_prefix(sorted(db.characteristics.keys()))
-            for group_name, members in groups:
-                if group_name is not None and len(members) >= 2:
-                    # ── STRUCT / GROUP ──────────────────────────────────────
-                    chars = [db.characteristics[m] for m in members]
-                    chars.sort(key=lambda c: c.address)
-                    min_addr = chars[0].address
-                    total_size = sum(c.byte_size for c in chars)
+            handled: set[str] = set()
+            for inst_name, node in db.instance_trees.items():
+                item = self._build_tree_item_from_node(node)
+                self.tree.addTopLevelItem(item)
+                handled |= self._leaf_names(node)
 
-                    parent = QTreeWidgetItem()
-                    parent.setData(COL_NAME, Qt.UserRole, group_name)
-                    parent.setText(COL_NAME, group_name)
-                    parent.setText(COL_TYPE, f"STRUCT ({len(members)})")
-                    parent.setText(COL_ADDR, f"0x{min_addr:08X}")
-                    parent.setText(COL_SIZE, str(total_size))
-                    parent.setText(COL_VALUE, "—")
-                    parent.setText(COL_RANGE, "")
-                    parent.setText(COL_DESC, f"Group of {len(members)} parameters")
-                    parent.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                    self.tree.addTopLevelItem(parent)
-                    
-                    self._char_items[group_name] = parent
-
-                    for c in chars:
-                        disp_name = c.name[len(group_name):].lstrip("._") or c.name
-                        child = self._make_item(c.name, c, display_name=disp_name)
-                        parent.addChild(child)
-                        self._char_items[c.name] = child
-                        if c.array_size > 1:
-                            self._build_array_children(child, c)
-                    parent.setExpanded(True)
-                else:
-                    # ── SCALAR hoặc ARRAY ĐỘC LẬP ───────────────────────────
-                    name = members[0]
-                    char = db.characteristics[name]
-                    item = self._make_item(name, char)
-                    self.tree.addTopLevelItem(item)
-                    self._char_items[name] = item
-                    if char.array_size > 1:
-                        self._build_array_children(item, char)
+            for name, char in sorted(db.characteristics.items()):
+                if name in handled:
+                    continue
+                item = self._make_item(name, char)
+                self.tree.addTopLevelItem(item)
+                self._char_items[name] = item
+                if char.array_size > 1:
+                    self._build_array_children(item, char)
         finally:
             self._suspend_signals = False
 
@@ -873,6 +807,44 @@ class CalibrationView(QWidget):
             return data[0]
             
         return data
+
+    def _leaf_names(self, node: "InstanceNode") -> set[str]:
+        if node.leaf_name is not None:
+            return {node.leaf_name}
+        names: set[str] = set()
+        for child in node.children:
+            names |= self._leaf_names(child)
+        return names
+
+    def _build_tree_item_from_node(self, node: "InstanceNode") -> QTreeWidgetItem:
+        """Dựng QTreeWidgetItem từ InstanceNode đã resolve (a2l/database.py) —
+        KHÔNG tự suy địa chỉ hay tên, chỉ đọc lại những gì resolve() đã
+        quyết định (xem spec §10)."""
+        if node.leaf_name is not None:
+            char = self._db.characteristics[node.leaf_name]
+            item = self._make_item(node.leaf_name, char,
+                                   display_name=node.name.rsplit(".", 1)[-1])
+            self._char_items[node.leaf_name] = item
+            if char.array_size > 1:
+                self._build_array_children(item, char)
+            return item
+
+        item = QTreeWidgetItem()
+        item.setData(COL_NAME, Qt.UserRole, node.name)
+        item.setText(COL_NAME, node.name.rsplit(".", 1)[-1] if "." in node.name else node.name)
+        if node.struct_size is not None:
+            item.setText(COL_TYPE, f"STRUCT ({len(node.children)})")
+            item.setText(COL_SIZE, str(node.struct_size))
+        else:
+            item.setText(COL_TYPE, f"ARRAY[{len(node.children)}]")
+        item.setText(COL_ADDR, f"0x{node.address:08X}")
+        item.setText(COL_VALUE, "—")
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        self._char_items[node.name] = item
+        for child_node in node.children:
+            item.addChild(self._build_tree_item_from_node(child_node))
+        item.setExpanded(True)
+        return item
 
     def _make_item(self, name: str, char: Any, display_name: str | None = None) -> QTreeWidgetItem:
         item = QTreeWidgetItem()

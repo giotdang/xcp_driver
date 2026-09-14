@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
 from ..a2l import A2LDatabase
+from ..a2l.types import InstanceNode
 
 __all__ = [
     "ConnState", "PageMode", "Direction", "FrameKind",
@@ -64,7 +65,7 @@ __all__ = [
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
     "SlaveError", "WriteProtectedError", "OutOfRangeError", "SequenceError",
     "AccessDeniedError", "NotConnectedError", "BusyError", "UnsupportedByEcuError",
-    "A2LDatabase", "Session",
+    "A2LDatabase", "InstanceNode", "Session",
 ]
 
 

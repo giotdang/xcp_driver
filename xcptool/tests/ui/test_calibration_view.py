@@ -7,7 +7,7 @@ import struct
 import pytest
 from PySide6.QtCore import Qt
 
-from xcptool.a2l.types import A2LDatabase, Characteristic, RecordLayout
+from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, RecordLayout
 from xcptool.session.api import BusConfig, ConnState, PageMode
 from xcptool.session.fake import MEM_BASE, FakeBehavior, FakeSession
 from xcptool.ui.calibration_view import (
@@ -18,6 +18,7 @@ from xcptool.ui.calibration_view import (
     COL_NAME,
     COL_TYPE,
     COL_ADDR,
+    COL_SIZE,
     _ROUTE_REFERENCE,
     _ROUTE_WORKING,
     _split_into_contiguous_runs,
@@ -71,6 +72,26 @@ def _make_db(base: int = MEM_BASE) -> A2LDatabase:
         array_size=4,
     )
     return db
+
+
+def _add_struct_instance(db: A2LDatabase, group_name: str, leaf_names: list[str]) -> None:
+    """Gắn 1 InstanceNode STRUCT thủ công vào db.instance_trees, tái dùng các
+    Characteristic đã có sẵn trong db.characteristics làm lá.
+
+    Mô phỏng đúng shape mà a2l/database.py._resolve_instances() (Task 7-10)
+    dựng thật từ INSTANCE — các test write-path dưới đây dựng CHARACTERISTIC
+    thủ công (không qua parser thật) nên cần tự nối instance_trees, vì
+    CalibrationView (Task 11) không còn gom nhóm theo tên nữa
+    (_group_by_prefix đã bị xoá)."""
+    children = [
+        InstanceNode(name=f"{group_name}.{leaf}", address=db.characteristics[leaf].address,
+                     leaf_name=leaf, is_measurement=False, struct_size=None)
+        for leaf in leaf_names
+    ]
+    total_size = sum(db.characteristics[n].byte_size for n in leaf_names)
+    db.instance_trees[group_name] = InstanceNode(
+        name=group_name, address=children[0].address, leaf_name=None,
+        is_measurement=False, struct_size=total_size, children=children)
 
 
 def _make_view(qtbot) -> CalibrationView:
@@ -627,20 +648,30 @@ def test_connect_cap_nhat_ca_hai_panel_trang_tu_mot_lan_doc(
     assert connected_window.memory_view.ecu_page_label.text() == str(REFERENCE_PAGE)
 
 
-def test_set_database_groups_struct_characteristics(qtbot) -> None:
-    """Kiểm tra CHARACTERISTIC dạng struct (speedPid_*) được gom nhóm thành parent-child."""
-    db = A2LDatabase()
-    for param in ("kp", "ki", "kd"):
-        db.characteristics[f"speedPid_{param}"] = Characteristic(
-            name=f"speedPid_{param}",
-            description=f"PID {param}",
-            char_type="VALUE",
-            address=MEM_BASE + 0x08,
-            record_layout="F32",
-            lower_limit=-10.0,
-            upper_limit=10.0,
-            datatype="FLOAT32_IEEE",
-        )
+def test_set_database_builds_struct_tree_from_instance_data(qtbot) -> None:
+    """Thay test cũ (đoán struct theo tên) — giờ struct đến từ INSTANCE thật."""
+    from xcptool.a2l.database import load as a2l_load
+    import tempfile, textwrap
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Pid_t "pid" 8
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ki T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE speedPid "speed pid" Pid_t 0x80100000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
     v = _make_view(qtbot)
     v.set_database(db)
 
@@ -648,9 +679,27 @@ def test_set_database_groups_struct_characteristics(qtbot) -> None:
     parent = v.tree.topLevelItem(0)
     assert parent.text(COL_NAME) == "speedPid"
     assert "STRUCT" in parent.text(COL_TYPE)
-    assert parent.childCount() == 3
-    child_names = [parent.child(i).text(COL_NAME) for i in range(3)]
-    assert child_names == ["kd", "ki", "kp"] or set(child_names) == {"kp", "ki", "kd"}
+    assert parent.text(COL_SIZE) == "8"
+    assert parent.childCount() == 2
+    assert {parent.child(i).data(COL_NAME, Qt.UserRole) for i in range(2)} == {
+        "speedPid.kp", "speedPid.ki"}
+
+
+def test_set_database_no_instance_renders_flat_even_with_shared_name_prefix(qtbot) -> None:
+    """Quyết định spec §6: CHARACTERISTIC không có INSTANCE hiện phẳng, dù
+    tên trùng tiền tố — KHÔNG còn heuristic đoán theo tên."""
+    db = A2LDatabase()
+    for param in ("kp", "ki", "kd"):
+        db.characteristics[f"speedPid_{param}"] = Characteristic(
+            name=f"speedPid_{param}", description="", char_type="VALUE",
+            address=MEM_BASE, record_layout="RL_F32", lower_limit=-10.0,
+            upper_limit=10.0, datatype="FLOAT32_IEEE")
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    assert v.tree.topLevelItemCount() == 3  # KHÔNG gộp — trước đây sẽ là 1
+    names = {v.tree.topLevelItem(i).text(COL_NAME) for i in range(3)}
+    assert names == {"speedPid_kp", "speedPid_ki", "speedPid_kd"}
 
 
 def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
@@ -705,6 +754,7 @@ def test_write_struct_aggregates_children(qtbot, connected_window: MainWindow) -
     db = A2LDatabase()
     db.characteristics["pid_kp"] = Characteristic("pid_kp", "", "VALUE", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
     db.characteristics["pid_ki"] = Characteristic("pid_ki", "", "VALUE", MEM_BASE + 4, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    _add_struct_instance(db, "pid", ["pid_kp", "pid_ki"])
     v.set_database(db)
     
     parent = v._char_items["pid"]
@@ -761,6 +811,7 @@ def test_write_struct_with_gap_sends_one_write_per_contiguous_run(qtbot) -> None
         "grp_flag", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
     db.characteristics["grp_threshold"] = Characteristic(
         "grp_threshold", "", "VALUE", MEM_BASE + 4, "I32", 0, 100, datatype="SLONG", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_flag", "grp_threshold"])
     v.set_database(db)
 
     parent = v._char_items["grp"]
@@ -802,6 +853,7 @@ def test_write_all_waits_for_every_run_before_next_queue_item(qtbot) -> None:
         "grp_threshold", "", "VALUE", MEM_BASE + 4, "I32", 0, 100, datatype="SLONG", array_size=1)
     db.characteristics["solo"] = Characteristic(
         "solo", "", "VALUE", MEM_BASE + 64, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_flag", "grp_threshold"])
     v.set_database(db)
 
     v._char_items["grp"].child(0).setText(COL_VALUE, "42")
@@ -838,6 +890,7 @@ def test_write_selected_single_struct_child_clears_parent_name_color(qtbot) -> N
         "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
     db.characteristics["grp_b"] = Characteristic(
         "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
     v.set_database(db)
 
     parent = v._char_items["grp"]
@@ -869,6 +922,7 @@ def test_write_selected_single_child_keeps_parent_dirty_if_sibling_still_dirty(q
         "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
     db.characteristics["grp_b"] = Characteristic(
         "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
     v.set_database(db)
 
     parent = v._char_items["grp"]
