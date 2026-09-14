@@ -137,3 +137,43 @@ def test_adcCalPoints_byte_size(db: A2LDatabase) -> None:
 def test_tempCompTable_byte_size(db: A2LDatabase) -> None:
     """SWORD × 6 elements = 12 bytes."""
     assert db.characteristics["tempCompTable"].byte_size == 12
+
+
+# ---------------------------------------------------------------------------
+# Struct-typedef dataclasses (Task 1)
+# ---------------------------------------------------------------------------
+
+def test_struct_typedef_dataclasses_exist_with_defaults() -> None:
+    from xcptool.a2l.types import (
+        A2LDatabase, CharacteristicTypeDef, Instance, InstanceNode,
+        MeasurementTypeDef, StructComponent, StructTypeDef,
+    )
+    comp = StructComponent(name="kp", type_name="T_Float", offset=0)
+    assert comp.array_size == 1
+    comp_arr = StructComponent(name="samples", type_name="T_I16", offset=4, matrix_dim=[3])
+    assert comp_arr.array_size == 3
+
+    struct = StructTypeDef(name="PidTelemetry_t", size=12, components=[comp, comp_arr])
+    assert struct.components == [comp, comp_arr]
+
+    ctd = CharacteristicTypeDef(
+        name="T_Float", description="", char_type="VALUE",
+        record_layout="RL_F32", lower_limit=0.0, upper_limit=1.0)
+    assert ctd.array_size == 1 and ctd.datatype is None
+
+    mtd = MeasurementTypeDef(
+        name="T_I16", description="", datatype="SWORD",
+        lower_limit=-100.0, upper_limit=100.0)
+    assert mtd.array_size == 1
+
+    inst = Instance(name="tel", description="", type_name="PidTelemetry_t", address=0x1000)
+    assert inst.array_size == 1
+
+    node = InstanceNode(name="tel", address=0x1000, leaf_name=None,
+                        is_measurement=False, struct_size=12)
+    assert node.children == []
+
+    db = A2LDatabase()
+    assert db.struct_types == {} and db.characteristic_types == {}
+    assert db.measurement_types == {} and db.instances == {}
+    assert db.instance_trees == {}
