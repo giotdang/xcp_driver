@@ -243,3 +243,27 @@ def test_typedef_measurement_parses_matrix_dim() -> None:
     assert mt.lower_limit == -100.0 and mt.upper_limit == 100.0
     assert mt.matrix_dim == [4]
     assert mt.array_size == 4
+
+
+# ---------------------------------------------------------------------------
+# INSTANCE checks (Task 5)
+# ---------------------------------------------------------------------------
+
+def test_instance_parses_type_ref_address_and_array() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin INSTANCE speedPidTelemetry "PID telemetry instance" PidTelemetry_t 0x90001000
+    /end INSTANCE
+    /begin INSTANCE tempSensors "sensor array" T_Gain 0x90002000
+        MATRIX_DIM 3
+    /end INSTANCE
+    """
+    db = parse(text)
+    inst = db.instances["speedPidTelemetry"]
+    assert inst.type_name == "PidTelemetry_t"
+    assert inst.address == 0x90001000
+    assert inst.array_size == 1
+
+    arr_inst = db.instances["tempSensors"]
+    assert arr_inst.matrix_dim == [3]
+    assert arr_inst.array_size == 3

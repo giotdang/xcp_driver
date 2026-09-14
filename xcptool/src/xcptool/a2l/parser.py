@@ -51,7 +51,7 @@ import re
 from dataclasses import dataclass, field
 
 from .types import (
-    A2LDatabase, Characteristic, CharacteristicTypeDef, Measurement,
+    A2LDatabase, Characteristic, CharacteristicTypeDef, Instance, Measurement,
     MeasurementTypeDef, RecordLayout, StructComponent, StructTypeDef,
     XcpProtocolInfo,
 )
@@ -231,6 +231,16 @@ def _extract_measurement_type(b: _Block) -> MeasurementTypeDef | None:
         name=t[0], description=t[1].strip('"'), datatype=t[2],
         compu_method=t[3], lower_limit=_to_float(t[6]), upper_limit=_to_float(t[7]),
         matrix_dim=_extract_matrix_dim(t),
+    )
+
+
+def _extract_instance(b: _Block) -> Instance | None:
+    t = b.tokens
+    if len(t) < 4:
+        return None
+    return Instance(
+        name=t[0], description=t[1].strip('"'), type_name=t[2],
+        address=_to_int(t[3]), matrix_dim=_extract_matrix_dim(t),
     )
 
 
@@ -423,6 +433,14 @@ def parse(text: str) -> A2LDatabase:
                     db.measurement_types[mt.name] = mt
             except Exception as exc:
                 _log.warning("Skipping TYPEDEF_MEASUREMENT %r: %s", bname, exc)
+
+        elif block.name == "INSTANCE":
+            try:
+                inst = _extract_instance(block)
+                if inst:
+                    db.instances[inst.name] = inst
+            except Exception as exc:
+                _log.warning("Skipping INSTANCE %r: %s", bname, exc)
 
         elif block.name == "IF_DATA" and block.tokens and block.tokens[0] == "XCP":
             try:
