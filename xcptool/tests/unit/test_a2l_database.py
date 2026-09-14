@@ -96,3 +96,54 @@ def test_struct_instance_resolves_each_member_to_a_real_address() -> None:
     assert node.struct_size == 8
     assert [c.name for c in node.children] == ["speedPid.kp", "speedPid.ki"]
     assert all(c.leaf_name == c.name for c in node.children)
+
+
+def test_array_component_expands_to_indexed_addresses() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_I16
+        FNC_VALUES 1 SWORD ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_I16 "i16" VALUE RL_I16 0 CM_NONE -100 100
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE WithArray_t "has array member" 6
+        /begin STRUCTURE_COMPONENT samples T_I16 0
+            MATRIX_DIM 3
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE grp "grp" WithArray_t 0x80100000
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+
+    assert db.characteristics["grp.samples[0]"].address == 0x80100000
+    assert db.characteristics["grp.samples[1]"].address == 0x80100002
+    assert db.characteristics["grp.samples[2]"].address == 0x80100004
+
+    node = db.instance_trees["grp"]
+    samples_node = node.children[0]
+    assert samples_node.leaf_name is None  # mảng — không phải lá
+    assert [c.name for c in samples_node.children] == [
+        "grp.samples[0]", "grp.samples[1]", "grp.samples[2]"]
+
+
+def test_array_instance_of_struct_expands_each_element() -> None:
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Pid_t "pid" 4
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE pids "array of pid" Pid_t 0x80100000
+        MATRIX_DIM 2
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)
+
+    assert db.characteristics["pids[0].kp"].address == 0x80100000
+    assert db.characteristics["pids[1].kp"].address == 0x80100004

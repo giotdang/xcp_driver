@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from .parser import parse
-from .types import A2LDatabase, Characteristic, InstanceNode, Measurement
+from .types import DATATYPE_SIZES, A2LDatabase, Characteristic, InstanceNode, Measurement
 
 _log = logging.getLogger(__name__)
 
@@ -59,6 +59,21 @@ def _resolve_instances(db: A2LDatabase) -> None:
             db.instance_trees[inst.name] = node
 
 
+def _size_of(db: A2LDatabase, type_name: str) -> int | None:
+    """Byte size của 1 phần tử — cần để stride qua mảng."""
+    if type_name in db.struct_types:
+        return db.struct_types[type_name].size
+    if type_name in db.characteristic_types:
+        tmpl = db.characteristic_types[type_name]
+        if tmpl.datatype is None:
+            return None
+        return DATATYPE_SIZES.get(tmpl.datatype, 1) * tmpl.array_size
+    if type_name in db.measurement_types:
+        tmpl = db.measurement_types[type_name]
+        return DATATYPE_SIZES.get(tmpl.datatype, 1) * tmpl.array_size
+    return None
+
+
 def _resolve_one(
     db: A2LDatabase, type_name: str, base_addr: int, name: str,
     matrix_dim: list[int], seen: frozenset[str],
@@ -66,7 +81,20 @@ def _resolve_one(
     n = _array_len(matrix_dim)
     if n == 1:
         return _resolve_type(db, type_name, base_addr, name, seen)
-    return None  # mảng — xem Task 9
+
+    size = _size_of(db, type_name)
+    if size is None:
+        _log.warning("Cannot size array element type %r for %r, skipping", type_name, name)
+        return None
+    children: list[InstanceNode] = []
+    for i in range(n):
+        child = _resolve_type(db, type_name, base_addr + i * size, f"{name}[{i}]", seen)
+        if child is not None:
+            children.append(child)
+    if not children:
+        return None
+    return InstanceNode(name=name, address=base_addr, leaf_name=None,
+                        is_measurement=False, struct_size=None, children=children)
 
 
 def _resolve_type(
