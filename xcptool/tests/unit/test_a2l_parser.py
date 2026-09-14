@@ -224,3 +224,22 @@ def test_typedef_characteristic_parses_like_characteristic_minus_address() -> No
     assert ct.lower_limit == 0.0 and ct.upper_limit == 10.0
     assert ct.array_size == 1
     assert ct.datatype is None  # resolve() (Task 6) mới điền
+
+
+# ---------------------------------------------------------------------------
+# TYPEDEF_MEASUREMENT checks (Task 4)
+# ---------------------------------------------------------------------------
+
+def test_typedef_measurement_parses_matrix_dim() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_MEASUREMENT T_Samples "sample leaf type" SWORD CM_NONE 0 0 -100 100
+        MATRIX_DIM 4
+    /end TYPEDEF_MEASUREMENT
+    """
+    db = parse(text)
+    mt = db.measurement_types["T_Samples"]
+    assert mt.datatype == "SWORD"
+    assert mt.lower_limit == -100.0 and mt.upper_limit == 100.0
+    assert mt.matrix_dim == [4]
+    assert mt.array_size == 4

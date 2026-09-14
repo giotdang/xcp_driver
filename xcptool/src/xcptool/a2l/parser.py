@@ -51,8 +51,9 @@ import re
 from dataclasses import dataclass, field
 
 from .types import (
-    A2LDatabase, Characteristic, CharacteristicTypeDef, Measurement, RecordLayout,
-    StructComponent, StructTypeDef, XcpProtocolInfo,
+    A2LDatabase, Characteristic, CharacteristicTypeDef, Measurement,
+    MeasurementTypeDef, RecordLayout, StructComponent, StructTypeDef,
+    XcpProtocolInfo,
 )
 
 _log = logging.getLogger(__name__)
@@ -219,6 +220,17 @@ def _extract_measurement(b: _Block) -> Measurement | None:
         upper_limit=upper_limit,
         compu_method=compu_method,
         matrix_dim=matrix_dim,
+    )
+
+
+def _extract_measurement_type(b: _Block) -> MeasurementTypeDef | None:
+    t = b.tokens
+    if len(t) < 8:
+        return None
+    return MeasurementTypeDef(
+        name=t[0], description=t[1].strip('"'), datatype=t[2],
+        compu_method=t[3], lower_limit=_to_float(t[6]), upper_limit=_to_float(t[7]),
+        matrix_dim=_extract_matrix_dim(t),
     )
 
 
@@ -403,6 +415,14 @@ def parse(text: str) -> A2LDatabase:
                     db.characteristic_types[ct.name] = ct
             except Exception as exc:
                 _log.warning("Skipping TYPEDEF_CHARACTERISTIC %r: %s", bname, exc)
+
+        elif block.name == "TYPEDEF_MEASUREMENT":
+            try:
+                mt = _extract_measurement_type(block)
+                if mt:
+                    db.measurement_types[mt.name] = mt
+            except Exception as exc:
+                _log.warning("Skipping TYPEDEF_MEASUREMENT %r: %s", bname, exc)
 
         elif block.name == "IF_DATA" and block.tokens and block.tokens[0] == "XCP":
             try:
