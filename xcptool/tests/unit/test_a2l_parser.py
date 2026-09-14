@@ -140,6 +140,33 @@ def test_tempCompTable_byte_size(db: A2LDatabase) -> None:
 
 
 # ---------------------------------------------------------------------------
+# TYPEDEF_STRUCTURE checks (Task 2)
+# ---------------------------------------------------------------------------
+
+def test_typedef_structure_parses_components_and_matrix_dim() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_STRUCTURE PidTelemetry_t "PID telemetry" 0x10
+        /begin STRUCTURE_COMPONENT error T_Float32 0x0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT samples T_I16 0x4
+            MATRIX_DIM 3
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    """
+    db = parse(text)
+    struct = db.struct_types["PidTelemetry_t"]
+    assert struct.size == 0x10
+    assert [c.name for c in struct.components] == ["error", "samples"]
+    assert struct.components[0].type_name == "T_Float32"
+    assert struct.components[0].offset == 0
+    assert struct.components[0].matrix_dim == []
+    assert struct.components[1].offset == 4
+    assert struct.components[1].matrix_dim == [3]
+    assert struct.components[1].array_size == 3
+
+
+# ---------------------------------------------------------------------------
 # Struct-typedef dataclasses (Task 1)
 # ---------------------------------------------------------------------------
 

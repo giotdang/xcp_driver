@@ -50,7 +50,10 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from .types import A2LDatabase, Characteristic, Measurement, RecordLayout, XcpProtocolInfo
+from .types import (
+    A2LDatabase, Characteristic, Measurement, RecordLayout, StructComponent,
+    StructTypeDef, XcpProtocolInfo,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -173,6 +176,22 @@ def _to_int(s: str) -> int:
 # Extraction helpers
 # ---------------------------------------------------------------------------
 
+def _extract_matrix_dim(t: list[str]) -> list[int]:
+    """MATRIX_DIM <n> [<m> …] — 0 hoặc nhiều số nguyên theo sau keyword."""
+    for i, tok in enumerate(t):
+        if tok == "MATRIX_DIM":
+            dims: list[int] = []
+            j = i + 1
+            while j < len(t):
+                try:
+                    dims.append(int(t[j]))
+                    j += 1
+                except ValueError:
+                    break
+            return dims
+    return []
+
+
 def _extract_measurement(b: _Block) -> Measurement | None:
     t = b.tokens
     if len(t) < 8:
@@ -189,18 +208,7 @@ def _extract_measurement(b: _Block) -> Measurement | None:
     addr_tok = b.get("ECU_ADDRESS", 1)
     address  = _to_int(addr_tok[0]) if addr_tok else 0
 
-    # MATRIX_DIM may be followed by one or more integer values
-    matrix_dim: list[int] = []
-    for i, tok in enumerate(t):
-        if tok == "MATRIX_DIM":
-            j = i + 1
-            while j < len(t):
-                try:
-                    matrix_dim.append(int(t[j]))
-                    j += 1
-                except ValueError:
-                    break
-            break
+    matrix_dim = _extract_matrix_dim(t)
 
     return Measurement(
         name=name,
@@ -212,6 +220,29 @@ def _extract_measurement(b: _Block) -> Measurement | None:
         compu_method=compu_method,
         matrix_dim=matrix_dim,
     )
+
+
+def _extract_struct_component(b: _Block) -> StructComponent | None:
+    t = b.tokens
+    if len(t) < 3:
+        return None
+    return StructComponent(
+        name=t[0], type_name=t[1], offset=_to_int(t[2]),
+        matrix_dim=_extract_matrix_dim(t),
+    )
+
+
+def _extract_struct_type(b: _Block) -> StructTypeDef | None:
+    t = b.tokens
+    if len(t) < 3:
+        return None
+    components = [
+        c for c in (
+            _extract_struct_component(child)
+            for child in b.children if child.name == "STRUCTURE_COMPONENT"
+        ) if c is not None
+    ]
+    return StructTypeDef(name=t[0], size=_to_int(t[2]), components=components)
 
 
 def _extract_characteristic(b: _Block) -> Characteristic | None:
@@ -343,6 +374,14 @@ def parse(text: str) -> A2LDatabase:
                     db.record_layouts[rl.name] = rl
             except Exception as exc:
                 _log.warning("Skipping RECORD_LAYOUT %r: %s", bname, exc)
+
+        elif block.name == "TYPEDEF_STRUCTURE":
+            try:
+                st = _extract_struct_type(block)
+                if st:
+                    db.struct_types[st.name] = st
+            except Exception as exc:
+                _log.warning("Skipping TYPEDEF_STRUCTURE %r: %s", bname, exc)
 
         elif block.name == "IF_DATA" and block.tokens and block.tokens[0] == "XCP":
             try:
