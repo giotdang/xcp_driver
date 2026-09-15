@@ -780,6 +780,44 @@ def test_write_bare_array_instance_without_enclosing_struct(qtbot) -> None:
     assert len(data) == 12            # 3 x FLOAT32 (4 byte)
 
 
+def test_set_database_skips_measurement_instance_without_crashing(qtbot) -> None:
+    """Bug thật (review round 1): INSTANCE trỏ tới TYPEDEF_MEASUREMENT (không
+    phải TYPEDEF_CHARACTERISTIC) từng làm _build_tree_item_from_node tra cứu
+    self._db.characteristics[node.leaf_name] và ném KeyError — set_database()
+    không có try/except nào bọc ngoài (main_window._after_a2l_load gọi thẳng),
+    nên đây là crash không bắt được khi load 1 file A2L hợp lệ có cả CAL lẫn
+    DAQ struct instance (kịch bản thực tế mô tả trong motivation của spec).
+    CalibrationView chỉ hiển thị CHARACTERISTIC — MEASUREMENT thuộc
+    MeasurementView (Task 13) -> phải bỏ qua êm, không crash."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_MEASUREMENT T_Temp "temperature" FLOAT32_IEEE CM_NONE 0 0 -40 150
+    /end TYPEDEF_MEASUREMENT
+    /begin INSTANCE gainInst "calibratable gain" T_Gain 0x80100000
+    /end INSTANCE
+    /begin INSTANCE tempInst "measured temperature" T_Temp 0x80100010
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)  # trước fix: KeyError('tempInst')
+
+    assert v.tree.topLevelItemCount() == 1  # chỉ gainInst — tempInst bị lọc êm
+    only = v.tree.topLevelItem(0)
+    assert only.data(COL_NAME, Qt.UserRole) == "gainInst"
+    assert "tempInst" not in v._char_items  # không để lại node rỗng/mồ côi nào
+
+
 def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
     """Kiểm tra Array CHARACTERISTIC (VAL_BLK) có các node con và sửa con đồng bộ."""
     db = A2LDatabase()

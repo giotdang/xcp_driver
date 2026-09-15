@@ -415,7 +415,8 @@ class CalibrationView(QWidget):
             handled: set[str] = set()
             for inst_name, node in db.instance_trees.items():
                 item = self._build_tree_item_from_node(node)
-                self.tree.addTopLevelItem(item)
+                if item is not None:
+                    self.tree.addTopLevelItem(item)
                 handled |= self._leaf_names(node)
 
             for name, char in sorted(db.characteristics.items()):
@@ -819,11 +820,20 @@ class CalibrationView(QWidget):
             names |= self._leaf_names(child)
         return names
 
-    def _build_tree_item_from_node(self, node: "InstanceNode") -> QTreeWidgetItem:
+    def _build_tree_item_from_node(self, node: "InstanceNode") -> QTreeWidgetItem | None:
         """Dựng QTreeWidgetItem từ InstanceNode đã resolve (a2l/database.py) —
         KHÔNG tự suy địa chỉ hay tên, chỉ đọc lại những gì resolve() đã
-        quyết định (xem spec §10)."""
+        quyết định (xem spec §10).
+
+        CalibrationView chỉ hiển thị CHARACTERISTIC — một lá MEASUREMENT
+        (`node.is_measurement`) không thuộc phạm vi view này (sẽ do
+        MeasurementView hiển thị — Task 13), không phải dữ liệu sai, nên bỏ
+        qua êm (trả `None`), không log cảnh báo. Một node STRUCT/ARRAY cha mà
+        MỌI con đều bị lọc bỏ (vd. struct toàn MEASUREMENT) cũng trả `None` —
+        không hiện node rỗng."""
         if node.leaf_name is not None:
+            if node.is_measurement:
+                return None
             char = self._db.characteristics[node.leaf_name]
             item = self._make_item(node.leaf_name, char,
                                    display_name=node.name.rsplit(".", 1)[-1])
@@ -832,20 +842,26 @@ class CalibrationView(QWidget):
                 self._build_array_children(item, char)
             return item
 
+        child_items = [c for c in (
+            self._build_tree_item_from_node(child_node) for child_node in node.children
+        ) if c is not None]
+        if not child_items:
+            return None
+
         item = QTreeWidgetItem()
         item.setData(COL_NAME, Qt.UserRole, node.name)
         item.setText(COL_NAME, node.name.rsplit(".", 1)[-1] if "." in node.name else node.name)
         if node.struct_size is not None:
-            item.setText(COL_TYPE, f"STRUCT ({len(node.children)})")
+            item.setText(COL_TYPE, f"STRUCT ({len(child_items)})")
             item.setText(COL_SIZE, str(node.struct_size))
         else:
-            item.setText(COL_TYPE, f"ARRAY[{len(node.children)}]")
+            item.setText(COL_TYPE, f"ARRAY[{len(child_items)}]")
         item.setText(COL_ADDR, f"0x{node.address:08X}")
         item.setText(COL_VALUE, "—")
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         self._char_items[node.name] = item
-        for child_node in node.children:
-            item.addChild(self._build_tree_item_from_node(child_node))
+        for child_item in child_items:
+            item.addChild(child_item)
         item.setExpanded(True)
         return item
 
