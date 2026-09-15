@@ -181,9 +181,10 @@ def _split_into_contiguous_runs(
 ) -> list[tuple[int, bytes]]:
     """Gộp các member đã encode thành các đoạn (run) liền khít tối đa.
 
-    `_group_by_prefix` gom CHARACTERISTIC thành "STRUCT" thuần theo TÊN, không
-    biết layout C thật — nên không thể giả định các member luôn liền nhau
-    (compiler chèn padding để align, hoặc 2 tham số chỉ trùng tiền tố tên chứ
+    Heuristic gom nhóm theo tiền tố tên cũ (đã bỏ) từng gom CHARACTERISTIC
+    thành "STRUCT" thuần theo TÊN, không biết layout C thật — nên không thể
+    giả định các member luôn liền nhau (compiler chèn padding để align, hoặc
+    2 tham số chỉ trùng tiền tố tên chứ
     không thật sự cùng struct). Ghi đè một buffer to bằng cả nhóm sẽ ghi cả
     những byte không thuộc CHARACTERISTIC nào (padding) — không an toàn cho
     ECU thật.
