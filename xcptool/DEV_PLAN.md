@@ -362,7 +362,7 @@ không nhảy theo Navigation; Dark theme vỡ khi Dock floating) đã fix, xem 
 > `superpowers:executing-plans` to implement this task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking. Mark each `- [x]` as it lands.
 
-**Trạng thái: chưa bắt đầu.**
+**Trạng thái: hoàn thành (2026-09-16).** Full suite: 500/500 pass (`pytest tests/ -x -q`).
 
 **Goal:** Thay `_group_by_prefix` (đoán "struct" từ tên tham số, 2 bản độc
 lập ở `calibration_view.py`/`measurement_view.py`) bằng dữ liệu struct THẬT

@@ -442,7 +442,7 @@ xcptool/
 
 ### 7.1 A2L struct thật (TYPEDEF_STRUCTURE/INSTANCE) thay heuristic đặt tên
 
-**Trạng thái: spec đã duyệt (2026-09-11), chưa triển khai.** Xem
+**Trạng thái: đã triển khai (2026-09-16).** Xem
 [`docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md`](docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md)
 và [`DESIGN.md §8`](DESIGN.md).
 

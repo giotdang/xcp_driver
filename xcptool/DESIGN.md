@@ -287,7 +287,7 @@ Layout serialize qua `QSettings("xcptool", "xcptool")` → nhớ giữa phiên.
 
 ## 8. Struct thật từ A2L (TYPEDEF_STRUCTURE/INSTANCE) — kế hoạch thay heuristic đặt tên
 
-> **Trạng thái: kế hoạch — spec đã duyệt (2026-09-11), CHƯA triển khai.**
+> **Trạng thái: kiến trúc chính thức — đã triển khai (2026-09-16).**
 > Spec đầy đủ: [`docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md`](docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md)
 
 `_group_by_prefix` (§7, dòng cuối bảng bẫy) không phải đọc dữ liệu thật từ A2L —
