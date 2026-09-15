@@ -238,50 +238,43 @@ def test_scope_toggle_hides_plot_and_skips_curve_data(view: MeasurementView) -> 
     assert len(view._xs.get("speed", [])) == 0
 
 
-def test_set_database_groups_struct_measurements(view: MeasurementView) -> None:
-    """Kiểm tra MEASUREMENT dạng struct (speedPidTelemetry_*) được gom nhóm thành parent-child."""
-    db = A2LDatabase()
-    db.measurements["speedPidTelemetry_error"] = Measurement(
-        name="speedPidTelemetry_error",
-        description="PID Error",
-        datatype="FLOAT32_IEEE",
-        address=MEM_BASE + 0x10,
-        lower_limit=-100.0,
-        upper_limit=100.0,
-    )
-    db.measurements["speedPidTelemetry_integral"] = Measurement(
-        name="speedPidTelemetry_integral",
-        description="PID Integral",
-        datatype="FLOAT32_IEEE",
-        address=MEM_BASE + 0x14,
-        lower_limit=-100.0,
-        upper_limit=100.0,
-    )
-    db.measurements["speedPidTelemetry_output"] = Measurement(
-        name="speedPidTelemetry_output",
-        description="PID Output",
-        datatype="FLOAT32_IEEE",
-        address=MEM_BASE + 0x18,
-        lower_limit=-100.0,
-        upper_limit=100.0,
-    )
+def test_set_database_builds_struct_tree_from_instance_data(view: MeasurementView) -> None:
+    """Thay test cũ (đoán struct theo tên) — struct từ INSTANCE thật, và
+    tick dòng cha vẫn phải kéo đủ cả 3 signal con vào DAQ list."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin TYPEDEF_MEASUREMENT T_F32 "f32" FLOAT32_IEEE CM_NONE 0 0 -100 100
+    /end TYPEDEF_MEASUREMENT
+    /begin TYPEDEF_STRUCTURE Telemetry_t "telemetry" 12
+        /begin STRUCTURE_COMPONENT error T_F32 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT integral T_F32 4
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT output T_F32 8
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE speedPidTelemetry "telemetry instance" Telemetry_t 0x90001000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
     view.set_database(db)
 
-    # Cây chỉ có 1 top-level item là struct parent
     assert view.tree.topLevelItemCount() == 1
     parent = view.tree.topLevelItem(0)
     assert parent.text(COL_NAME) == "speedPidTelemetry"
     assert "STRUCT" in parent.text(COL_DTYPE)
     assert parent.childCount() == 3
 
-    # Các trường con không có Checkbox
     for i in range(3):
         child = parent.child(i)
         assert child.checkState(COL_NAME) == Qt.Unchecked or child.data(COL_NAME, Qt.CheckStateRole) is None
 
-    # Khi tick dòng cha -> _build_daq_lists sinh ra cả 3 signals
     parent.setCheckState(COL_NAME, Qt.Checked)
-    emitted: list[list[DaqList]] = []
+    emitted: list[list] = []
     view.daq_start_requested.connect(emitted.append)
     view.start_btn.click()
 
@@ -289,10 +282,102 @@ def test_set_database_groups_struct_measurements(view: MeasurementView) -> None:
     sigs = emitted[0][0].signals
     assert len(sigs) == 3
     assert {s.name for s in sigs} == {
-        "speedPidTelemetry_error",
-        "speedPidTelemetry_integral",
-        "speedPidTelemetry_output",
+        "speedPidTelemetry.error", "speedPidTelemetry.integral", "speedPidTelemetry.output",
     }
+
+
+def test_set_database_skips_characteristic_instance_without_crashing(view: MeasurementView) -> None:
+    """Guard chủ động cho bug class y hệt (mirror-image) bug đã fix ở
+    CalibrationView Task 11: `_build_tree_item_from_node` tra
+    `self._db.measurements[node.leaf_name]` không điều kiện trong nhánh lá —
+    nếu INSTANCE trỏ tới TYPEDEF_CHARACTERISTIC (is_measurement=False) thay vì
+    TYPEDEF_MEASUREMENT thì sẽ KeyError. Một file A2L thật trộn cả CAL lẫn DAQ
+    struct instance (đúng motivation của spec) sẽ crash MeasurementView theo
+    hướng ngược lại. MeasurementView chỉ hiển thị MEASUREMENT — CHARACTERISTIC
+    thuộc CalibrationView -> phải bỏ qua êm, không crash."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_MEASUREMENT T_Temp "temperature" FLOAT32_IEEE CM_NONE 0 0 -40 150
+    /end TYPEDEF_MEASUREMENT
+    /begin INSTANCE gainInst "calibratable gain" T_Gain 0x80100000
+    /end INSTANCE
+    /begin INSTANCE tempInst "measured temperature" T_Temp 0x80100010
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    view.set_database(db)  # trước fix: KeyError('gainInst')
+
+    assert view.tree.topLevelItemCount() == 1  # chỉ tempInst — gainInst bị lọc êm
+    only = view.tree.topLevelItem(0)
+    assert only.data(COL_NAME, Qt.UserRole) == "tempInst"
+    assert "gainInst" not in view._tree_items
+
+
+def test_set_database_struct_partial_filter_keeps_only_measurement_leaves(view: MeasurementView) -> None:
+    """Kiểm tra tương tác giữa None-filtering và hợp đồng checkbox/DAQ-list:
+    struct trộn lẫn 1 component CHARACTERISTIC (kp) + 2 component MEASUREMENT
+    (error, output) — hoàn toàn hợp lệ theo A2L (STRUCTURE_COMPONENT trỏ tới
+    bất kỳ type nào, xem a2l/database.py._resolve_type). Sau khi lọc, danh
+    sách Qt.UserRole của dòng cha PHẢI chỉ chứa 2 tên MEASUREMENT còn sống sót
+    — không phải _leaf_names() chưa lọc (sẽ lẫn "mixedInst.kp", một tên không
+    tồn tại trong db.measurements -> _build_daq_lists() âm thầm bỏ qua, DAQ
+    list thiếu tín hiệu mà không có lỗi nào báo)."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_MEASUREMENT T_F32 "f32" FLOAT32_IEEE CM_NONE 0 0 -100 100
+    /end TYPEDEF_MEASUREMENT
+    /begin TYPEDEF_STRUCTURE Mixed_t "mixed cal+daq" 12
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT error T_F32 4
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT output T_F32 8
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE mixedInst "mixed instance" Mixed_t 0x90002000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    view.set_database(db)
+
+    assert view.tree.topLevelItemCount() == 1
+    parent = view.tree.topLevelItem(0)
+    assert parent.text(COL_NAME) == "mixedInst"
+    assert "STRUCT" in parent.text(COL_DTYPE)
+    # chỉ 2 con MEASUREMENT còn lại — kp (CHARACTERISTIC) bị lọc êm
+    assert parent.childCount() == 2
+    child_names = {parent.child(i).data(COL_NAME, Qt.UserRole) for i in range(2)}
+    assert child_names == {"mixedInst.error", "mixedInst.output"}
+
+    parent.setCheckState(COL_NAME, Qt.Checked)
+    emitted: list[list] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert len(emitted) == 1
+    sigs = emitted[0][0].signals
+    assert len(sigs) == 2
+    assert {s.name for s in sigs} == {"mixedInst.error", "mixedInst.output"}
 
 
 def test_radix_change_updates_float_and_int_live_values(view: MeasurementView) -> None:
