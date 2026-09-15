@@ -95,18 +95,27 @@ Khi đã cắm thiết bị CAN và nối dây tới ECU:
 
 Tab **Hiệu chỉnh** (biểu tượng cây bút trên thanh điều hướng bên trái):
 
+> **Lưu ý:** cây tham số chỉ gom nhóm STRUCT/ARRAY khi file A2L khai báo
+> `TYPEDEF_STRUCTURE`/`INSTANCE` theo chuẩn ASAP2 (xem `DESIGN.md §8`). File
+> mẫu đi kèm `examples/xcp_daq_example.a2l` **không** khai `INSTANCE` nào —
+> các tham số vốn thuộc "struct" (`speedPid_kp`, `speedPid_ki`...) chỉ chia
+> sẻ tiền tố tên, nên hiện **phẳng**, không có dòng cha nào để mở rộng. Mảng
+> (`adcCalPoints`) vẫn tách thành các dòng con `[i]` như bình thường — chỉ
+> việc GOM STRUCT mới cần `INSTANCE` thật.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ [Nạp A2L…]  [Đọc tất cả]  [Ghi thay đổi]       15 CHARACTERISTIC        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ Tên               Loại        Địa chỉ     Byte   Giá trị       Khoảng    │
-│ ▼ speedPid        STRUCT (4)  0x80100000  16     —                       │
-│     kp            FLOAT32     0x80100000  4      1.25          [0 … 100] │
-│     ki            FLOAT32     0x80100004  4      0.08          [0 … 50]  │
-│     outMin        FLOAT32     0x80100008  4      -50.0         [-100 … 0]│
-│     outMax        FLOAT32     0x8010000C  4      50.0          [0 … 100] │
-│ ▶ adcCalPoints    UINT16[4]   0x80100038  8      —                       │
+│ adcCalPoints      UINT16[4]   0x80100038  8      —              [0…4095] │
+│ speedPid_kd       FLOAT32     0x80100058  4      0.02            [0 … 1] │
+│ speedPid_ki       FLOAT32     0x80100054  4      0.08            [0 … 5] │
+│ speedPid_kp       FLOAT32     0x80100050  4      1.25           [0 … 10] │
+│ speedPid_outMax   FLOAT32     0x80100060  4      50.0          [0 … 200] │
+│ speedPid_outMin   FLOAT32     0x8010005C  4      -50.0        [-200 … 0] │
 └─────────────────────────────────────────────────────────────────────────┘
+(minh hoạ một phần — file mẫu còn nhiều CHARACTERISTIC khác, sắp theo A→Z)
 ```
 
 ### Thao tác chính:
@@ -135,25 +144,35 @@ Tab **Hiệu chỉnh** (biểu tượng cây bút trên thanh điều hướng b
 
 Tab **Đo lường** (biểu tượng công cụ trên thanh điều hướng):
 
+> **Lưu ý:** giống panel Hiệu chỉnh — chỉ gom nhóm STRUCT khi A2L có
+> `INSTANCE`/`TYPEDEF_STRUCTURE` thật. File mẫu đi kèm không khai `INSTANCE`
+> nào, nên `speedPidTelemetry_error`/`_integral`/`_output` (chia sẻ tiền tố
+> tên, không phải struct thật theo A2L) hiện **phẳng**, mỗi tín hiệu 1 dòng
+> checkbox riêng. `torqueSamples` (MEASUREMENT có khai `MATRIX_DIM`) vẫn
+> tách thành các dòng con `[i]` như bình thường.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ [Nạp A2L…]  [Bắt đầu đo]  [Dừng]  [🔘 Đồ thị: Bật]    12 MEASUREMENT    │
 ├───────────────────────────────────┬─────────────────────────────────────┤
-│ Signal                Kiểu   Giá trị│ 📈 Scope (pyqtgraph)                │
-│ ☑ vehicleSpeedKph     FLOAT32 45.2 │    ── vehicleSpeedKph               │
-│ ☑ engineRpm           FLOAT32 2150 │    ── engineRpm                     │
-│ ▼ ☑ speedPidTelemetry STRUCT  —    │                                     │
-│       error           FLOAT32 1.45 │  80 ┤     /\     /\                 │
-│       integral        FLOAT32 0.32 │  40 ┤____/  \___/  \____            │
-│ ▶ ☑ torqueSamples     FLOAT32[4] — │   0 ┼───────────────────            │
-│                                   │     0s      5s     10s    15s       │
+│ Signal                      Kiểu    Giá trị│ 📈 Scope (pyqtgraph)         │
+│ ☑ vehicleSpeedKph           FLOAT32 45.2  │    ── vehicleSpeedKph         │
+│ ☑ engineRpm                 FLOAT32 2150  │    ── engineRpm               │
+│ ☑ speedPidTelemetry_error   FLOAT32 1.45  │                               │
+│ ☑ speedPidTelemetry_integral FLOAT32 0.32 │  80 ┤     /\     /\           │
+│ ☑ speedPidTelemetry_output  FLOAT32 12.8  │  40 ┤____/  \___/  \____      │
+│ ▶ ☑ torqueSamples           FLOAT32[4] —  │   0 ┼───────────────────      │
+│                                          │     0s      5s     10s    15s │
 └───────────────────────────────────┴─────────────────────────────────────┘
+(minh hoạ một phần — file mẫu còn nhiều MEASUREMENT khác, sắp theo A→Z)
 ```
 
 ### Thao tác đo lường:
 1. **Chọn tín hiệu đo**:
    - Tích chọn vào ô vuông (Checkbox) cạnh các tín hiệu muốn theo dõi.
-   - Đối với nhóm Struct hoặc mảng Array: Chỉ cần tích chọn 1 ô ở dòng cha, toàn bộ các tín hiệu con sẽ tự động được đưa vào danh sách đo.
+   - Đối với nhóm Struct hoặc mảng Array (khi A2L có `INSTANCE` thật —
+     xem lưu ý phía trên): Chỉ cần tích chọn 1 ô ở dòng cha, toàn bộ các
+     tín hiệu con sẽ tự động được đưa vào danh sách đo.
 2. **Bắt đầu đo**:
    - Bấm **Bắt đầu đo**. Ứng dụng sẽ tự động cấu hình danh sách DAQ trên ECU và bắt đầu thu thập dữ liệu.
    - Cột **Giá trị** sẽ hiển thị số thực trực tiếp theo thời gian thực (chu kỳ cập nhật 40ms).

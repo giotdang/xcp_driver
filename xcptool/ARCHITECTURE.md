@@ -433,12 +433,13 @@ xcptool/
 
 ---
 
-## 7. Kế hoạch nâng cấp đang chờ triển khai
+## 7. Nâng cấp kiến trúc đã triển khai (trước đây là mục "kế hoạch chờ")
 
-> Tài liệu này (theo banner ở đầu) chỉ mô tả kiến trúc **đã có trong code**.
-> Mục này là ngoại lệ có chủ đích: liệt kê thay đổi kiến trúc đã chốt spec
-> nhưng **chưa viết code** — để không lẫn với phần còn lại (vốn phải luôn
-> đúng với mã nguồn thực tế).
+> Mục này từng là ngoại lệ có chủ đích so với banner ở đầu tài liệu (chỉ mô
+> tả kiến trúc **đã có trong code**): liệt kê một thay đổi kiến trúc đã chốt
+> spec nhưng **chưa viết code**. Thay đổi đó (§7.1) đã được triển khai xong
+> — nội dung dưới đây giữ lại làm mốc lịch sử kèm liên kết spec, không còn
+> là kế hoạch chờ nào cả.
 
 ### 7.1 A2L struct thật (TYPEDEF_STRUCTURE/INSTANCE) thay heuristic đặt tên
 
@@ -446,14 +447,17 @@ xcptool/
 [`docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md`](docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md)
 và [`DESIGN.md §8`](DESIGN.md).
 
-Ảnh hưởng tới bảng §2.1 và sơ đồ §4.2 khi triển khai xong:
-- `xcptool.a2l` sẽ thật sự đọc được `TYPEDEF_STRUCTURE`/`STRUCTURE_COMPONENT`/
-  `TYPEDEF_CHARACTERISTIC`/`TYPEDEF_MEASUREMENT`/`INSTANCE` (hiện tại dòng "hỗ
-  trợ phân rã... struct" ở bảng §2.1 nói về việc UI tự đoán theo tên, KHÔNG
-  phải parser đọc struct thật — spec này làm nó đúng nghĩa đen lần đầu tiên).
-- `_resolve()` trong sơ đồ §4.2 sẽ có thêm bước resolve `INSTANCE` đệ quy
-  (struct lồng struct, mảng struct) thành địa chỉ tuyệt đối, materialize
-  thẳng vào `A2LDatabase.characteristics`/`measurements` — không đổi gì ở
-  các bước sau (session/master/transport không biết hay cần biết gì khác).
-- `calibration_view.py`/`measurement_view.py` dựng cây từ `db.instances`
-  thay vì `_group_by_prefix` (2 bản hiện có, độc lập nhau, sẽ bị xoá cả hai).
+Đã áp dụng vào bảng §2.1 và sơ đồ §4.2:
+- `xcptool.a2l` giờ thật sự đọc được `TYPEDEF_STRUCTURE`/`STRUCTURE_COMPONENT`/
+  `TYPEDEF_CHARACTERISTIC`/`TYPEDEF_MEASUREMENT`/`INSTANCE` (dòng "hỗ trợ
+  phân rã... struct" ở bảng §2.1 giờ đúng nghĩa đen: parser đọc struct thật
+  từ A2L, không còn là UI tự đoán theo tên).
+- `a2l/database.py._resolve_instances()` resolve `INSTANCE` đệ quy (struct
+  lồng struct, mảng struct) thành địa chỉ tuyệt đối, materialize thẳng vào
+  `A2LDatabase.characteristics`/`measurements` + `instance_trees` (cây hiển
+  thị đã resolve) — các bước sau không đổi (session/master/transport không
+  biết hay cần biết gì khác).
+- `calibration_view.py`/`measurement_view.py` dựng cây từ `db.instance_trees`
+  (cây đã resolve — KHÔNG phải `db.instances`, vốn là dữ liệu INSTANCE thô
+  chưa resolve) thay vì `_group_by_prefix` (2 bản cũ, độc lập nhau, đã bị
+  xoá cả hai).
