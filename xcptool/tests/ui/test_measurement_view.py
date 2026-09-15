@@ -7,7 +7,7 @@ import struct
 import pytest
 from PySide6.QtCore import Qt
 
-from xcptool.a2l.types import A2LDatabase, Measurement
+from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, Measurement
 from xcptool.session.api import DaqList, DaqSignal, SamplePoint
 from xcptool.session.fake import FakeBehavior, FakeSession, MEM_BASE
 from xcptool.ui.measurement_view import COL_ADDR, COL_DTYPE, COL_NAME, COL_VALUE, MeasurementView
@@ -199,6 +199,56 @@ def test_start_emits_daq_start_requested_for_array(qtbot, view: MeasurementView)
         assert sigs[i].datatype == "FLOAT32_IEEE"
 
 
+def test_instance_leaf_array_measurement_builds_indexed_children(view: MeasurementView) -> None:
+    """Bug thật (final review): 1 TYPEDEF_MEASUREMENT có MATRIX_DIM (khai trên
+    chính TYPE, không phải trên INSTANCE) reach qua 1 INSTANCE top-level
+    (không bọc struct nào) trước fix chỉ dựng ĐÚNG 1 dòng scalar và đăng ký
+    self._tree_items[leaf_name] — không dựng dòng con [i] như nhánh phẳng
+    (không-INSTANCE) đã làm mấy dòng dưới. DAQ signal list vẫn đặt tên đúng
+    từng phần tử ("samples[0]"…"samples[3]"), nhưng không key nào trong
+    self._tree_items khớp -> on_samples()'s live-value lookup
+    (self._tree_items.get(sp.name)) không bao giờ tìm thấy, cột Live Value
+    trống mãi dù DAQ/scope data đang chạy đúng."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin TYPEDEF_MEASUREMENT T_Samples "sample array" FLOAT32_IEEE CM_NONE 0 0 -100 100
+        MATRIX_DIM 4
+    /end TYPEDEF_MEASUREMENT
+    /begin INSTANCE samples "4 samples, no struct" T_Samples 0x90003000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    # Xác nhận đúng shape mong đợi: 1 leaf InstanceNode, Measurement bên dưới
+    # có array_size > 1 (không phải 1 array-of-InstanceNode như struct).
+    node = db.instance_trees["samples"]
+    assert node.leaf_name == "samples"
+    assert node.children == []
+    assert db.measurements["samples"].array_size == 4
+
+    view.set_database(db)
+
+    assert view.tree.topLevelItemCount() == 1
+    parent = view.tree.topLevelItem(0)
+    assert parent.text(COL_NAME) == "samples"
+    assert parent.childCount() == 4, "phải tách thành 4 dòng con [i], không phải 1 dòng scalar"
+
+    for i in range(4):
+        child_name = f"samples[{i}]"
+        assert child_name in view._tree_items, f"thiếu _tree_items[{child_name!r}]"
+        assert view._tree_items[child_name].text(COL_NAME) == f"[{i}]"
+
+    # on_samples() phải tìm thấy dòng con đúng theo tên DAQ signal thật.
+    sp = SamplePoint(name="samples[2]", timestamp_ns=1000,
+                      value_raw=struct.pack("<f", 3.5), datatype="FLOAT32_IEEE")
+    view.on_samples([sp])
+    assert "3.5" in view._tree_items["samples[2]"].text(COL_VALUE)
+
+
 def test_on_samples_updates_live_value_in_tree(view: MeasurementView) -> None:
     """on_samples cập nhật giá trị hiển thị cột Giá trị trực tiếp trên Tree."""
     db = _make_db()
@@ -378,6 +428,45 @@ def test_set_database_struct_partial_filter_keeps_only_measurement_leaves(view: 
     sigs = emitted[0][0].signals
     assert len(sigs) == 2
     assert {s.name for s in sigs} == {"mixedInst.error", "mixedInst.output"}
+
+
+def test_set_database_handled_filtered_by_type_keeps_flat_measurement_name_collision(
+    view: MeasurementView,
+) -> None:
+    """Bug thật (final review, Fix 5 — mirror-image của guard tương tự ở
+    CalibrationView): `handled` trong set_database() được gom từ
+    _leaf_names(node) đi trên TOÀN BỘ instance_trees — trước fix, hàm này
+    trả về MỌI leaf_name bất kể is_measurement. a2l/database.py chỉ chống
+    trùng tên TRONG CÙNG dict nên 1 CHARACTERISTIC resolve-từ-INSTANCE hoàn
+    toàn có thể trùng tên với 1 MEASUREMENT phẳng độc lập mà parser không hề
+    chặn. Nếu không lọc theo is_measurement, MEASUREMENT phẳng đó bị
+    `handled` loại êm và biến mất khỏi MeasurementView dù hợp lệ."""
+    db = A2LDatabase()
+    db.measurements["shared"] = Measurement(
+        name="shared", description="", datatype="UBYTE",
+        address=MEM_BASE, lower_limit=0.0, upper_limit=255.0,
+    )
+    db.characteristics["shared"] = Characteristic(
+        name="shared", description="", char_type="VALUE", address=MEM_BASE + 0x10,
+        record_layout="RL_UBYTE", lower_limit=0.0, upper_limit=255.0,
+        datatype="UBYTE", array_size=1,
+    )
+    # INSTANCE-resolved CHARACTERISTIC leaf trùng tên "shared" — mô phỏng
+    # đúng shape mà a2l/database.py._resolve_type() dựng cho 1 INSTANCE trỏ
+    # tới TYPEDEF_CHARACTERISTIC tên "shared".
+    db.instance_trees["shared"] = InstanceNode(
+        name="shared", address=MEM_BASE + 0x10, leaf_name="shared",
+        is_measurement=False, struct_size=None,
+    )
+
+    view.set_database(db)
+
+    # MEASUREMENT phẳng "shared" KHÔNG được handled loại êm chỉ vì trùng tên
+    # với 1 CHARACTERISTIC resolve-từ-INSTANCE khác hẳn.
+    assert view.tree.topLevelItemCount() == 1
+    only = view.tree.topLevelItem(0)
+    assert only.data(COL_NAME, Qt.UserRole) == "shared"
+    assert "shared" in view._tree_items
 
 
 def test_radix_change_updates_float_and_int_live_values(view: MeasurementView) -> None:

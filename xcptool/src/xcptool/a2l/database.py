@@ -81,6 +81,16 @@ def _resolve_one(
     n = _array_len(matrix_dim)
     if n == 1:
         return _resolve_type(db, type_name, base_addr, name, seen)
+    if n == 0:
+        # MATRIX_DIM khai sai (VD "MATRIX_DIM 0") — mọi guard khác trong hàm
+        # này/(_resolve_type) đều warning trước khi trả None; nhánh này trước
+        # fix rơi thẳng vào `if not children: return None` bên dưới (children
+        # luôn rỗng vì range(0) không chạy) — không warning nào cả, component/
+        # instance biến mất khỏi tree mà log không nói gì để giải thích.
+        _log.warning(
+            "MATRIX_DIM resolves to 0 elements for %r (type %r), skipping",
+            name, type_name)
+        return None
 
     size = _size_of(db, type_name)
     if size is None:

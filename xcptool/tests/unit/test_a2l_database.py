@@ -202,6 +202,30 @@ def test_unknown_type_name_warns_and_skips(caplog) -> None:
     assert "unknown" in caplog.text.lower() or "NotDefinedAnywhere_t" in caplog.text
 
 
+def test_matrix_dim_zero_warns_and_skips(caplog) -> None:
+    """Bug thật (final review, Fix 4): mọi guard khác trong _resolve_one/
+    _resolve_type (unknown type, name collision, circular reference, size
+    None) đều log warning trước khi trả None. Guard còn thiếu: khi
+    _array_len(matrix_dim) == 0 (A2L khai sai "MATRIX_DIM 0"), nhánh mảng
+    rơi thẳng vào `if not children: return None` (children luôn rỗng vì
+    range(0) không lặp) mà KHÔNG log gì — component/instance biến mất khỏi
+    tree, log không nói gì để giải thích tại sao."""
+    db = _resolve("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE thing "malformed zero-length array" T_Gain 0x80100000
+        MATRIX_DIM 0
+    /end INSTANCE
+    """)
+    from xcptool.a2l.database import _resolve_instances
+    _resolve_instances(db)  # KHÔNG được raise
+    assert db.instance_trees == {}
+    assert "matrix_dim" in caplog.text.lower() or "0 elements" in caplog.text.lower()
+
+
 def test_name_collision_keeps_original_and_warns(caplog) -> None:
     db = _resolve("""
     /begin RECORD_LAYOUT RL_F32

@@ -267,8 +267,21 @@ class MeasurementView(QWidget):
     # ── API công khai (gọi từ MainWindow, UI thread) ─────────────────────────
 
     def _leaf_names(self, node: InstanceNode) -> list[str]:
+        """Tên các lá MEASUREMENT (is_measurement=True) — dùng để loại các
+        MEASUREMENT đã hiển thị qua INSTANCE khỏi vòng lặp phẳng bên dưới
+        (`set_database`).
+
+        Bug thật (final review, mirror-image của guard tương tự ở
+        CalibrationView): trước đây hàm này trả về MỌI leaf_name bất kể
+        `is_measurement`. Guard chống trùng tên trong a2l/database.py chỉ
+        soát trùng tên TRONG CÙNG dict (`db.measurements` hoặc
+        `db.characteristics`) — một MEASUREMENT ở đây có thể trùng tên với
+        MỘT CHARACTERISTIC resolve-từ-INSTANCE mà không hề bị chặn khi parse.
+        Nếu không lọc theo `is_measurement`, tên đó lọt vào `handled` chỉ vì
+        trùng chữ với 1 CHARACTERISTIC, và MEASUREMENT phẳng cùng tên biến
+        mất khỏi MeasurementView dù hoàn toàn hợp lệ."""
         if node.leaf_name is not None:
-            return [node.leaf_name]
+            return [node.leaf_name] if node.is_measurement else []
         names: list[str] = []
         for child in node.children:
             names.extend(self._leaf_names(child))
@@ -299,11 +312,39 @@ class MeasurementView(QWidget):
             if top_level:
                 item.setCheckState(COL_NAME, Qt.Unchecked)
             friendly = _FRIENDLY_DTYPE.get(meas.datatype, meas.datatype)
-            item.setText(COL_DTYPE, friendly)
+            item.setText(
+                COL_DTYPE,
+                friendly if meas.array_size == 1 else f"{friendly}[{meas.array_size}]"
+            )
             item.setText(COL_ADDR, f"0x{meas.address:08X}")
             item.setText(COL_VALUE, "-")
             item.setToolTip(COL_NAME, meas.description)
-            self._tree_items[node.leaf_name] = item
+
+            if meas.array_size == 1:
+                self._tree_items[node.leaf_name] = item
+            else:
+                # Bug thật (final review): trước fix, một MEASUREMENT array
+                # (MATRIX_DIM) reach qua INSTANCE luôn dựng ĐÚNG 1 dòng scalar
+                # và chỉ đăng ký self._tree_items[node.leaf_name] — không
+                # dựng các dòng con [i] như nhánh phẳng bên dưới (~dòng 378)
+                # vẫn làm. DAQ signal list vẫn đặt tên/địa chỉ đúng từng phần
+                # tử ("tel.samples[0]"…), nhưng không có key nào trong
+                # self._tree_items khớp — on_samples()'s live-value lookup
+                # (self._tree_items.get(sp.name)) không bao giờ tìm thấy, cột
+                # Live Value trống mãi dù DAQ đang chạy đúng. Mirror y hệt
+                # nhánh phẳng: dựng dòng con [i], đăng ký theo "name[i]".
+                elem_size = meas.byte_size // meas.array_size
+                for i in range(meas.array_size):
+                    child_name = f"{meas.name}[{i}]"
+                    child = QTreeWidgetItem()
+                    child.setData(COL_NAME, Qt.UserRole, child_name)
+                    child.setText(COL_NAME, f"[{i}]")
+                    child.setText(COL_DTYPE, _FRIENDLY_DTYPE.get(meas.datatype, meas.datatype))
+                    child.setText(COL_ADDR, f"0x{(meas.address + i * elem_size):08X}")
+                    child.setText(COL_VALUE, "-")
+                    item.addChild(child)
+                    self._tree_items[child_name] = child
+                item.setExpanded(True)
             return item
 
         # Dựng con TRƯỚC, lọc None — danh sách checkbox của dòng cha (dưới)

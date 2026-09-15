@@ -7,7 +7,7 @@ import struct
 import pytest
 from PySide6.QtCore import Qt
 
-from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, RecordLayout
+from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, Measurement, RecordLayout
 from xcptool.session.api import BusConfig, ConnState, PageMode
 from xcptool.session.fake import MEM_BASE, FakeBehavior, FakeSession
 from xcptool.ui.calibration_view import (
@@ -779,6 +779,68 @@ def test_write_bare_array_instance_without_enclosing_struct(qtbot) -> None:
     assert addr == 0x80100000
     assert len(data) == 12            # 3 x FLOAT32 (4 byte)
 
+    # Fix 2 (final review): "Write Selected" phải enable được qua đúng
+    # _update_write_btn() — cổng nút thật của UI (không chỉ gọi _write_parent
+    # trực tiếp, bỏ qua cổng) — khi 1 con của dòng cha ARRAY[ đang dirty.
+    # Trước fix, _update_write_btn chỉ nhận diện "STRUCT", không nhận
+    # "ARRAY[", nên nút luôn bị khoá dù _write_parent tự nó ghi đúng.
+    child0_name = parent.child(0).data(COL_NAME, Qt.UserRole)
+    v._dirty.add(child0_name)
+    v.tree.setCurrentItem(parent)
+    v.write_btn.setEnabled(False)
+    v._update_write_btn()
+    assert v.write_btn.isEnabled(), (
+        "Write button phải enable khi 1 con của dòng cha ARRAY[ đang dirty"
+    )
+
+
+def test_start_value_edit_blocks_struct_and_array_parent_rows(qtbot) -> None:
+    """STRUCT và ARRAY[ đều là dòng cha tổng hợp (combine-write) — không cho
+    sửa trực tiếp ô Value của chính dòng cha, phải chọn từng con cụ thể.
+    Trước fix Task 12: chỉ STRUCT bị chặn, ARRAY[ vẫn cho editItem() mở —
+    gõ vào ô Value của dòng cha ARRAY chỉ cập nhật hiển thị con mà không
+    đánh dấu dirty gì, gây hiểu lầm."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+
+    struct_parent = v._char_items["grp"]
+    assert struct_parent.text(COL_TYPE).startswith("STRUCT")
+    v._start_value_edit(struct_parent, COL_VALUE)
+    assert not (struct_parent.flags() & Qt.ItemIsEditable), (
+        "STRUCT parent không được cho sửa trực tiếp"
+    )
+
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE tempSensors "3 sensor gains, no struct" T_Gain 0x80100000
+        MATRIX_DIM 3
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db2 = a2l_load(path)
+    v2 = _make_view(qtbot)
+    v2.set_database(db2)
+    array_parent = v2._char_items["tempSensors"]
+    assert array_parent.text(COL_TYPE).startswith("ARRAY[")
+    v2._start_value_edit(array_parent, COL_VALUE)
+    assert not (array_parent.flags() & Qt.ItemIsEditable), (
+        "ARRAY[ parent (trước fix bị bỏ sót) không được cho sửa trực tiếp"
+    )
+
 
 def test_set_database_skips_measurement_instance_without_crashing(qtbot) -> None:
     """Bug thật (review round 1): INSTANCE trỏ tới TYPEDEF_MEASUREMENT (không
@@ -887,6 +949,90 @@ def test_write_struct_aggregates_children(qtbot, connected_window: MainWindow) -
     assert name == "pid"
     assert addr == MEM_BASE
     assert len(data) == 8
+
+
+def test_write_parent_recurses_into_nested_struct_children(qtbot) -> None:
+    """Bug thật (final review, CRITICAL): nhánh STRUCT/ARRAY của _write_parent
+    trước fix chỉ đọc CON TRỰC TIẾP. Outer_t có 1 member trực tiếp (kp) + 1
+    member là struct lồng khác (ctl: Inner_t, chứa ki/kd) — con "ctl" mang
+    Qt.UserRole là tên node hierarchical ("outerInst.ctl"), không phải key
+    trong self._db.characteristics, nên bị `if not c_def: continue` bỏ qua
+    ÊM: chỉ ghi kp, bỏ mất cả ki/kd mà vẫn báo thành công (report success
+    với write thiếu — vi phạm DESIGN.md §7: ghi struct phải trọn 1 khối)."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 8
+        /begin STRUCTURE_COMPONENT ki T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT kd T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 12
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ctl Inner_t 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE outerInst "outer instance" Outer_t 0x80100000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    parent = v._char_items["outerInst"]
+    assert parent.childCount() == 2
+    nested = next(
+        (parent.child(i) for i in range(parent.childCount()) if parent.child(i).childCount() > 0),
+        None,
+    )
+    assert nested is not None, "test setup phải có 1 con là struct lồng (ctl)"
+    assert nested.childCount() == 2
+
+    leaf_names = ["outerInst.kp", "outerInst.ctl.ki", "outerInst.ctl.kd"]
+    for name in leaf_names:
+        assert name in db.characteristics
+
+    v._dirty.update(leaf_names)
+    for i in range(parent.childCount()):
+        child = parent.child(i)
+        if child.childCount() == 0:
+            child.setText(COL_VALUE, "1.0")
+    for j in range(nested.childCount()):
+        nested.child(j).setText(COL_VALUE, "2.0")
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("outerInst", parent)
+
+    total_written = sum(len(data) for _, _, data in writes)
+    expected_size = sum(db.characteristics[n].byte_size for n in leaf_names)
+    assert total_written == expected_size, (
+        f"phải ghi đủ cả struct lồng, không chỉ member trực tiếp: "
+        f"ghi {total_written} byte, cần {expected_size} byte (writes={writes})"
+    )
+
+    written_addrs: set[int] = set()
+    for _, addr, data in writes:
+        for off in range(len(data)):
+            written_addrs.add(addr + off)
+    for n in leaf_names:
+        c = db.characteristics[n]
+        for off in range(c.byte_size):
+            assert (c.address + off) in written_addrs, f"thiếu byte tại {n}+{off}"
+
+    # Sau khi ghi trọn, dirty phải sạch hết — kể cả các lá lồng sâu.
+    assert not v._dirty & set(leaf_names)
 
 
 # ── _split_into_contiguous_runs — helper thuần, không cần Qt ────────────────
@@ -1113,6 +1259,46 @@ def test_write_all_uses_queue(qtbot) -> None:
     
     assert len(writes) == 2
     assert len(v._write_queue) == 0
+
+
+def test_set_database_handled_filtered_by_type_keeps_flat_characteristic_name_collision(
+    qtbot,
+) -> None:
+    """Bug thật (final review, Fix 5): `handled` trong set_database() được
+    gom từ _leaf_names(node) đi trên TOÀN BỘ instance_trees — trước fix,
+    hàm này trả về MỌI leaf_name bất kể is_measurement. a2l/database.py chỉ
+    chống trùng tên TRONG CÙNG dict (characteristics riêng, measurements
+    riêng) nên 1 MEASUREMENT resolve-từ-INSTANCE hoàn toàn có thể trùng tên
+    với 1 CHARACTERISTIC phẳng độc lập mà parser không hề chặn. Nếu không
+    lọc theo is_measurement, CHARACTERISTIC phẳng đó bị `handled` loại êm và
+    biến mất khỏi CalibrationView dù hợp lệ."""
+    db = A2LDatabase()
+    db.characteristics["shared"] = Characteristic(
+        name="shared", description="", char_type="VALUE", address=MEM_BASE,
+        record_layout="RL_UBYTE", lower_limit=0.0, upper_limit=255.0,
+        datatype="UBYTE", array_size=1,
+    )
+    db.measurements["shared"] = Measurement(
+        name="shared", description="", datatype="UBYTE",
+        address=MEM_BASE + 0x10, lower_limit=0.0, upper_limit=255.0,
+    )
+    # INSTANCE-resolved MEASUREMENT leaf trùng tên "shared" — mô phỏng đúng
+    # shape mà a2l/database.py._resolve_type() dựng cho 1 INSTANCE trỏ tới
+    # TYPEDEF_MEASUREMENT tên "shared".
+    db.instance_trees["shared"] = InstanceNode(
+        name="shared", address=MEM_BASE + 0x10, leaf_name="shared",
+        is_measurement=True, struct_size=None,
+    )
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    # CHARACTERISTIC phẳng "shared" KHÔNG được handled loại êm chỉ vì trùng
+    # tên với 1 MEASUREMENT resolve-từ-INSTANCE khác hẳn.
+    assert v.tree.topLevelItemCount() == 1
+    only = v.tree.topLevelItem(0)
+    assert only.data(COL_NAME, Qt.UserRole) == "shared"
+    assert "shared" in v._char_items
 
 
 def test_float_radix_decode_and_encode() -> None:

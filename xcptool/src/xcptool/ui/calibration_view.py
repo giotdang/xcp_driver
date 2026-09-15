@@ -666,16 +666,37 @@ class CalibrationView(QWidget):
         char_name = item.data(COL_NAME, Qt.UserRole)
         self._write_parent(char_name, item)
 
+    def _leaf_write_items(
+        self, item: QTreeWidgetItem
+    ) -> list[tuple[QTreeWidgetItem, str, Any]]:
+        """Trả về mọi lá CHARACTERISTIC bên dưới `item`, đệ quy hết mọi độ sâu.
+
+        Bug thật (final review): nhánh STRUCT/ARRAY của `_write_parent` từng
+        chỉ đọc CON TRỰC TIẾP — một con là struct/array lồng khác
+        (STRUCTURE_COMPONENT trỏ tới TYPEDEF_STRUCTURE/mảng khác) có
+        Qt.UserRole là tên node hierarchical (VD "outer.ctl"), không phải key
+        trong self._db.characteristics, nên bị `if not c_def: continue` bỏ
+        qua ÊM — ghi thiếu cả nhánh con mà vẫn báo thành công (vi phạm
+        DESIGN.md §7: ghi struct phải trọn 1 khối, không được nửa cũ nửa
+        mới). Ở đây: con không khớp key nào là node cha trung gian — đệ quy
+        tiếp vào CON CỦA NÓ thay vì bỏ qua, tới khi gặp lá thật."""
+        result: list[tuple[QTreeWidgetItem, str, Any]] = []
+        for i in range(item.childCount()):
+            child = item.child(i)
+            c_name = child.data(COL_NAME, Qt.UserRole)
+            c_def = self._db.characteristics.get(c_name) if isinstance(c_name, str) else None
+            if c_def is not None:
+                result.append((child, c_name, c_def))
+            else:
+                result.extend(self._leaf_write_items(child))
+        return result
+
     def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
         if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
+            leaves = self._leaf_write_items(item)
             try:
                 entries: list[tuple[int, bytes, str]] = []
-                for i in range(item.childCount()):
-                    child = item.child(i)
-                    c_name = child.data(COL_NAME, Qt.UserRole)
-                    c_def = self._db.characteristics.get(c_name)
-                    if not c_def: continue
-
+                for child, c_name, c_def in leaves:
                     if c_def.array_size > 1 and child.childCount() > 0:
                         children_values = [child.child(j).text(COL_VALUE) for j in range(child.childCount())]
                         val_bytes = encode_value(",".join(children_values), c_def.datatype, self._byte_order, c_def.array_size)
@@ -700,11 +721,11 @@ class CalibrationView(QWidget):
             self._pending_struct_runs[char_name] = runs[1:]
             self._write_cb(char_name, first_addr, first_bytes)
 
-            # Cleanup dirty state
-            for i in range(item.childCount()):
-                c_name = item.child(i).data(COL_NAME, Qt.UserRole)
+            # Cleanup dirty state — đệ quy hết mọi độ sâu (leaves đã tính ở
+            # trên), không chỉ con trực tiếp, khớp đúng với entries vừa ghi.
+            for leaf_item, c_name, _c_def in leaves:
                 self._dirty.discard(c_name)
-                item.child(i).setForeground(COL_VALUE, QBrush())
+                leaf_item.setForeground(COL_VALUE, QBrush())
             self._update_write_btn()
             if not self._dirty:
                 self.write_all_btn.setEnabled(False)
@@ -814,8 +835,20 @@ class CalibrationView(QWidget):
         return data
 
     def _leaf_names(self, node: "InstanceNode") -> set[str]:
+        """Tên các lá CHARACTERISTIC (is_measurement=False) — dùng để loại
+        các CHARACTERISTIC đã hiển thị qua INSTANCE khỏi vòng lặp phẳng bên
+        dưới (`set_database`).
+
+        Bug thật (final review): trước đây hàm này trả về MỌI leaf_name bất
+        kể `is_measurement`. Guard chống trùng tên trong a2l/database.py chỉ
+        soát trùng tên TRONG CÙNG dict (`db.characteristics` hoặc
+        `db.measurements`) — một CHARACTERISTIC ở đây có thể share tên với
+        MỘT MEASUREMENT resolve-từ-INSTANCE mà không hề bị chặn khi parse.
+        Nếu không lọc theo `is_measurement`, tên đó lọt vào `handled` chỉ vì
+        trùng chữ với 1 MEASUREMENT, và CHARACTERISTIC phẳng cùng tên biến
+        mất khỏi CalibrationView dù hoàn toàn hợp lệ."""
         if node.leaf_name is not None:
-            return {node.leaf_name}
+            return set() if node.is_measurement else {node.leaf_name}
         names: set[str] = set()
         for child in node.children:
             names |= self._leaf_names(child)
@@ -906,8 +939,8 @@ class CalibrationView(QWidget):
         """Cho phép sửa inline khi double-click đúng cột Giá trị."""
         if column != COL_VALUE:
             return
-        if item.text(COL_TYPE).startswith("STRUCT"):
-            return   # Không sửa trực tiếp dòng cha STRUCT
+        if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
+            return   # Không sửa trực tiếp dòng cha STRUCT/ARRAY[
         item.setFlags(item.flags() | Qt.ItemIsEditable)
         self.tree.editItem(item, COL_VALUE)
 
@@ -1022,7 +1055,9 @@ class CalibrationView(QWidget):
             return
             
         item = self._char_items.get(char_name)
-        if item and item.text(COL_TYPE).startswith("STRUCT"):
+        if item and (
+            item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY[")
+        ):
             enable = False
             for i in range(item.childCount()):
                 child_name = item.child(i).data(COL_NAME, Qt.UserRole)
