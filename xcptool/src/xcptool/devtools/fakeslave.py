@@ -29,8 +29,8 @@ __all__ = ["SlaveConfig", "FakeSlave"]
 
 log = logging.getLogger("xcptool.devtools.fakeslave")
 
-WORKING_PAGE = 0
-REFERENCE_PAGE = 1
+REFERENCE_PAGE = 0
+WORKING_PAGE = 1
 
 
 @dataclass
@@ -78,8 +78,9 @@ class SlaveConfig:
 
     mem_base: int = 0x8000_0000
     mem_size: int = 1024
-    ecu_page: int = WORKING_PAGE
-    xcp_page: int = WORKING_PAGE
+    # ECU và XCP boot ở Reference page (Flash) — đúng hành vi firmware thật
+    ecu_page: int = REFERENCE_PAGE
+    xcp_page: int = REFERENCE_PAGE
 
     # ── nút bấm cư xử tệ ─────────────────────────────────────────────────────
     drop_responses: int = 0
@@ -339,12 +340,12 @@ class FakeSlave:
         if self.cfg.log_commands:
             log.info("fake slave ← 0x%02X", cmd)
 
-        if cmd == Cmd.SYNCH:
-            self._err(ErrCode.CMD_SYNCH)
-            return
-
         if self.cfg.drop_responses > 0:
             self.cfg.drop_responses -= 1
+            return
+
+        if cmd == Cmd.SYNCH:
+            self._err(ErrCode.CMD_SYNCH)
             return
 
         if self.cfg.force_error is not None and cmd != Cmd.CONNECT:

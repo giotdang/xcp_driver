@@ -58,7 +58,7 @@ class Link(Protocol):
     max_frame_len: int
     """Trần vật lý của một frame. Core lấy min với MAX_CTO mà ECU khai."""
 
-    def send(self, can_id: int, data: bytes) -> bytes: ...
+    def send(self, can_id: int, data: bytes, max_len: int | None = None) -> bytes: ...
     def recv(self, timeout: float) -> RxFrame | None: ...
     def close(self) -> None: ...
 
@@ -201,8 +201,11 @@ class XcpMaster:
 
     def _send_raw(self, payload: bytes, note: str | None = None) -> None:
         self._pending_cmd = payload[0] if payload else None
+        # Trước CONNECT (caps chưa biết) đệm hết khả năng vật lý như cũ; sau đó
+        # giới hạn đúng MAX_CTO mà ECU khai, đừng đệm quá buffer CTO của nó.
+        max_len = self._caps.max_cto if self._caps is not None else None
         try:
-            on_wire = self._link.send(self._cfg.cro_id, payload)
+            on_wire = self._link.send(self._cfg.cro_id, payload, max_len)
         except TransportError:
             self._trace.add("tx", self._cfg.cro_id, payload, "cmd",
                             describe_tx(payload), note="gửi thất bại")
@@ -226,13 +229,22 @@ class XcpMaster:
 
     def _synch(self) -> None:
         """Gửi SYNCH để ECU vứt lệnh dở dang. Trả lời của nó là ERR_CMD_SYNCH,
-        không phải lỗi thật."""
+        không phải lỗi thật — nhưng ECU KHÔNG trả lời gì cả (timeout T1, tức
+        `data is None`) mới là dấu hiệu thật của một lần SYNCH thất bại; đủ 5
+        lần liên tiếp thì coi như mất kết nối, đừng bắn SYNCH mãi vô ích."""
         self._drain_responses()
         try:
             self._send_raw(bytes([Cmd.SYNCH]), note="resync sau timeout T1")
-            self._await_response(self._cfg.t1_timeout_s)
-            self._consecutive_synch_fails = 0
+            data = self._await_response(self._cfg.t1_timeout_s)
         except XcpToolError:
+            # Link đã chết (RX thread dừng, Sentinel) — _rx_failed đã xử lý ở
+            # nơi phát hiện lỗi gốc, không đếm lại ở đây.
+            self._drain_responses()
+            return
+
+        if data is not None:
+            self._consecutive_synch_fails = 0
+        else:
             self._consecutive_synch_fails += 1
             if self._consecutive_synch_fails >= 5:
                 self._rx_failed(BusError("Mất kết nối ECU (5 lần SYNCH liên tiếp không phản hồi)"))

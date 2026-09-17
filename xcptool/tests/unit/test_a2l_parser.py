@@ -137,3 +137,133 @@ def test_adcCalPoints_byte_size(db: A2LDatabase) -> None:
 def test_tempCompTable_byte_size(db: A2LDatabase) -> None:
     """SWORD × 6 elements = 12 bytes."""
     assert db.characteristics["tempCompTable"].byte_size == 12
+
+
+# ---------------------------------------------------------------------------
+# TYPEDEF_STRUCTURE checks (Task 2)
+# ---------------------------------------------------------------------------
+
+def test_typedef_structure_parses_components_and_matrix_dim() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_STRUCTURE PidTelemetry_t "PID telemetry" 0x10
+        /begin STRUCTURE_COMPONENT error T_Float32 0x0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT samples T_I16 0x4
+            MATRIX_DIM 3
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    """
+    db = parse(text)
+    struct = db.struct_types["PidTelemetry_t"]
+    assert struct.size == 0x10
+    assert [c.name for c in struct.components] == ["error", "samples"]
+    assert struct.components[0].type_name == "T_Float32"
+    assert struct.components[0].offset == 0
+    assert struct.components[0].matrix_dim == []
+    assert struct.components[1].offset == 4
+    assert struct.components[1].matrix_dim == [3]
+    assert struct.components[1].array_size == 3
+
+
+# ---------------------------------------------------------------------------
+# Struct-typedef dataclasses (Task 1)
+# ---------------------------------------------------------------------------
+
+def test_struct_typedef_dataclasses_exist_with_defaults() -> None:
+    from xcptool.a2l.types import (
+        A2LDatabase, CharacteristicTypeDef, Instance, InstanceNode,
+        MeasurementTypeDef, StructComponent, StructTypeDef,
+    )
+    comp = StructComponent(name="kp", type_name="T_Float", offset=0)
+    assert comp.array_size == 1
+    comp_arr = StructComponent(name="samples", type_name="T_I16", offset=4, matrix_dim=[3])
+    assert comp_arr.array_size == 3
+
+    struct = StructTypeDef(name="PidTelemetry_t", size=12, components=[comp, comp_arr])
+    assert struct.components == [comp, comp_arr]
+
+    ctd = CharacteristicTypeDef(
+        name="T_Float", description="", char_type="VALUE",
+        record_layout="RL_F32", lower_limit=0.0, upper_limit=1.0)
+    assert ctd.array_size == 1 and ctd.datatype is None
+
+    mtd = MeasurementTypeDef(
+        name="T_I16", description="", datatype="SWORD",
+        lower_limit=-100.0, upper_limit=100.0)
+    assert mtd.array_size == 1
+
+    inst = Instance(name="tel", description="", type_name="PidTelemetry_t", address=0x1000)
+    assert inst.array_size == 1
+
+    node = InstanceNode(name="tel", address=0x1000, leaf_name=None,
+                        is_measurement=False, struct_size=12)
+    assert node.children == []
+
+    db = A2LDatabase()
+    assert db.struct_types == {} and db.characteristic_types == {}
+    assert db.measurement_types == {} and db.instances == {}
+    assert db.instance_trees == {}
+
+
+# ---------------------------------------------------------------------------
+# TYPEDEF_CHARACTERISTIC checks (Task 3)
+# ---------------------------------------------------------------------------
+
+def test_typedef_characteristic_parses_like_characteristic_minus_address() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain leaf type" VALUE RL_F32 0 CM_LINEAR 0.0 10.0
+    /end TYPEDEF_CHARACTERISTIC
+    """
+    db = parse(text)
+    ct = db.characteristic_types["T_Gain"]
+    assert ct.char_type == "VALUE"
+    assert ct.record_layout == "RL_F32"
+    assert ct.compu_method == "CM_LINEAR"
+    assert ct.lower_limit == 0.0 and ct.upper_limit == 10.0
+    assert ct.array_size == 1
+    assert ct.datatype is None  # resolve() (Task 6) mới điền
+
+
+# ---------------------------------------------------------------------------
+# TYPEDEF_MEASUREMENT checks (Task 4)
+# ---------------------------------------------------------------------------
+
+def test_typedef_measurement_parses_matrix_dim() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin TYPEDEF_MEASUREMENT T_Samples "sample leaf type" SWORD CM_NONE 0 0 -100 100
+        MATRIX_DIM 4
+    /end TYPEDEF_MEASUREMENT
+    """
+    db = parse(text)
+    mt = db.measurement_types["T_Samples"]
+    assert mt.datatype == "SWORD"
+    assert mt.lower_limit == -100.0 and mt.upper_limit == 100.0
+    assert mt.matrix_dim == [4]
+    assert mt.array_size == 4
+
+
+# ---------------------------------------------------------------------------
+# INSTANCE checks (Task 5)
+# ---------------------------------------------------------------------------
+
+def test_instance_parses_type_ref_address_and_array() -> None:
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin INSTANCE speedPidTelemetry "PID telemetry instance" PidTelemetry_t 0x90001000
+    /end INSTANCE
+    /begin INSTANCE tempSensors "sensor array" T_Gain 0x90002000
+        MATRIX_DIM 3
+    /end INSTANCE
+    """
+    db = parse(text)
+    inst = db.instances["speedPidTelemetry"]
+    assert inst.type_name == "PidTelemetry_t"
+    assert inst.address == 0x90001000
+    assert inst.array_size == 1
+
+    arr_inst = db.instances["tempSensors"]
+    assert arr_inst.matrix_dim == [3]
+    assert arr_inst.array_size == 3

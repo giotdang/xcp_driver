@@ -50,7 +50,7 @@ class ReplayTransport(Transport):
         self._t0_file = frames[0][0] if frames else 0.0
         self._t0_wall = time.perf_counter()
 
-    def send(self, can_id: int, data: bytes) -> bytes:
+    def send(self, can_id: int, data: bytes, max_len: int | None = None) -> bytes:
         # Không có ai ở đầu kia. Frame vẫn được ghi trace bởi tầng trên.
         return bytes(data)
 

@@ -29,16 +29,18 @@ from qfluentwidgets import (
     isDarkTheme,
 )
 
-from ..session.api import A2LDatabase
+from ..session.api import A2LDatabase, InstanceNode
 
 __all__ = ["CalibrationView", "WORKING_PAGE", "REFERENCE_PAGE"]
 
-WORKING_PAGE = 0
-REFERENCE_PAGE = 1
+REFERENCE_PAGE = 0
+WORKING_PAGE = 1
 
 # UI chỉ phân biệt Working/Reference (DESIGN.md §5) — routeKey của SegmentedWidget
 # ánh xạ trực tiếp tới hai giá trị trang duy nhất mà xcptool set (luôn set cả
 # ECU lẫn XCP cùng lúc, không lộ khái niệm "trang XCP"/"trang ECU" ra UI).
+# REFERENCE (0) = Flash ROM, giá trị mặc định nhà máy; ECU khởi động mặc định ở trang này.
+# WORKING   (1) = RAM shadow, phiên calibration ghi vào đây.
 _ROUTE_WORKING = "working"
 _ROUTE_REFERENCE = "reference"
 _ROUTE_BY_PAGE = {WORKING_PAGE: _ROUTE_WORKING, REFERENCE_PAGE: _ROUTE_REFERENCE}
@@ -174,44 +176,42 @@ def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> 
     return bytes(buf)
 
 
-def _group_by_prefix(names: list[str]) -> list[tuple[str | None, list[str]]]:
-    """Gom nhóm các tên theo struct prefix (dấu '.' hoặc tiền tố '_' nếu có >= 2 biến).
+def _split_into_contiguous_runs(
+    entries: list[tuple[int, bytes, str]], struct_name: str
+) -> list[tuple[int, bytes]]:
+    """Gộp các member đã encode thành các đoạn (run) liền khít tối đa.
 
-    Trả về danh sách (group_name, [full_name1, full_name2, ...]):
-    - Nếu là struct: ("speedPid", ["speedPid_kp", "speedPid_ki", ...])
-    - Nếu là biến đơn/mảng: (None, ["tempCompTable"])
+    Heuristic gom nhóm theo tiền tố tên cũ (đã bỏ) từng gom CHARACTERISTIC
+    thành "STRUCT" thuần theo TÊN, không biết layout C thật — nên không thể
+    giả định các member luôn liền nhau (compiler chèn padding để align, hoặc
+    2 tham số chỉ trùng tiền tố tên chứ
+    không thật sự cùng struct). Ghi đè một buffer to bằng cả nhóm sẽ ghi cả
+    những byte không thuộc CHARACTERISTIC nào (padding) — không an toàn cho
+    ECU thật.
+
+    Thay vào đó: sort theo địa chỉ, hễ address của member kế tiếp KHÔNG khớp
+    đúng điểm kết thúc của đoạn hiện tại thì cắt sang đoạn mới. Kết quả: mỗi
+    đoạn ghi bằng đúng 1 lệnh WRITE, không đoạn nào đụng byte ngoài các
+    CHARACTERISTIC đã khai báo. Struct đóng gói khít (trường hợp thường gặp)
+    → luôn ra đúng 1 đoạn, y hệt hành vi ghi gộp trước đây.
+
+    Ném `ValueError` nếu 2 member chồng lấn địa chỉ (A2L khai sai) — không
+    đoán, không ghi đè âm thầm.
     """
-    prefixes: dict[str, list[str]] = {}
-    for name in names:
-        if "." in name:
-            p = name.split(".", 1)[0]
-            prefixes.setdefault(p, []).append(name)
-        elif "_" in name:
-            p = name.rsplit("_", 1)[0]
-            prefixes.setdefault(p, []).append(name)
-        else:
-            prefixes.setdefault("", []).append(name)
-
-    valid_groups = {p: member_list for p, member_list in prefixes.items() if p and len(member_list) >= 2}
-
-    handled: set[str] = set()
-    result: list[tuple[str | None, list[str]]] = []
-    for name in names:
-        if name in handled:
-            continue
-        found = None
-        for p, members in valid_groups.items():
-            if name in members:
-                found = (p, members)
-                break
-        if found is not None:
-            p, members = found
-            result.append((p, members))
-            handled.update(members)
-        else:
-            result.append((None, [name]))
-            handled.add(name)
-    return result
+    ordered = sorted(entries, key=lambda e: e[0])
+    runs: list[list[Any]] = []  # [addr, bytearray, last_member_name]
+    for addr, val_bytes, name in ordered:
+        if runs:
+            run_addr, run_buf, _ = runs[-1]
+            run_end = run_addr + len(run_buf)
+            if addr == run_end:
+                run_buf.extend(val_bytes)
+                runs[-1][2] = name
+                continue
+            if addr < run_end:
+                raise ValueError(f"Overlapping members near {name} in struct {struct_name}")
+        runs.append([addr, bytearray(val_bytes), name])
+    return [(addr, bytes(buf)) for addr, buf, _ in runs]
 
 
 class CalibrationView(QWidget):
@@ -249,6 +249,9 @@ class CalibrationView(QWidget):
         self._original: dict[str, str] = {}                 # name → giá trị khi vừa đọc
         self._raw_data: dict[str, bytes] = {}               # name → raw bytes đã đọc
         self._dirty: set[str] = set()                       # tên characteristic đang sửa
+        # struct name → các đoạn (run) liền khít còn phải ghi, mỗi đoạn 1 lệnh WRITE
+        # riêng — xem _split_into_contiguous_runs().
+        self._pending_struct_runs: dict[str, list[tuple[int, bytes]]] = {}
         self._suspend_signals = False
         self._last_ecu_page: int | None = None
         self._last_xcp_page: int | None = None
@@ -391,6 +394,15 @@ class CalibrationView(QWidget):
 
     # ── cập nhật dữ liệu (gọi từ MainWindow, UI thread) ─────────────────────
 
+    def loaded_characteristic_names(self) -> list[str]:
+        """Tên các CHARACTERISTIC đang thực sự có node trong tree.
+
+        Loại trừ key STRUCT-group cha (tên nhóm tổng hợp, không phải tên A2L
+        thật) — chỉ giữ những tên tồn tại trong `self._db.characteristics`,
+        tức đã qua parser hợp lệ VÀ đã được `set_database()` add vào tree.
+        """
+        return [name for name in self._char_items if name in self._db.characteristics]
+
     def set_database(self, db: A2LDatabase) -> None:
         """Điền tree từ A2LDatabase mới nạp. Gom nhóm Struct và phân rã Array."""
         self._db = db
@@ -401,46 +413,21 @@ class CalibrationView(QWidget):
         self._suspend_signals = True
         try:
             self.tree.clear()
-            groups = _group_by_prefix(sorted(db.characteristics.keys()))
-            for group_name, members in groups:
-                if group_name is not None and len(members) >= 2:
-                    # ── STRUCT / GROUP ──────────────────────────────────────
-                    chars = [db.characteristics[m] for m in members]
-                    chars.sort(key=lambda c: c.address)
-                    min_addr = chars[0].address
-                    total_size = sum(c.byte_size for c in chars)
-
-                    parent = QTreeWidgetItem()
-                    parent.setData(COL_NAME, Qt.UserRole, group_name)
-                    parent.setText(COL_NAME, group_name)
-                    parent.setText(COL_TYPE, f"STRUCT ({len(members)})")
-                    parent.setText(COL_ADDR, f"0x{min_addr:08X}")
-                    parent.setText(COL_SIZE, str(total_size))
-                    parent.setText(COL_VALUE, "—")
-                    parent.setText(COL_RANGE, "")
-                    parent.setText(COL_DESC, f"Group of {len(members)} parameters")
-                    parent.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                    self.tree.addTopLevelItem(parent)
-                    
-                    self._char_items[group_name] = parent
-
-                    for c in chars:
-                        disp_name = c.name[len(group_name):].lstrip("._") or c.name
-                        child = self._make_item(c.name, c, display_name=disp_name)
-                        parent.addChild(child)
-                        self._char_items[c.name] = child
-                        if c.array_size > 1:
-                            self._build_array_children(child, c)
-                    parent.setExpanded(True)
-                else:
-                    # ── SCALAR hoặc ARRAY ĐỘC LẬP ───────────────────────────
-                    name = members[0]
-                    char = db.characteristics[name]
-                    item = self._make_item(name, char)
+            handled: set[str] = set()
+            for inst_name, node in db.instance_trees.items():
+                item = self._build_tree_item_from_node(node)
+                if item is not None:
                     self.tree.addTopLevelItem(item)
-                    self._char_items[name] = item
-                    if char.array_size > 1:
-                        self._build_array_children(item, char)
+                handled |= self._leaf_names(node)
+
+            for name, char in sorted(db.characteristics.items()):
+                if name in handled:
+                    continue
+                item = self._make_item(name, char)
+                self.tree.addTopLevelItem(item)
+                self._char_items[name] = item
+                if char.array_size > 1:
+                    self._build_array_children(item, char)
         finally:
             self._suspend_signals = False
 
@@ -499,7 +486,20 @@ class CalibrationView(QWidget):
         )
 
     def on_write_done(self, name: str) -> None:
-        """Clear dirty indicator after successful write."""
+        """Clear dirty indicator after successful write.
+
+        Struct bị tách nhiều đoạn (xem `_split_into_contiguous_runs`) gọi lại
+        hàm này sau MỖI đoạn ghi thành công — còn đoạn chờ thì bắn tiếp đoạn
+        kế tiếp và return ngay, CHƯA dọn dirty hay tiến hàng đợi ngoài; chỉ khi
+        đoạn cuối cùng xong mới chạy phần dọn dẹp bình thường bên dưới.
+        """
+        pending = self._pending_struct_runs.get(name)
+        if pending:
+            addr, buf = pending.pop(0)
+            self._write_cb(name, addr, buf)
+            return
+        self._pending_struct_runs.pop(name, None)
+
         item = self._char_items.get(name)
         if item is None:
             return
@@ -513,26 +513,59 @@ class CalibrationView(QWidget):
             self._suspend_signals = False
             
         if item.childCount() > 0:
-            if item.text(COL_TYPE).startswith("STRUCT"):
-                for i in range(item.childCount()):
-                    child = item.child(i)
-                    child_name = child.data(COL_NAME, Qt.UserRole)
-                    if child.childCount() > 0:
-                        child_vals = [child.child(j).text(COL_VALUE) for j in range(child.childCount())]
-                        self._original[child_name] = ", ".join(child_vals)
+            if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
+                # Đệ quy hết mọi độ sâu qua _leaf_write_items (giống _write_parent) —
+                # struct lồng nhiều cấp thì lá thật (CHARACTERISTIC) có thể nằm dưới
+                # các node trung gian (VD "outer.ctl"), không phải con trực tiếp của
+                # `item`. Chỉ duyệt con trực tiếp bỏ sót lá sâu: dirty/_original của
+                # nó không bao giờ được dọn, và node trung gian (đã bị _on_item_changed
+                # tô cam ở COL_NAME khi con nó dirty) kẹt cam mãi dù đã ghi xong.
+                for leaf_item, c_name, _c_def in self._leaf_write_items(item):
+                    if leaf_item.childCount() > 0:
+                        leaf_vals = [
+                            leaf_item.child(j).text(COL_VALUE)
+                            for j in range(leaf_item.childCount())
+                        ]
+                        self._original[c_name] = ", ".join(leaf_vals)
                     else:
-                        self._original[child_name] = child.text(COL_VALUE)
-                    self._dirty.discard(child_name)
+                        self._original[c_name] = leaf_item.text(COL_VALUE)
+                    self._dirty.discard(c_name)
+                    leaf_item.setForeground(COL_VALUE, self.tree.palette().text())
+                    # Dọn cam ở mọi node trung gian giữa lá và `item` — vòng lặp
+                    # ở trên (dòng ~508-511) chỉ đụng tới con TRỰC TIẾP của `item`.
+                    ancestor = leaf_item.parent()
+                    while ancestor is not None and ancestor is not item:
+                        ancestor.setForeground(COL_NAME, self.tree.palette().text())
+                        ancestor = ancestor.parent()
             else:
                 child_vals = [item.child(i).text(COL_VALUE) for i in range(item.childCount())]
                 self._original[name] = ", ".join(child_vals)
         else:
             self._original[name] = item.text(COL_VALUE)
-            
+
         self._dirty.discard(name)
+
+        # `name` có thể là MỘT member ghi riêng lẻ (chọn dòng con rồi "Write
+        # Selected", không đi qua nhánh STRUCT của _write_parent) — khi đó
+        # dòng cha vẫn đang tô cam từ lúc _on_item_changed() bật dirty, và
+        # phải tự đi ngược lên tính lại giống hệt logic ở _on_item_changed(),
+        # nếu không dòng cha sẽ kẹt màu cam mãi dù mọi con đã sạch.
+        struct_parent = item.parent()
+        if struct_parent is not None:
+            any_dirty = False
+            for i in range(struct_parent.childCount()):
+                sibling_name = struct_parent.child(i).data(COL_NAME, Qt.UserRole)
+                if isinstance(sibling_name, str) and sibling_name in self._dirty:
+                    any_dirty = True
+                    break
+            dirty_color = QColor("#FFB86C") if isDarkTheme() else QColor("#B35C00")
+            struct_parent.setForeground(
+                COL_NAME, dirty_color if any_dirty else self.tree.palette().text()
+            )
+
         self._update_write_btn()
         self.status_label.setText(f"Successfully wrote '{name}' to ECU.")
-        
+
         if hasattr(self, '_write_queue') and self._write_queue:
             self._process_write_queue()
 
@@ -628,7 +661,10 @@ class CalibrationView(QWidget):
             item = self._char_items.get(char_name)
             if not item: continue
             
-            if item.parent() is not None and item.parent().text(COL_TYPE).startswith("STRUCT"):
+            if item.parent() is not None and (
+                item.parent().text(COL_TYPE).startswith("STRUCT")
+                or item.parent().text(COL_TYPE).startswith("ARRAY[")
+            ):
                 items_to_write.add(item.parent())
             else:
                 items_to_write.add(item)
@@ -644,44 +680,69 @@ class CalibrationView(QWidget):
         char_name = item.data(COL_NAME, Qt.UserRole)
         self._write_parent(char_name, item)
 
+    def _leaf_write_items(
+        self, item: QTreeWidgetItem
+    ) -> list[tuple[QTreeWidgetItem, str, Any]]:
+        """Trả về mọi lá CHARACTERISTIC bên dưới `item`, đệ quy hết mọi độ sâu.
+
+        Bug thật (final review): nhánh STRUCT/ARRAY của `_write_parent` từng
+        chỉ đọc CON TRỰC TIẾP — một con là struct/array lồng khác
+        (STRUCTURE_COMPONENT trỏ tới TYPEDEF_STRUCTURE/mảng khác) có
+        Qt.UserRole là tên node hierarchical (VD "outer.ctl"), không phải key
+        trong self._db.characteristics, nên bị `if not c_def: continue` bỏ
+        qua ÊM — ghi thiếu cả nhánh con mà vẫn báo thành công (vi phạm
+        DESIGN.md §7: ghi struct phải trọn 1 khối, không được nửa cũ nửa
+        mới). Ở đây: con không khớp key nào là node cha trung gian — đệ quy
+        tiếp vào CON CỦA NÓ thay vì bỏ qua, tới khi gặp lá thật."""
+        result: list[tuple[QTreeWidgetItem, str, Any]] = []
+        for i in range(item.childCount()):
+            child = item.child(i)
+            c_name = child.data(COL_NAME, Qt.UserRole)
+            c_def = self._db.characteristics.get(c_name) if isinstance(c_name, str) else None
+            if c_def is not None:
+                result.append((child, c_name, c_def))
+            else:
+                result.extend(self._leaf_write_items(child))
+        return result
+
     def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
-        if item.text(COL_TYPE).startswith("STRUCT"):
+        if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
+            leaves = self._leaf_write_items(item)
             try:
-                min_addr = int(item.text(COL_ADDR), 16)
-                total_size = int(item.text(COL_SIZE))
-                buf = bytearray(total_size)
-                
-                for i in range(item.childCount()):
-                    child = item.child(i)
-                    c_name = child.data(COL_NAME, Qt.UserRole)
-                    c_def = self._db.characteristics.get(c_name)
-                    if not c_def: continue
-                    
+                entries: list[tuple[int, bytes, str]] = []
+                for child, c_name, c_def in leaves:
                     if c_def.array_size > 1 and child.childCount() > 0:
                         children_values = [child.child(j).text(COL_VALUE) for j in range(child.childCount())]
                         val_bytes = encode_value(",".join(children_values), c_def.datatype, self._byte_order, c_def.array_size)
                     else:
                         val_bytes = encode_value(child.text(COL_VALUE).strip(), c_def.datatype, self._byte_order, c_def.array_size)
-                        
-                    offset = c_def.address - min_addr
-                    if offset + len(val_bytes) > total_size:
-                        raise ValueError(f"Size overflow for {c_name} in struct {char_name}")
-                    buf[offset:offset+len(val_bytes)] = val_bytes
-                    
-                self._write_cb(char_name, min_addr, bytes(buf))
-                
-                # Cleanup dirty state
-                for i in range(item.childCount()):
-                    c_name = item.child(i).data(COL_NAME, Qt.UserRole)
-                    self._dirty.discard(c_name)
-                    item.child(i).setForeground(COL_VALUE, QBrush())
-                self._update_write_btn()
-                if not self._dirty:
-                    self.write_all_btn.setEnabled(False)
+                    entries.append((c_def.address, val_bytes, c_name))
+
+                runs = _split_into_contiguous_runs(entries, char_name)
             except ValueError as e:
                 self.status_label.setText(f"Invalid value in STRUCT: {e}")
                 if hasattr(self, '_write_queue') and self._write_queue:
                     self._process_write_queue()
+                return
+            if not runs:
+                return
+
+            # Mỗi đoạn liền khít là 1 lệnh WRITE riêng — struct đóng gói khít
+            # (không gap) luôn ra đúng 1 đoạn, y hệt hành vi ghi gộp trước đây.
+            # Các đoạn còn lại (nếu có) được bắn tiếp tuần tự từ on_write_done(),
+            # theo đúng đoạn 1 ghi xong mới tới đoạn kế — Session không reentrant.
+            first_addr, first_bytes = runs[0]
+            self._pending_struct_runs[char_name] = runs[1:]
+            self._write_cb(char_name, first_addr, first_bytes)
+
+            # Cleanup dirty state — đệ quy hết mọi độ sâu (leaves đã tính ở
+            # trên), không chỉ con trực tiếp, khớp đúng với entries vừa ghi.
+            for leaf_item, c_name, _c_def in leaves:
+                self._dirty.discard(c_name)
+                leaf_item.setForeground(COL_VALUE, QBrush())
+            self._update_write_btn()
+            if not self._dirty:
+                self.write_all_btn.setEnabled(False)
             return
 
         char_def = self._db.characteristics.get(char_name)
@@ -787,6 +848,71 @@ class CalibrationView(QWidget):
             
         return data
 
+    def _leaf_names(self, node: "InstanceNode") -> set[str]:
+        """Tên các lá CHARACTERISTIC (is_measurement=False) — dùng để loại
+        các CHARACTERISTIC đã hiển thị qua INSTANCE khỏi vòng lặp phẳng bên
+        dưới (`set_database`).
+
+        Bug thật (final review): trước đây hàm này trả về MỌI leaf_name bất
+        kể `is_measurement`. Guard chống trùng tên trong a2l/database.py chỉ
+        soát trùng tên TRONG CÙNG dict (`db.characteristics` hoặc
+        `db.measurements`) — một CHARACTERISTIC ở đây có thể share tên với
+        MỘT MEASUREMENT resolve-từ-INSTANCE mà không hề bị chặn khi parse.
+        Nếu không lọc theo `is_measurement`, tên đó lọt vào `handled` chỉ vì
+        trùng chữ với 1 MEASUREMENT, và CHARACTERISTIC phẳng cùng tên biến
+        mất khỏi CalibrationView dù hoàn toàn hợp lệ."""
+        if node.leaf_name is not None:
+            return set() if node.is_measurement else {node.leaf_name}
+        names: set[str] = set()
+        for child in node.children:
+            names |= self._leaf_names(child)
+        return names
+
+    def _build_tree_item_from_node(self, node: "InstanceNode") -> QTreeWidgetItem | None:
+        """Dựng QTreeWidgetItem từ InstanceNode đã resolve (a2l/database.py) —
+        KHÔNG tự suy địa chỉ hay tên, chỉ đọc lại những gì resolve() đã
+        quyết định (xem spec §10).
+
+        CalibrationView chỉ hiển thị CHARACTERISTIC — một lá MEASUREMENT
+        (`node.is_measurement`) không thuộc phạm vi view này (sẽ do
+        MeasurementView hiển thị — Task 13), không phải dữ liệu sai, nên bỏ
+        qua êm (trả `None`), không log cảnh báo. Một node STRUCT/ARRAY cha mà
+        MỌI con đều bị lọc bỏ (vd. struct toàn MEASUREMENT) cũng trả `None` —
+        không hiện node rỗng."""
+        if node.leaf_name is not None:
+            if node.is_measurement:
+                return None
+            char = self._db.characteristics[node.leaf_name]
+            item = self._make_item(node.leaf_name, char,
+                                   display_name=node.name.rsplit(".", 1)[-1])
+            self._char_items[node.leaf_name] = item
+            if char.array_size > 1:
+                self._build_array_children(item, char)
+            return item
+
+        child_items = [c for c in (
+            self._build_tree_item_from_node(child_node) for child_node in node.children
+        ) if c is not None]
+        if not child_items:
+            return None
+
+        item = QTreeWidgetItem()
+        item.setData(COL_NAME, Qt.UserRole, node.name)
+        item.setText(COL_NAME, node.name.rsplit(".", 1)[-1] if "." in node.name else node.name)
+        if node.struct_size is not None:
+            item.setText(COL_TYPE, f"STRUCT ({len(child_items)})")
+            item.setText(COL_SIZE, str(node.struct_size))
+        else:
+            item.setText(COL_TYPE, f"ARRAY[{len(child_items)}]")
+        item.setText(COL_ADDR, f"0x{node.address:08X}")
+        item.setText(COL_VALUE, "—")
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        self._char_items[node.name] = item
+        for child_item in child_items:
+            item.addChild(child_item)
+        item.setExpanded(True)
+        return item
+
     def _make_item(self, name: str, char: Any, display_name: str | None = None) -> QTreeWidgetItem:
         item = QTreeWidgetItem()
         item.setData(COL_NAME, Qt.UserRole, name)
@@ -827,8 +953,8 @@ class CalibrationView(QWidget):
         """Cho phép sửa inline khi double-click đúng cột Giá trị."""
         if column != COL_VALUE:
             return
-        if item.text(COL_TYPE).startswith("STRUCT"):
-            return   # Không sửa trực tiếp dòng cha STRUCT
+        if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
+            return   # Không sửa trực tiếp dòng cha STRUCT/ARRAY[
         item.setFlags(item.flags() | Qt.ItemIsEditable)
         self.tree.editItem(item, COL_VALUE)
 
@@ -943,13 +1069,16 @@ class CalibrationView(QWidget):
             return
             
         item = self._char_items.get(char_name)
-        if item and item.text(COL_TYPE).startswith("STRUCT"):
-            enable = False
-            for i in range(item.childCount()):
-                child_name = item.child(i).data(COL_NAME, Qt.UserRole)
-                if isinstance(child_name, str) and child_name in self._dirty:
-                    enable = True
-                    break
+        if item and (
+            item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY[")
+        ):
+            # Đệ quy hết mọi độ sâu (giống _write_parent/_leaf_write_items) —
+            # struct lồng nhiều cấp thì chỉ 1 lá SÂU dirty (không phải con trực
+            # tiếp) vẫn phải bật nút, vì _write_parent sẽ ghi đúng lá đó.
+            enable = any(
+                c_name in self._dirty
+                for _leaf_item, c_name, _c_def in self._leaf_write_items(item)
+            )
             self.write_btn.setEnabled(enable)
         else:
             self.write_btn.setEnabled(char_name in self._dirty)

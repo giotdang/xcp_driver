@@ -12,7 +12,10 @@ from dataclasses import dataclass, field
 
 from ..session.api import BusConfig
 
-__all__ = ["CanFrame", "Transport", "BackendSpec", "CAN_FD_DLC_SIZES", "round_to_can_fd_dlc"]
+__all__ = [
+    "CanFrame", "Transport", "BackendSpec", "CAN_FD_DLC_SIZES",
+    "round_to_can_fd_dlc", "floor_to_can_fd_dlc",
+]
 
 CAN_FD_DLC_SIZES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64)
 
@@ -25,6 +28,22 @@ def round_to_can_fd_dlc(length: int) -> int:
         if sz >= length:
             return sz
     return 64
+
+
+def floor_to_can_fd_dlc(length: int) -> int:
+    """Làm tròn XUỐNG nấc DLC hợp lệ gần nhất, không vượt quá `length`.
+
+    Dùng khi đệm frame bị giới hạn trần (MAX_CTO của ECU) — làm tròn lên như
+    `round_to_can_fd_dlc` sẽ vượt trần, ECU chỉ cấp buffer đúng bằng trần đó.
+    """
+    if length <= 0:
+        return 0
+    best = 0
+    for sz in CAN_FD_DLC_SIZES:
+        if sz > length:
+            break
+        best = sz
+    return best
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +71,12 @@ class Transport(abc.ABC):
     """
 
     @abc.abstractmethod
-    def send(self, can_id: int, data: bytes) -> bytes:
+    def send(self, can_id: int, data: bytes, max_len: int | None = None) -> bytes:
         """Đẩy một frame lên bus, trả về đúng chuỗi byte đã lên dây (đã đệm).
+
+        `max_len`: trần đệm khi `pad_dlc` bật (thường là MAX_CTO mà ECU khai
+        lúc CONNECT). `None` = không biết trần, đệm hết khả năng vật lý của
+        frame như trước (dùng cho lệnh gửi trước khi CONNECT xong).
 
         Raises: BusError, DeviceNotFoundError
         """

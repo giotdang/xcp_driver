@@ -227,6 +227,71 @@ def test_custom_bit_timing_disables_both_arbitration_and_data_bitrate(qtbot, hos
     assert not dlg.data_bitrate_combo.isEnabled()
 
 
+def _dialog_with_selected_device(host, initial=None) -> DeviceDialog:
+    dlg = DeviceDialog(host, initial=initial)
+    dlg.set_devices([DeviceInfo(backend="virtual", channel="xcptool",
+                                display_name="Virtual", available=True)])
+    return dlg
+
+
+def test_solver_fills_registers_from_sample_point(qtbot, host) -> None:
+    """solve_cb bật → build_config() giải brp/tseg từ sample point.
+
+    `custom_bit_timing` chỉ đánh dấu override thủ công qua Advanced Timing —
+    đường solver để nó là False và dùng `solve_timing=True` riêng, để mở lại
+    dialog không hiện nhầm trạng thái "manual override" (bitrate combo bị khoá).
+    `pycan.py` áp `timing=` khi `custom_bit_timing OR solve_timing`.
+    """
+    from xcptool.session.bit_timing import solve as solve_bt
+
+    dlg = _dialog_with_selected_device(host)
+    dlg.solve_cb.setChecked(True)
+    dlg.clock_spin.setValue(80)
+    dlg.bitrate_combo.setCurrentIndex(dlg.bitrate_combo.findData(500_000))
+    dlg.sp_spin.setValue(87.5)
+
+    cfg = dlg.build_config()
+    assert cfg is not None
+    assert cfg.custom_bit_timing is False
+    assert cfg.solve_timing is True
+    ref = solve_bt(80_000_000, 500_000, 87.5).nominal
+    assert (cfg.brp, cfg.tseg1, cfg.tseg2, cfg.sjw) == (ref.brp, ref.tseg1, ref.tseg2, ref.sjw)
+    assert cfg.solve_timing is True
+    assert cfg.sample_point == 87.5
+
+
+def test_solver_error_disables_connect_and_blocks_build(qtbot, host) -> None:
+    dlg = _dialog_with_selected_device(host)
+    dlg.solve_cb.setChecked(True)
+    dlg.clock_spin.setValue(3)          # 3 MHz can't clock 500 kbps → no valid segments
+    dlg.bitrate_combo.setCurrentIndex(dlg.bitrate_combo.findData(500_000))
+
+    assert not dlg.yesButton.isEnabled()
+    assert dlg.build_config() is None
+
+
+def test_manual_advanced_timing_beats_solver(qtbot, host) -> None:
+    cfg_in = BusConfig(backend="virtual", channel="xcptool", bitrate=500_000,
+                       custom_bit_timing=True, f_clock=40_000_000,
+                       brp=4, tseg1=7, tseg2=2, sjw=2)
+    dlg = _dialog_with_selected_device(host, initial=cfg_in)
+    assert dlg._custom_bit_timing is True
+
+    cfg = dlg.build_config()
+    assert cfg is not None
+    assert (cfg.f_clock, cfg.brp, cfg.tseg1, cfg.tseg2, cfg.sjw) == (40_000_000, 4, 7, 2, 2)
+
+
+def test_solver_off_passes_raw_bitrate(qtbot, host) -> None:
+    dlg = _dialog_with_selected_device(host)
+    dlg.solve_cb.setChecked(False)
+
+    cfg = dlg.build_config()
+    assert cfg is not None
+    assert cfg.custom_bit_timing is False
+    assert cfg.solve_timing is False
+
+
 def test_device_dialog_displays_detailed_channel_name(qtbot, host) -> None:
     """Kiểm tra DeviceDialog hiển thị tên chi tiết của thiết bị nếu có."""
     devices = [

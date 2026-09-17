@@ -281,3 +281,29 @@ Layout serialize qua `QSettings("xcptool", "xcptool")` → nhớ giữa phiên.
 | Vẽ theo từng frame | Gom vào buffer, repaint theo QTimer 40 ms | ✅ `main_window._poll_trace()` |
 | Địa chỉ A2L lệch sau rebuild | `tools/sync_a2l_addresses.py` chạy trong build script | ⚠️ Manual — chạy khi firmware rebuild |
 | Ghi từng field của struct rời | Ghi trọn khối một lần — ECU không được đi qua state nửa cũ | ✅ `session/api.py` docstring ép luật |
+| "STRUCT" trong UI suy đoán từ tên tham số, không đọc từ A2L | `_group_by_prefix` (2 bản độc lập, `calibration_view.py`/`measurement_view.py`) gộp theo tiền tố tên — có thể gộp sai (2 tham số trùng tên tình cờ) hoặc bỏ sót padding thật giữa các member | ✅ Gốc rễ đã bị loại bỏ hẳn: `_group_by_prefix` đã bị xoá (cả 2 bản) — struct/array giờ dựng từ `TYPEDEF_STRUCTURE`/`INSTANCE` đọc thật từ A2L, không còn đoán theo tên. Chi tiết xem §8 (đã triển khai) |
+
+---
+
+## 8. Struct thật từ A2L (TYPEDEF_STRUCTURE/INSTANCE) — đã thay heuristic đặt tên
+
+> **Trạng thái: kiến trúc chính thức — đã triển khai (2026-09-16).**
+> Spec đầy đủ: [`docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md`](docs/superpowers/specs/2026-09-11-a2l-struct-typedef-design.md)
+
+`_group_by_prefix` (§7, dòng cuối bảng bẫy) không đọc dữ liệu thật từ A2L —
+nó chỉ đoán "đây là 1 struct" vì 2 CHARACTERISTIC/MEASUREMENT chia sẻ tiền tố
+tên. A2L thật của ECU (dùng cho phần cứng thật) khai struct đúng chuẩn ASAP2
+qua `TYPEDEF_STRUCTURE`/`STRUCTURE_COMPONENT`/`INSTANCE` — `a2l/parser.py`
+giờ đọc đầy đủ các block này.
+
+**Đã áp dụng:** dữ liệu struct thật được đọc từ A2L, resolve đệ quy (kể cả
+struct lồng struct, mảng struct) thành địa chỉ tuyệt đối thật cho từng
+member, rồi dùng dữ liệu đó dựng cây UI — **`_group_by_prefix` đã bị xoá
+hẳn, không còn fallback đoán theo tên cho bất kỳ file nào.** File A2L không
+có `INSTANCE` (kiểu tên phẳng cũ, ví dụ `examples/xcp_daq_example.a2l`)
+hiện phẳng, không gộp nhóm — đây là đánh đổi được chấp nhận có chủ đích,
+không phải thiếu sót.
+
+Chi tiết đầy đủ (ngữ pháp ASAP2, thuật toán resolve, data model, tích hợp
+UI, test plan) nằm trong spec ở trên — không lặp lại ở đây để tránh 2 nguồn
+sự thật lệch nhau.

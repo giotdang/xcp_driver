@@ -26,18 +26,22 @@ from qfluentwidgets import (
     CaptionLabel,
     CheckBox,
     ComboBox,
+    DoubleSpinBox,
     IndeterminateProgressRing,
     LineEdit,
     ListWidget,
     MessageBoxBase,
     PrimaryPushButton,
     PushButton,
+    SingleDirectionScrollArea,
     SpinBox,
     StrongBodyLabel,
     SubtitleLabel,
 )
 
 from ..session.api import BusConfig, DeviceInfo
+from ..session.bit_timing import BitTimingError
+from ..session.bit_timing import solve as solve_bit_timing
 
 __all__ = ["DeviceDialog"]
 
@@ -72,7 +76,8 @@ class DeviceDialog(MessageBoxBase):
         self.titleLabel = SubtitleLabel("Select CAN Interface", self)
 
         self.list = ListWidget(self)
-        self.list.setMinimumHeight(200)
+        self.list.setMinimumHeight(76)
+        self.list.setMaximumHeight(132)
         self.list.currentRowChanged.connect(self._on_row_changed)
 
         self.spinner = IndeterminateProgressRing(self)
@@ -109,10 +114,11 @@ class DeviceDialog(MessageBoxBase):
 
         # ── Flags ────────────────────────────────────────────────────────────
         self.ext_cb = CheckBox("29-bit CAN ID", self)
-        self.pad_cb = CheckBox("Pad short frames to 8 bytes", self)
+        self.pad_cb = CheckBox("Enable padding", self)
         self.pad_cb.setToolTip(
-            "Pad all CTO frames to at least 8 bytes.\n"
-            "Many AUTOSAR XCP stacks strictly require this even on CAN FD."
+            "Pad all CTO frames to at least: \n"
+            "- 8 bytes (Classical CAN).\n"
+            "- 64 bytes (CAN FD)."
         )
         self.pad_cb.setChecked(True)
 
@@ -140,39 +146,128 @@ class DeviceDialog(MessageBoxBase):
         self._fd_label = BodyLabel("Data Bitrate:", self)
         self._fd_label.setEnabled(False)
 
-        grid = QGridLayout()
-        # Row 0
-        grid.addWidget(BodyLabel("Arbitration Bitrate:", self), 0, 0)
-        grid.addWidget(self.bitrate_combo, 0, 1)
-        grid.addWidget(BodyLabel("CRO (host→ECU):", self), 0, 2)
-        grid.addWidget(self.cro_edit, 0, 3)
-        grid.addWidget(BodyLabel("DTO (ECU→host):", self), 0, 4)
-        grid.addWidget(self.dto_edit, 0, 5)
+        # ── Sample-point timing solver ───────────────────────────────────────
+        self.solve_cb = CheckBox("Compute timing from sample point", self)
+        self.solve_cb.setChecked(True)
+        self.solve_cb.setToolTip(
+            "Derive BRP/TSEG1/TSEG2/SJW from the target bitrate and sample "
+            "point so the bus runs at exactly the expected rate.\n"
+            "Uncheck to pass the raw bitrate to the interface instead."
+        )
 
-        # Row 1
-        grid.addWidget(self._fd_label, 1, 0)
-        grid.addWidget(self.data_bitrate_combo, 1, 1)
-        grid.addWidget(BodyLabel("Response Timeout T1:", self), 1, 2)
-        grid.addWidget(self.t1_spin, 1, 3)
-        grid.addWidget(self.ext_cb, 1, 4, 1, 2)
-        
-        # Row 2
-        self.adv_timing_btn = PushButton("Advanced Timing...", self)
+        self.clock_spin = SpinBox(self)
+        self.clock_spin.setRange(1, 1000)
+        self.clock_spin.setValue(80)
+        self.clock_spin.setSuffix(" MHz")
+
+        self.sp_spin = DoubleSpinBox(self)
+        self.sp_spin.setRange(50.0, 90.0)
+        self.sp_spin.setSingleStep(0.5)
+        self.sp_spin.setDecimals(1)
+        self.sp_spin.setValue(87.5)
+        self.sp_spin.setSuffix(" %")
+
+        self._dsp_label = BodyLabel("Data Sample Pt:", self)
+        self.dsp_spin = DoubleSpinBox(self)
+        self.dsp_spin.setRange(50.0, 90.0)
+        self.dsp_spin.setSingleStep(0.5)
+        self.dsp_spin.setDecimals(1)
+        self.dsp_spin.setValue(75.0)
+        self.dsp_spin.setSuffix(" %")
+
+        self.timing_preview = CaptionLabel("", self)
+        self.timing_preview.setWordWrap(True)
+
+        self.adv_timing_btn = PushButton("Advanced Timing…", self)
         self.adv_timing_btn.clicked.connect(self._on_adv_timing)
-        self.adv_timing_btn.setToolTip("Configure BRP, TSEG1, TSEG2, SJW (overrides Bitrate)")
-        grid.addWidget(self.adv_timing_btn, 2, 1)
-        grid.addWidget(self.fd_cb, 2, 2, 1, 2)
-        grid.addWidget(self.pad_cb, 2, 4, 1, 2)
+        self.adv_timing_btn.setToolTip("Set BRP, TSEG1, TSEG2, SJW by hand (overrides the solver)")
 
+        # Một chiều cao chung cho mọi ô nhập — nếu không, layout thiếu chỗ sẽ bóp
+        # combo box xuống vài pixel và chúng đè lên hàng trên.
+        for w in (self.bitrate_combo, self.data_bitrate_combo, self.cro_edit,
+                  self.dto_edit, self.t1_spin, self.clock_spin, self.sp_spin,
+                  self.dsp_spin):
+            w.setFixedHeight(33)
+
+        def _pair(grid, r, c, text, field):
+            grid.addWidget(BodyLabel(text, self), r, c)
+            grid.addWidget(field, r, c + 1)
+
+        # ── Bus parameters — grid 4 cột: label / field / label / field ───────
+        bus_grid = QGridLayout()
+        bus_grid.setHorizontalSpacing(12)
+        bus_grid.setVerticalSpacing(8)
+        bus_grid.setColumnMinimumWidth(0, 150)
+        bus_grid.setColumnMinimumWidth(2, 130)
+        bus_grid.setColumnStretch(1, 1)
+        bus_grid.setColumnStretch(3, 1)
+        _pair(bus_grid, 0, 0, "Arbitration Bitrate:", self.bitrate_combo)
+        _pair(bus_grid, 0, 2, "CRO (host→ECU):", self.cro_edit)
+        bus_grid.addWidget(self._fd_label, 1, 0)
+        bus_grid.addWidget(self.data_bitrate_combo, 1, 1)
+        _pair(bus_grid, 1, 2, "DTO (ECU→host):", self.dto_edit)
+        _pair(bus_grid, 2, 0, "Response Timeout T1:", self.t1_spin)
+        bus_grid.addWidget(self.ext_cb, 2, 2, 1, 2)
+        bus_grid.addWidget(self.fd_cb, 3, 0, 1, 2)
+        bus_grid.addWidget(self.pad_cb, 3, 2, 1, 2)
+
+        self.cro_edit.setToolTip("Command CAN ID (host → ECU).")
+        self.dto_edit.setToolTip(
+            "Response CAN ID (ECU → host). Often the same ID carries responses, "
+            "events and DAQ data — the tool classifies frames by byte 0.")
+
+        # ── Bit timing — header row + one row of three field pairs + preview ─
+        timing_hdr = QHBoxLayout()
+        timing_hdr.addWidget(self.solve_cb)
+        timing_hdr.addStretch(1)
+        timing_hdr.addWidget(self.adv_timing_btn)
+
+        timing_grid = QGridLayout()
+        timing_grid.setHorizontalSpacing(12)
+        for c in (1, 3, 5):
+            timing_grid.setColumnStretch(c, 1)
+        _pair(timing_grid, 0, 0, "Clock:", self.clock_spin)
+        _pair(timing_grid, 0, 2, "Sample Point:", self.sp_spin)
+        _pair(timing_grid, 0, 4, "Data Sample Pt:", self.dsp_spin)
+
+        self.timing_preview.setMinimumHeight(34)
+
+        for w in (self.solve_cb, self.sp_spin, self.dsp_spin, self.clock_spin):
+            sig = w.stateChanged if w is self.solve_cb else w.valueChanged
+            sig.connect(self._on_timing_inputs_changed)
+        self.bitrate_combo.currentIndexChanged.connect(self._on_timing_inputs_changed)
+        self.data_bitrate_combo.currentIndexChanged.connect(self._on_timing_inputs_changed)
+
+        # Cả khối tham số cuộn được → cửa sổ thấp thì cuộn chứ không đè lên nhau.
+        form_host = QWidget(self)
+        form_col = QVBoxLayout(form_host)
+        form_col.setContentsMargins(0, 0, 10, 0)
+        form_col.setSpacing(6)
+        form_col.addWidget(StrongBodyLabel("Bus Parameters", self))
+        form_col.addLayout(bus_grid)
+        form_col.addSpacing(6)
+        form_col.addWidget(StrongBodyLabel("Bit Timing", self))
+        form_col.addLayout(timing_hdr)
+        form_col.addLayout(timing_grid)
+        form_col.addWidget(self.timing_preview)
+        form_col.addStretch(1)
+
+        self.form_scroll = SingleDirectionScrollArea(self, orient=Qt.Vertical)
+        self.form_scroll.setWidget(form_host)
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.enableTransparentBackground()
+        self.form_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Cao bằng form ở cửa sổ bình thường (hiện trọn, không thanh cuộn);
+        # cửa sổ quá thấp thì QScrollArea tự hiện thanh cuộn thay vì cắt cụt.
+        self.form_scroll.setMinimumHeight(max(280, min(form_host.sizeHint().height(), 430)))
+
+        self.viewLayout.setSpacing(8)
         self.viewLayout.addWidget(self.titleLabel)
         self.viewLayout.addLayout(top_row)
         self.viewLayout.addWidget(self.list)
         self.viewLayout.addWidget(self.hint_label)
-        self.viewLayout.addWidget(StrongBodyLabel("Bus Parameters", self))
-        self.viewLayout.addLayout(grid)
-        self.viewLayout.addWidget(CaptionLabel(
-            "CRO and DTO typically share a single CAN ID for responses and DAQ data — "
-            "the tool classifies frames automatically based on byte 0.", self))
+        self.viewLayout.addWidget(self.form_scroll, 1)
 
         self.yesButton.setText("Connect")
         self.cancelButton.setText("Close")
@@ -182,13 +277,17 @@ class DeviceDialog(MessageBoxBase):
         self._custom_bit_timing = False
         self._f_clock = 80_000_000
         self._brp = 1
-        self._tseg1 = 14
-        self._tseg2 = 2
-        self._sjw = 1
+        self._tseg1 = 119
+        self._tseg2 = 40
+        self._sjw = 40
         self._dbrp = 1
-        self._dtseg1 = 14
-        self._dtseg2 = 2
-        self._dsjw = 1
+        self._dtseg1 = 29
+        self._dtseg2 = 10
+        self._dsjw = 10
+
+        self._device_ok = False
+        self._timing_error = False
+        self._solved: object | None = None
 
         self._apply_initial_config()
 
@@ -235,12 +334,14 @@ class DeviceDialog(MessageBoxBase):
 
     def _on_row_changed(self, row: int) -> None:
         if not 0 <= row < len(self._devices):
-            self.yesButton.setEnabled(False)
+            self._device_ok = False
+            self._refresh_connect_enabled()
             self.hint_label.setText("")
             self._update_fd_availability(backend=None)
             return
         d = self._devices[row]
-        self.yesButton.setEnabled(d.available)
+        self._device_ok = d.available
+        self._refresh_connect_enabled()
         if d.available:
             self.hint_label.setText(
                 f"Serial: {d.serial}" if d.serial else "Interface is ready."
@@ -250,6 +351,9 @@ class DeviceDialog(MessageBoxBase):
                 d.hint or "This interface is currently unavailable (reason unknown)."
             )
         self._update_fd_availability(backend=d.backend)
+
+    def _refresh_connect_enabled(self) -> None:
+        self.yesButton.setEnabled(self._device_ok and not self._timing_error)
 
     def _update_fd_availability(self, backend: str | None) -> None:
         """Grayout CAN FD checkbox when the selected backend does not support FD."""
@@ -278,6 +382,84 @@ class DeviceDialog(MessageBoxBase):
 
     def _on_fd_changed(self, state: int) -> None:
         self._sync_bitrate_controls()
+        self._recompute_timing()
+
+    def _on_timing_inputs_changed(self, *_: object) -> None:
+        self._recompute_timing()
+
+    def _recompute_timing(self) -> None:
+        """Giải bộ số từ (bitrate, sample point, clock) và cập nhật preview.
+
+        Manual override (Advanced Timing) thắng; khi tắt solver thì bitrate được
+        truyền thẳng cho interface như cũ.
+        """
+        manual = self._custom_bit_timing
+        solve_on = self.solve_cb.isChecked() and not manual
+        is_fd = self.fd_cb.isChecked()
+
+        self.solve_cb.setEnabled(not manual)
+        for w in (self.clock_spin, self.sp_spin):
+            w.setEnabled(solve_on)
+        self.dsp_spin.setEnabled(solve_on and is_fd)
+        self._dsp_label.setEnabled(solve_on and is_fd)
+
+        if manual:
+            self._solved = None
+            self._set_timing_error(False)
+            self.timing_preview.setText(
+                "Manual timing set via Advanced Timing — clear it there to solve "
+                "from a sample point."
+            )
+            return
+        if not solve_on:
+            self._solved = None
+            self._set_timing_error(False)
+            self.timing_preview.setText(
+                "Bitrate passed to the interface as-is; the driver picks the segments."
+            )
+            return
+
+        f_clock = self.clock_spin.value() * 1_000_000
+        nom = self.bitrate_combo.currentData()
+        try:
+            if is_fd:
+                sol = solve_bit_timing(
+                    f_clock, nom, self.sp_spin.value(),
+                    data_bitrate=self.data_bitrate_combo.currentData(),
+                    data_sample_point=self.dsp_spin.value(),
+                )
+            else:
+                sol = solve_bit_timing(f_clock, nom, self.sp_spin.value())
+        except BitTimingError as exc:
+            self._solved = None
+            self._set_timing_error(True)
+            self.timing_preview.setText(exc.user_message)
+            return
+
+        self._solved = sol
+        self._set_timing_error(False)
+        self.timing_preview.setText(self._format_solution(sol))
+
+    def _set_timing_error(self, is_error: bool) -> None:
+        self._timing_error = is_error
+        self.timing_preview.setStyleSheet("color: #c42b1c;" if is_error else "")
+        self._refresh_connect_enabled()
+
+    def _format_solution(self, sol: object) -> str:
+        n = sol.nominal
+        txt = (
+            f"→ {sol.nom_bitrate:,} bps @ {sol.nom_sample_point:.1f}%   "
+            f"brp={n.brp} tseg1={n.tseg1} tseg2={n.tseg2} sjw={n.sjw}"
+        )
+        if abs(sol.nom_sample_point - self.sp_spin.value()) >= 1.0:
+            txt += f"  (asked {self.sp_spin.value():.1f}%)"
+        if sol.data is not None:
+            d = sol.data
+            txt += (
+                f"\n→ data {sol.data_bitrate:,} bps @ {sol.data_sample_point:.1f}%   "
+                f"dbrp={d.brp} dtseg1={d.tseg1} dtseg2={d.tseg2} dsjw={d.sjw}"
+            )
+        return txt
 
     def _apply_initial_config(self) -> None:
         c = self._initial
@@ -307,7 +489,14 @@ class DeviceDialog(MessageBoxBase):
         self._dtseg1 = getattr(c, "dtseg1", 14)
         self._dtseg2 = getattr(c, "dtseg2", 2)
         self._dsjw = getattr(c, "dsjw", 1)
+
+        self.clock_spin.setValue(max(1, int(self._f_clock / 1_000_000)))
+        self.solve_cb.setChecked(getattr(c, "solve_timing", True))
+        self.sp_spin.setValue(getattr(c, "sample_point", 87.5))
+        self.dsp_spin.setValue(getattr(c, "data_sample_point", 75.0))
+
         self._sync_bitrate_controls()
+        self._recompute_timing()
 
     def _on_adv_timing(self) -> None:
         dlg = BitTimingDialog(
@@ -329,6 +518,7 @@ class DeviceDialog(MessageBoxBase):
             self._dtseg2 = dlg.dtseg2_spin.value()
             self._dsjw = dlg.dsjw_spin.value()
             self._sync_bitrate_controls()
+            self._recompute_timing()
 
     def build_config(self) -> BusConfig | None:
         row = self.list.currentRow()
@@ -341,6 +531,11 @@ class DeviceDialog(MessageBoxBase):
         except ValueError:
             self.status_label.setText("CAN ID must be a hex number, e.g. 7E0.")
             return None
+
+        timing = self._resolve_timing()
+        if timing is None:
+            return None
+
         return BusConfig(
             backend=d.backend,
             channel=d.channel,
@@ -352,17 +547,43 @@ class DeviceDialog(MessageBoxBase):
             t1_timeout_s=self.t1_spin.value() / 1000.0,
             is_fd=self.fd_cb.isChecked(),
             data_bitrate=self.data_bitrate_combo.currentData(),
-            custom_bit_timing=self._custom_bit_timing,
-            f_clock=self._f_clock,
-            brp=self._brp,
-            tseg1=self._tseg1,
-            tseg2=self._tseg2,
-            sjw=self._sjw,
-            dbrp=self._dbrp,
-            dtseg1=self._dtseg1,
-            dtseg2=self._dtseg2,
-            dsjw=self._dsjw,
+            solve_timing=self.solve_cb.isChecked(),
+            sample_point=self.sp_spin.value(),
+            data_sample_point=self.dsp_spin.value(),
+            **timing,
         )
+
+    def _resolve_timing(self) -> dict | None:
+        """`custom_bit_timing` + các register cho `BusConfig`, theo thứ tự ưu tiên:
+        manual override (Advanced Timing) > solver sample-point > bitrate thô."""
+        manual_regs = dict(
+            f_clock=self._f_clock,
+            brp=self._brp, tseg1=self._tseg1, tseg2=self._tseg2, sjw=self._sjw,
+            dbrp=self._dbrp, dtseg1=self._dtseg1, dtseg2=self._dtseg2, dsjw=self._dsjw,
+        )
+        if self._custom_bit_timing:
+            return {"custom_bit_timing": True, **manual_regs}
+
+        if not self.solve_cb.isChecked():
+            return {"custom_bit_timing": False, **manual_regs}
+
+        if self._solved is None:
+            self.status_label.setText(
+                "Bit timing not solved — check Clock / Bitrate / Sample Point."
+            )
+            return None
+        sol = self._solved
+        n = sol.nominal
+        d = sol.data
+        return {
+            "custom_bit_timing": False,
+            "f_clock": self.clock_spin.value() * 1_000_000,
+            "brp": n.brp, "tseg1": n.tseg1, "tseg2": n.tseg2, "sjw": n.sjw,
+            "dbrp": d.brp if d else self._dbrp,
+            "dtseg1": d.tseg1 if d else self._dtseg1,
+            "dtseg2": d.tseg2 if d else self._dtseg2,
+            "dsjw": d.sjw if d else self._dsjw,
+        }
 
     def validate(self) -> bool:  # MessageBoxBase calls this before accept()
         cfg = self.build_config()
@@ -451,7 +672,7 @@ class BitTimingDialog(MessageBoxBase):
         self.viewLayout.addWidget(self.titleLabel)
         self.viewLayout.addWidget(self.enable_cb)
         self.viewLayout.addLayout(grid)
-        self.viewLayout.addWidget(CaptionLabel("Note: If enabled, these values override the default Bitrate dropdown.", self))
+        self.viewLayout.addWidget(CaptionLabel("Note: If enabled, these raw values override both the Bitrate dropdown and the sample-point solver.", self))
         
         self.yesButton.setText("Apply")
         self.cancelButton.setText("Cancel")

@@ -12,8 +12,8 @@
 |     calibration tool needs no knowledge of the RAM layout.
 |
 |   Page numbering (XCP spec convention):
-|     XCP_PAGE_WORKING   (0) — RAM copy, CANape writes calibration here
-|     XCP_PAGE_REFERENCE (1) — Flash, golden / default values
+|     XCP_PAGE_REFERENCE (0) — Flash, golden / default values (ECU boot page)
+|     XCP_PAGE_WORKING   (1) — RAM copy, CANape writes calibration here
 |
 |   Linker script requirements:
 |     Two symbols must be exported from the linker script so the C code
@@ -54,8 +54,8 @@
 /* ============================================================
  * Page identifiers (must match Xcp_GetCalPage / Xcp_SetCalPage)
  * ============================================================ */
-#define XCP_PAGE_WORKING    0U   /* RAM  — writable, transient        */
-#define XCP_PAGE_REFERENCE  1U   /* Flash — read-only, persistent     */
+#define XCP_PAGE_REFERENCE  0U   /* Flash — read-only, persistent (ECU boot default) */
+#define XCP_PAGE_WORKING    1U   /* RAM  — writable, transient                       */
 #define XCP_NUM_PAGES       2U
 
 /* Single segment (one contiguous calibration region) */

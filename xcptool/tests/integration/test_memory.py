@@ -31,6 +31,8 @@ def test_write_then_read_back_64_bytes_bit_for_bit(
     """Cổng của B3."""
     session.connect(bus_cfg)
     addr = slave.cfg.mem_base + 16
+    # FakeSlave boot ở REFERENCE_PAGE (Flash) — switch sang WORKING trước khi ghi
+    session.set_page(0, WORKING_PAGE, PageMode.XCP)
 
     session.write(addr, PATTERN_64)
 
@@ -44,6 +46,7 @@ def test_neighbouring_bytes_are_untouched(
     session.connect(bus_cfg)
     base = slave.cfg.mem_base
     slave.poke(base, b"\xaa" * 128)
+    session.set_page(0, WORKING_PAGE, PageMode.XCP)  # boot ở REFERENCE
 
     session.write(base + 32, b"\x01\x02\x03\x04")
 
@@ -59,6 +62,7 @@ def test_any_size_round_trips(
     session.connect(bus_cfg)
     addr = slave.cfg.mem_base
     payload = bytes((i * 3 + 1) & 0xFF for i in range(size))
+    session.set_page(0, WORKING_PAGE, PageMode.XCP)  # boot ở REFERENCE
 
     session.write(addr, payload)
     assert session.read(addr, size) == payload
@@ -94,6 +98,7 @@ def test_block_split_follows_the_declared_cto(
 ) -> None:
     """Số lệnh phải bằng đúng phép chia theo MAX_CTO, không phải con số viết tay."""
     session.connect(bus_cfg)
+    session.set_page(0, WORKING_PAGE, PageMode.XCP)  # boot ở REFERENCE
     cto = slave.cfg.max_cto
     size = 64
 
@@ -131,13 +136,14 @@ def test_ecu_page_and_xcp_page_move_independently(
     session: RealSession, bus_cfg: BusConfig, slave: FakeSlave
 ) -> None:
     """Trang ECU đang chạy và trang XCP đang nhìn là hai thứ khác nhau —
-    nhầm hai cái này là hiểu sai cả mô hình calibration."""
+    nhầm hai cái này là hiểu sai cả mô hình calibration.
+    FakeSession boot ở REFERENCE — set XCP sang WORKING, ECU vẫn phải ở REFERENCE."""
     session.connect(bus_cfg)
 
-    session.set_page(0, REFERENCE_PAGE, PageMode.XCP)
+    session.set_page(0, WORKING_PAGE, PageMode.XCP)
 
-    assert session.get_page(0, PageMode.XCP) == REFERENCE_PAGE
-    assert session.get_page(0, PageMode.ECU) == WORKING_PAGE
+    assert session.get_page(0, PageMode.XCP) == WORKING_PAGE
+    assert session.get_page(0, PageMode.ECU) == REFERENCE_PAGE
 
 
 def test_writing_to_the_reference_page_is_refused(
@@ -166,6 +172,8 @@ def test_reference_page_shows_the_golden_values(
     slave.poke(addr, b"\x11\x11\x11\x11", page=WORKING_PAGE)
     slave.poke(addr, b"\x22\x22\x22\x22", page=REFERENCE_PAGE)
 
+    # Boot ở REFERENCE — cần switch sang WORKING để đọc WORKING data
+    session.set_page(0, WORKING_PAGE, PageMode.XCP)
     assert session.read(addr, 4) == b"\x11\x11\x11\x11"
     session.set_page(0, REFERENCE_PAGE, PageMode.XCP)
     assert session.read(addr, 4) == b"\x22\x22\x22\x22"
@@ -180,6 +188,8 @@ def test_copy_page_overwrites_the_working_page(
 
     session.copy_page(0, REFERENCE_PAGE, 0, WORKING_PAGE)
 
+    # Đọc WORKING page để verify
+    session.set_page(0, WORKING_PAGE, PageMode.XCP)
     assert session.read(addr, 8) == b"\x99" * 8
 
 

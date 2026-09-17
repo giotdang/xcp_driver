@@ -35,6 +35,9 @@ DEFAULT_BUS_CONFIG = BusConfig(
     t1_timeout_s=1.0,
     is_fd=False,
     data_bitrate=2_000_000,
+    solve_timing=True,
+    sample_point=87.5,
+    data_sample_point=75.0,
 )
 
 DEFAULT_APP_CONFIG = AppConfig(
@@ -49,6 +52,7 @@ DEFAULT_APP_CONFIG = AppConfig(
 )
 
 _ENV_DIR = "XCPTOOL_HOME"
+_ENV_FILE = "XCPTOOL_CONFIG"
 
 
 def config_dir() -> Path:
@@ -58,6 +62,14 @@ def config_dir() -> Path:
 
 
 def config_path() -> Path:
+    """File cấu hình đang dùng — điểm duy nhất cho cả đọc lẫn ghi.
+
+    `$XCPTOOL_CONFIG` (đường dẫn file đầy đủ, do `run.bat -c <path>` đặt) thắng
+    tất cả; không đặt thì lấy `config.toml` trong `config_dir()`.
+    """
+    override = os.environ.get(_ENV_FILE)
+    if override:
+        return Path(override).expanduser()
     return config_dir() / "config.toml"
 
 
@@ -72,6 +84,8 @@ def _coerce_bus(raw: dict[str, object], base: BusConfig) -> BusConfig:
         ("custom_bit_timing", bool), ("f_clock", int),
         ("brp", int), ("tseg1", int), ("tseg2", int), ("sjw", int),
         ("dbrp", int), ("dtseg1", int), ("dtseg2", int), ("dsjw", int),
+        ("solve_timing", bool),
+        ("sample_point", float), ("data_sample_point", float),
     ):
         if key not in raw:
             continue
@@ -173,6 +187,9 @@ def dumps_bus_config(cfg: BusConfig) -> str:
         f"dtseg1 = {cfg.dtseg1}\n"
         f"dtseg2 = {cfg.dtseg2}\n"
         f"dsjw = {cfg.dsjw}\n"
+        f"solve_timing = {str(cfg.solve_timing).lower()}\n"
+        f"sample_point = {cfg.sample_point}\n"
+        f"data_sample_point = {cfg.data_sample_point}\n"
     )
 
 

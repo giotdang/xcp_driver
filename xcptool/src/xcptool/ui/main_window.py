@@ -59,7 +59,7 @@ from .measurement_view import MeasurementView
 from .memory_view import WORKING_PAGE, MemoryView, ask_switch_to_working_page
 from .theme import apply_theme
 from .trace_view import TraceView
-from .workers import TaskRunner
+from .workers import Task, TaskRunner
 
 log = logging.getLogger(__name__)
 
@@ -395,13 +395,22 @@ class MainWindow(QMainWindow):
     ) -> Any:
         """Chạy một lệnh Session trên worker, tự bật/tắt trạng thái bận."""
         self._begin_busy(label, cancellable=True)
+        task: Task | None = None
+
+        def _clear_tracking() -> None:
+            # Chỉ tự xoá nếu vẫn đang là task mà Cancel nhắm tới — task khác
+            # (vd. connect_to) có thể đã ghi đè _connect_task từ lúc đó.
+            if self._connect_task is task:
+                self._connect_task = None
 
         def ok(result: Any) -> None:
+            _clear_tracking()
             self._end_busy()
             if on_ok is not None:
                 on_ok(result)
 
         def err(exc: Exception) -> None:
+            _clear_tracking()
             self._end_busy()
             if on_err is not None:
                 on_err(exc)
@@ -409,8 +418,9 @@ class MainWindow(QMainWindow):
                 errors.show_error(self, exc)
 
         task = self.runner.run(fn, *args, on_ok=ok, on_err=err)
-        if self._connect_task is None:  # Track the current active task for cancellation
-            self._connect_task = task
+        # Luôn ghi đè — Cancel phải nhắm đúng task đang chạy, không phải task
+        # đầu tiên từng chạy qua _call() (bug cũ: chỉ gán khi None).
+        self._connect_task = task
         return task
 
     # ── kết nối ──────────────────────────────────────────────────────────────
@@ -619,7 +629,8 @@ class MainWindow(QMainWindow):
         if not self._guard():
             return
         symbols = self.session.symbols
-        if not symbols.characteristics:
+        names = self.calibration_view.loaded_characteristic_names()
+        if not names:
             self.calibration_view.status_label.setText(
                 "No A2L loaded or file contains no CHARACTERISTICs."
             )
@@ -627,10 +638,11 @@ class MainWindow(QMainWindow):
 
         def _batch(task_ref: list[Any]) -> dict:
             results: dict[str, bytes | None] = {}
-            for name, char in symbols.characteristics.items():
+            for name in names:
                 if task_ref[0] and task_ref[0].cancelled:
                     break
-                if char.byte_size <= 0:
+                char = symbols.characteristics.get(name)
+                if char is None or char.byte_size <= 0:
                     results[name] = None
                     continue
                 try:
@@ -774,7 +786,18 @@ class MainWindow(QMainWindow):
             "Stopping DAQ…",
             self.session.stop_daq,
             on_ok=lambda _: self.measurement_view.on_daq_stopped(),
+            on_err=self._on_stop_daq_error,
         )
+
+    def _on_stop_daq_error(self, exc: Exception) -> None:
+        """ECU có thể từ chối STOP_SYNCH (lỗi bus, resource busy…), nhưng
+        `RealSession.stop_daq()` đã tự dọn callback/pid table của CHÍNH NÓ
+        TRƯỚC KHI gửi lệnh này — việc đọc DAQ đã ngừng thật dù ECU từ chối.
+        UI phải reset theo ngay, không được kẹt ở 'đang đo' khiến Start
+        Acquisition không bấm lại được — nhưng vẫn hiện lỗi để user biết ECU
+        đã từ chối, không âm thầm nuốt."""
+        self.measurement_view.on_daq_stopped()
+        errors.show_error(self, exc)
 
     # ── trace ────────────────────────────────────────────────────────────────
 
@@ -811,6 +834,16 @@ class MainWindow(QMainWindow):
         caps = self.session.caps
         self.caps_label.setText(self._caps_summary(caps) if caps else "")
         self.act_disconnect.setEnabled(state is ConnState.CONNECTED and not self.busy)
+
+        if state is not ConnState.CONNECTED and self.measurement_view.daq_running:
+            # Mất kết nối (bấm Disconnect, rớt bus, lỗi giữa chừng…) trong khi
+            # DAQ đang chạy — phiên đã đóng thì chắc chắn không còn đọc được
+            # gì nữa, UI phải reset theo dù CHƯA bấm Stop. Gọi từ đây (không
+            # phải trực tiếp trong do_disconnect()) để bắt được MỌI đường dẫn
+            # tới trạng thái không-CONNECTED, không chỉ nút Disconnect —
+            # _refresh_state() đã chạy ngay sau mỗi _call() (qua _end_busy())
+            # và mỗi 40ms qua _poll_trace(), nên reset gần như tức thời.
+            self.measurement_view.on_daq_stopped()
 
     @staticmethod
     def _caps_summary(caps: SlaveCaps | None) -> str:

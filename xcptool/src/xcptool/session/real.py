@@ -160,18 +160,27 @@ class RealSession:
         self._teardown()
         self._last_state = ConnState.CONNECTING
 
-        transport = registry.open_transport(cfg)
-        master = XcpMaster(transport, cfg, trace=self._trace)
-        self._transport = transport
-        self._master = master
-
         try:
+            transport = registry.open_transport(cfg)
+            master = XcpMaster(transport, cfg, trace=self._trace)
+            self._transport = transport
+            self._master = master
+
             caps = master.connect()
             self._reject_if_locked(master, caps)
         except XcpToolError:
             self._teardown()
             self._last_state = ConnState.DISCONNECTED
             raise
+        except Exception as exc:
+            # Lỗi không lường trước (vd: driver chưa cài, channel không tồn tại,
+            # lỗi hệ điều hành khi mở bus). _guarded sẽ wrap thành XcpToolError,
+            # nhưng ta cần dọn sạch transport + reset state trước đó.
+            self._teardown()
+            self._last_state = ConnState.DISCONNECTED
+            raise XcpToolError(
+                f"Không thể mở được kết nối đến channel '{cfg.channel}': {exc}"
+            ) from exc
 
         self._remember(cfg)
         return caps

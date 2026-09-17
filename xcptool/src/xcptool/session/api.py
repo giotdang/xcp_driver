@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
 from ..a2l import A2LDatabase
+from ..a2l.types import InstanceNode
 
 __all__ = [
     "ConnState", "PageMode", "Direction", "FrameKind",
@@ -64,7 +65,7 @@ __all__ = [
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
     "SlaveError", "WriteProtectedError", "OutOfRangeError", "SequenceError",
     "AccessDeniedError", "NotConnectedError", "BusyError", "UnsupportedByEcuError",
-    "A2LDatabase", "Session",
+    "A2LDatabase", "InstanceNode", "Session",
 ]
 
 
@@ -142,15 +143,21 @@ class BusConfig:
     custom_bit_timing: bool = False
     f_clock: int = 80_000_000
     brp: int = 1
-    tseg1: int = 14
-    tseg2: int = 2
-    sjw: int = 1
+    tseg1: int = 119
+    tseg2: int = 40
+    sjw: int = 40
     
     # Custom Bit Timing (Data Phase - CAN FD only)
     dbrp: int = 1
-    dtseg1: int = 14
-    dtseg2: int = 2
-    dsjw: int = 1
+    dtseg1: int = 29
+    dtseg2: int = 10
+    dsjw: int = 10
+
+    # Sample-point solver (dialog Connect) — nhập bitrate + sample point, tự giải
+    # ra brp/tseg khớp qua python-can. Lưu lại để mở lại dialog thấy đúng % đã gõ.
+    solve_timing: bool = True
+    sample_point: float = 87.5          # % — nominal / arbitration phase
+    data_sample_point: float = 75.0     # % — data phase (CAN FD)
 
 
 @dataclass

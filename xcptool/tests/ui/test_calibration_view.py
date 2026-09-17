@@ -7,7 +7,7 @@ import struct
 import pytest
 from PySide6.QtCore import Qt
 
-from xcptool.a2l.types import A2LDatabase, Characteristic, RecordLayout
+from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, Measurement, RecordLayout
 from xcptool.session.api import BusConfig, ConnState, PageMode
 from xcptool.session.fake import MEM_BASE, FakeBehavior, FakeSession
 from xcptool.ui.calibration_view import (
@@ -18,8 +18,10 @@ from xcptool.ui.calibration_view import (
     COL_NAME,
     COL_TYPE,
     COL_ADDR,
+    COL_SIZE,
     _ROUTE_REFERENCE,
     _ROUTE_WORKING,
+    _split_into_contiguous_runs,
     decode_value,
     encode_value,
 )
@@ -70,6 +72,26 @@ def _make_db(base: int = MEM_BASE) -> A2LDatabase:
         array_size=4,
     )
     return db
+
+
+def _add_struct_instance(db: A2LDatabase, group_name: str, leaf_names: list[str]) -> None:
+    """Gắn 1 InstanceNode STRUCT thủ công vào db.instance_trees, tái dùng các
+    Characteristic đã có sẵn trong db.characteristics làm lá.
+
+    Mô phỏng đúng shape mà a2l/database.py._resolve_instances() (Task 7-10)
+    dựng thật từ INSTANCE — các test write-path dưới đây dựng CHARACTERISTIC
+    thủ công (không qua parser thật) nên cần tự nối instance_trees, vì
+    CalibrationView (Task 11) không còn gom nhóm theo tên nữa
+    (_group_by_prefix đã bị xoá)."""
+    children = [
+        InstanceNode(name=f"{group_name}.{leaf}", address=db.characteristics[leaf].address,
+                     leaf_name=leaf, is_measurement=False, struct_size=None)
+        for leaf in leaf_names
+    ]
+    total_size = sum(db.characteristics[n].byte_size for n in leaf_names)
+    db.instance_trees[group_name] = InstanceNode(
+        name=group_name, address=children[0].address, leaf_name=None,
+        is_measurement=False, struct_size=total_size, children=children)
 
 
 def _make_view(qtbot) -> CalibrationView:
@@ -235,8 +257,8 @@ def test_on_batch_read_done_co_loi_hien_so_loi(qtbot) -> None:
 
 def test_on_pages_dong_bo_hien_dung_toggle(qtbot) -> None:
     v = _make_view(qtbot)
-    v.on_pages(0, ecu_page=1, xcp_page=1)
-    assert v.page_toggle.currentRouteKey() == _ROUTE_REFERENCE
+    v.on_pages(0, ecu_page=WORKING_PAGE, xcp_page=WORKING_PAGE)
+    assert v.page_toggle.currentRouteKey() == _ROUTE_WORKING
     assert v.sync_warning_label.isHidden()
     assert v.sync_btn.isHidden()
 
@@ -446,10 +468,55 @@ def test_doc_tat_ca_qua_session(qtbot, connected_window: MainWindow) -> None:
     assert items["OFFSET"].text(COL_VALUE) != "—"
 
 
+def test_huy_read_all_dung_dung_task_dang_chay(
+    qtbot, connected_window: MainWindow
+) -> None:
+    """Bug cũ: `_call()` chỉ gán `_connect_task` khi nó đang là None — sau khi
+    MỘT lệnh khác từng chạy xong trước đó (vd. đọc lẻ một characteristic),
+    biến này bị bỏ quên trỏ vào task đã xong. Cancel sau đó huỷ nhầm task cũ
+    (vô hại) thay vì task read-all thật đang chạy, nên bấm Cancel không dừng
+    được gì — read-all cứ chạy hết toàn bộ tham số, tiếp tục gửi lệnh lên bus."""
+    n = 30
+    db = A2LDatabase()
+    db.record_layouts["RL_UBYTE"] = RecordLayout(name="RL_UBYTE", datatype="UBYTE")
+    for i in range(n):
+        name = f"P{i}"
+        db.characteristics[name] = Characteristic(
+            name=name, description="", char_type="VALUE",
+            address=MEM_BASE + i, record_layout="RL_UBYTE",
+            lower_limit=0.0, upper_limit=255.0, datatype="UBYTE", array_size=1,
+        )
+    connected_window.session._a2l_db = db  # type: ignore[attr-defined]
+    connected_window.calibration_view.set_database(db)
+    connected_window.session.behavior.command_delay_s = 0.05
+
+    # Làm bẩn _connect_task đúng như kịch bản bug: một _call() khác đã chạy
+    # xong trước read-all.
+    connected_window.read_characteristic("P0")
+    qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
+
+    connected_window.read_all_characteristics()
+    qtbot.wait(120)  # để vài lệnh đầu của batch chạy qua
+    assert connected_window.busy, "read-all phải còn đang chạy lúc bấm Cancel"
+
+    connected_window.cancel_busy()
+    qtbot.waitUntil(lambda: not connected_window.busy, timeout=3000)
+    count_at_cancel = connected_window.session._command_count  # type: ignore[attr-defined]
+
+    qtbot.wait(int(n * 0.05 * 1000))  # đủ lâu để nếu bug tái phát, cả n lệnh sẽ chạy xong
+    count_after_wait = connected_window.session._command_count  # type: ignore[attr-defined]
+    assert count_after_wait <= count_at_cancel + 2, (
+        "Cancel phải chặn được các lệnh còn lại trong read-all, nhưng vẫn còn "
+        f"{count_after_wait - count_at_cancel} lệnh chạy tiếp sau khi Cancel"
+    )
+
+
 def test_ghi_characteristic_qua_session(qtbot, connected_window: MainWindow) -> None:
     db = _make_db()
     connected_window.session._a2l_db = db  # type: ignore[attr-defined]
     connected_window.calibration_view.set_database(db)
+    # FakeSession boot ở REFERENCE_PAGE — switch sang WORKING trước khi ghi
+    connected_window.session.set_page(0, WORKING_PAGE, PageMode.XCP)
     connected_window.write_characteristic("GAIN", MEM_BASE, bytes([0xAB]))
     qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
     assert connected_window.session.read(MEM_BASE, 1) == bytes([0xAB])
@@ -459,7 +526,8 @@ def test_cal_get_pages_cap_nhat_toggle(qtbot, connected_window: MainWindow) -> N
     v = connected_window.calibration_view
     connected_window.cal_get_pages(0)
     qtbot.waitUntil(lambda: v.page_toggle.currentRouteKey() is not None, timeout=5000)
-    assert v.page_toggle.currentRouteKey() == _ROUTE_WORKING
+    # FakeSession boot ở REFERENCE_PAGE (Flash, đúng XCP spec boot state)
+    assert v.page_toggle.currentRouteKey() == _ROUTE_REFERENCE
 
 
 def test_cal_set_page_dat_ca_ecu_lan_xcp(qtbot, connected_window: MainWindow) -> None:
@@ -477,7 +545,9 @@ def test_cal_set_page_dat_ca_ecu_lan_xcp(qtbot, connected_window: MainWindow) ->
 def test_cal_get_pages_phat_hien_khong_dong_bo(qtbot, connected_window: MainWindow) -> None:
     w = connected_window
     v = w.calibration_view
-    w.session.set_page(0, REFERENCE_PAGE, PageMode.XCP)   # chỉ set XCP, không set ECU
+    # Tạo desync: set ECU sang WORKING, giữ XCP ở REFERENCE (boot default)
+    # ECU_PAGE=WORKING (1) ≠ XCP_PAGE=REFERENCE (0) → cảnh báo phải hiện
+    w.session.set_page(0, WORKING_PAGE, PageMode.ECU)
     w.cal_get_pages(0)
     qtbot.waitUntil(lambda: not v.sync_warning_label.isHidden(), timeout=5000)
     assert not v.sync_btn.isHidden()
@@ -486,11 +556,13 @@ def test_cal_get_pages_phat_hien_khong_dong_bo(qtbot, connected_window: MainWind
 def test_sync_button_dong_bo_lai_qua_session(qtbot, connected_window: MainWindow) -> None:
     w = connected_window
     v = w.calibration_view
-    w.session.set_page(0, REFERENCE_PAGE, PageMode.XCP)   # desync thủ công
+    # Tạo desync: set ECU sang WORKING, giữ XCP ở REFERENCE (boot default)
+    w.session.set_page(0, WORKING_PAGE, PageMode.ECU)
     w.cal_get_pages(0)
     qtbot.waitUntil(lambda: not v.sync_btn.isHidden(), timeout=5000)
 
     v._on_sync_click()
+    # Sync đặt ECU theo XCP (REFERENCE) — kiểm tra cả hai đạt REFERENCE
     qtbot.waitUntil(
         lambda: w.session.get_page(0, PageMode.ECU) == REFERENCE_PAGE, timeout=5000
     )
@@ -507,6 +579,8 @@ def test_copy_ref_to_working_qua_session_khop_gia_tri_reference(
     w.session._a2l_db = db  # type: ignore[attr-defined]
     v.set_database(db)
 
+    # Switch sang WORKING để ghi (FakeSession boot ở REFERENCE, ghi REFERENCE = WriteProtected)
+    w.session.set_page(0, WORKING_PAGE, PageMode.XCP)
     w.write_characteristic("GAIN", MEM_BASE, bytes([0x11]))
     qtbot.waitUntil(lambda: not w.busy, timeout=5000)
     assert w.session.read(MEM_BASE, 1) == bytes([0x11])  # Working đã bị sửa
@@ -568,25 +642,36 @@ def test_connect_cap_nhat_ca_hai_panel_trang_tu_mot_lan_doc(
     qtbot, connected_window: MainWindow
 ) -> None:
     v = connected_window.calibration_view
-    assert v.page_toggle.currentRouteKey() == _ROUTE_WORKING
-    assert connected_window.memory_view.xcp_page_label.text() == str(WORKING_PAGE)
-    assert connected_window.memory_view.ecu_page_label.text() == str(WORKING_PAGE)
+    # FakeSession boot ở REFERENCE_PAGE (Flash, đúng XCP spec boot state)
+    assert v.page_toggle.currentRouteKey() == _ROUTE_REFERENCE
+    assert connected_window.memory_view.xcp_page_label.text() == str(REFERENCE_PAGE)
+    assert connected_window.memory_view.ecu_page_label.text() == str(REFERENCE_PAGE)
 
 
-def test_set_database_groups_struct_characteristics(qtbot) -> None:
-    """Kiểm tra CHARACTERISTIC dạng struct (speedPid_*) được gom nhóm thành parent-child."""
-    db = A2LDatabase()
-    for param in ("kp", "ki", "kd"):
-        db.characteristics[f"speedPid_{param}"] = Characteristic(
-            name=f"speedPid_{param}",
-            description=f"PID {param}",
-            char_type="VALUE",
-            address=MEM_BASE + 0x08,
-            record_layout="F32",
-            lower_limit=-10.0,
-            upper_limit=10.0,
-            datatype="FLOAT32_IEEE",
-        )
+def test_set_database_builds_struct_tree_from_instance_data(qtbot) -> None:
+    """Thay test cũ (đoán struct theo tên) — giờ struct đến từ INSTANCE thật."""
+    from xcptool.a2l.database import load as a2l_load
+    import tempfile, textwrap
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Pid_t "pid" 8
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ki T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE speedPid "speed pid" Pid_t 0x80100000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
     v = _make_view(qtbot)
     v.set_database(db)
 
@@ -594,9 +679,205 @@ def test_set_database_groups_struct_characteristics(qtbot) -> None:
     parent = v.tree.topLevelItem(0)
     assert parent.text(COL_NAME) == "speedPid"
     assert "STRUCT" in parent.text(COL_TYPE)
-    assert parent.childCount() == 3
-    child_names = [parent.child(i).text(COL_NAME) for i in range(3)]
-    assert child_names == ["kd", "ki", "kp"] or set(child_names) == {"kp", "ki", "kd"}
+    assert parent.text(COL_SIZE) == "8"
+    assert parent.childCount() == 2
+    assert {parent.child(i).data(COL_NAME, Qt.UserRole) for i in range(2)} == {
+        "speedPid.kp", "speedPid.ki"}
+
+
+def test_set_database_no_instance_renders_flat_even_with_shared_name_prefix(qtbot) -> None:
+    """Quyết định spec §6: CHARACTERISTIC không có INSTANCE hiện phẳng, dù
+    tên trùng tiền tố — KHÔNG còn heuristic đoán theo tên."""
+    db = A2LDatabase()
+    for param in ("kp", "ki", "kd"):
+        db.characteristics[f"speedPid_{param}"] = Characteristic(
+            name=f"speedPid_{param}", description="", char_type="VALUE",
+            address=MEM_BASE, record_layout="RL_F32", lower_limit=-10.0,
+            upper_limit=10.0, datatype="FLOAT32_IEEE")
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    assert v.tree.topLevelItemCount() == 3  # KHÔNG gộp — trước đây sẽ là 1
+    names = {v.tree.topLevelItem(i).text(COL_NAME) for i in range(3)}
+    assert names == {"speedPid_kp", "speedPid_ki", "speedPid_kd"}
+
+
+def test_set_database_renders_nested_and_array_struct(qtbot) -> None:
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 4
+        /begin STRUCTURE_COMPONENT val T_Gain 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 4
+        /begin STRUCTURE_COMPONENT inner Inner_t 0
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE pids "array of outer" Outer_t 0x80100000
+        MATRIX_DIM 2
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    assert v.tree.topLevelItemCount() == 1
+    array_parent = v.tree.topLevelItem(0)
+    assert array_parent.childCount() == 2  # pids[0], pids[1]
+    outer0 = array_parent.child(0)
+    assert outer0.childCount() == 1        # inner
+    inner0 = outer0.child(0)
+    assert inner0.childCount() == 1        # val
+    leaf = inner0.child(0)
+    assert leaf.data(COL_NAME, Qt.UserRole) == "pids[0].inner.val"
+
+
+def test_write_bare_array_instance_without_enclosing_struct(qtbot) -> None:
+    """INSTANCE ... MATRIX_DIM của kiểu scalar (không bọc trong struct nào)
+    vẫn phải ghi được qua đúng cơ chế combine-write, y hệt STRUCT."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE tempSensors "3 sensor gains, no struct" T_Gain 0x80100000
+        MATRIX_DIM 3
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+    parent = v._char_items["tempSensors"]
+    assert parent.text(COL_TYPE).startswith("ARRAY")
+
+    for i in range(3):
+        parent.child(i).setText(COL_VALUE, str(1.0 + i))
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("tempSensors", parent)
+
+    assert len(writes) == 1          # 3 phần tử liền khít -> 1 lần ghi
+    name, addr, data = writes[0]
+    assert addr == 0x80100000
+    assert len(data) == 12            # 3 x FLOAT32 (4 byte)
+
+    # Fix 2 (final review): "Write Selected" phải enable được qua đúng
+    # _update_write_btn() — cổng nút thật của UI (không chỉ gọi _write_parent
+    # trực tiếp, bỏ qua cổng) — khi 1 con của dòng cha ARRAY[ đang dirty.
+    # Trước fix, _update_write_btn chỉ nhận diện "STRUCT", không nhận
+    # "ARRAY[", nên nút luôn bị khoá dù _write_parent tự nó ghi đúng.
+    child0_name = parent.child(0).data(COL_NAME, Qt.UserRole)
+    v._dirty.add(child0_name)
+    v.tree.setCurrentItem(parent)
+    v.write_btn.setEnabled(False)
+    v._update_write_btn()
+    assert v.write_btn.isEnabled(), (
+        "Write button phải enable khi 1 con của dòng cha ARRAY[ đang dirty"
+    )
+
+
+def test_start_value_edit_blocks_struct_and_array_parent_rows(qtbot) -> None:
+    """STRUCT và ARRAY[ đều là dòng cha tổng hợp (combine-write) — không cho
+    sửa trực tiếp ô Value của chính dòng cha, phải chọn từng con cụ thể.
+    Trước fix Task 12: chỉ STRUCT bị chặn, ARRAY[ vẫn cho editItem() mở —
+    gõ vào ô Value của dòng cha ARRAY chỉ cập nhật hiển thị con mà không
+    đánh dấu dirty gì, gây hiểu lầm."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+
+    struct_parent = v._char_items["grp"]
+    assert struct_parent.text(COL_TYPE).startswith("STRUCT")
+    v._start_value_edit(struct_parent, COL_VALUE)
+    assert not (struct_parent.flags() & Qt.ItemIsEditable), (
+        "STRUCT parent không được cho sửa trực tiếp"
+    )
+
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin INSTANCE tempSensors "3 sensor gains, no struct" T_Gain 0x80100000
+        MATRIX_DIM 3
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db2 = a2l_load(path)
+    v2 = _make_view(qtbot)
+    v2.set_database(db2)
+    array_parent = v2._char_items["tempSensors"]
+    assert array_parent.text(COL_TYPE).startswith("ARRAY[")
+    v2._start_value_edit(array_parent, COL_VALUE)
+    assert not (array_parent.flags() & Qt.ItemIsEditable), (
+        "ARRAY[ parent (trước fix bị bỏ sót) không được cho sửa trực tiếp"
+    )
+
+
+def test_set_database_skips_measurement_instance_without_crashing(qtbot) -> None:
+    """Bug thật (review round 1): INSTANCE trỏ tới TYPEDEF_MEASUREMENT (không
+    phải TYPEDEF_CHARACTERISTIC) từng làm _build_tree_item_from_node tra cứu
+    self._db.characteristics[node.leaf_name] và ném KeyError — set_database()
+    không có try/except nào bọc ngoài (main_window._after_a2l_load gọi thẳng),
+    nên đây là crash không bắt được khi load 1 file A2L hợp lệ có cả CAL lẫn
+    DAQ struct instance (kịch bản thực tế mô tả trong motivation của spec).
+    CalibrationView chỉ hiển thị CHARACTERISTIC — MEASUREMENT thuộc
+    MeasurementView (Task 13) -> phải bỏ qua êm, không crash."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_MEASUREMENT T_Temp "temperature" FLOAT32_IEEE CM_NONE 0 0 -40 150
+    /end TYPEDEF_MEASUREMENT
+    /begin INSTANCE gainInst "calibratable gain" T_Gain 0x80100000
+    /end INSTANCE
+    /begin INSTANCE tempInst "measured temperature" T_Temp 0x80100010
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)  # trước fix: KeyError('tempInst')
+
+    assert v.tree.topLevelItemCount() == 1  # chỉ gainInst — tempInst bị lọc êm
+    only = v.tree.topLevelItem(0)
+    assert only.data(COL_NAME, Qt.UserRole) == "gainInst"
+    assert "tempInst" not in v._char_items  # không để lại node rỗng/mồ côi nào
 
 
 def test_set_database_creates_array_children_and_syncs_edit(qtbot) -> None:
@@ -651,6 +932,7 @@ def test_write_struct_aggregates_children(qtbot, connected_window: MainWindow) -
     db = A2LDatabase()
     db.characteristics["pid_kp"] = Characteristic("pid_kp", "", "VALUE", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
     db.characteristics["pid_ki"] = Characteristic("pid_ki", "", "VALUE", MEM_BASE + 4, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    _add_struct_instance(db, "pid", ["pid_kp", "pid_ki"])
     v.set_database(db)
     
     parent = v._char_items["pid"]
@@ -667,6 +949,374 @@ def test_write_struct_aggregates_children(qtbot, connected_window: MainWindow) -
     assert name == "pid"
     assert addr == MEM_BASE
     assert len(data) == 8
+
+
+def test_write_parent_recurses_into_nested_struct_children(qtbot) -> None:
+    """Bug thật (final review, CRITICAL): nhánh STRUCT/ARRAY của _write_parent
+    trước fix chỉ đọc CON TRỰC TIẾP. Outer_t có 1 member trực tiếp (kp) + 1
+    member là struct lồng khác (ctl: Inner_t, chứa ki/kd) — con "ctl" mang
+    Qt.UserRole là tên node hierarchical ("outerInst.ctl"), không phải key
+    trong self._db.characteristics, nên bị `if not c_def: continue` bỏ qua
+    ÊM: chỉ ghi kp, bỏ mất cả ki/kd mà vẫn báo thành công (report success
+    với write thiếu — vi phạm DESIGN.md §7: ghi struct phải trọn 1 khối)."""
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 8
+        /begin STRUCTURE_COMPONENT ki T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT kd T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 12
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ctl Inner_t 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE outerInst "outer instance" Outer_t 0x80100000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    parent = v._char_items["outerInst"]
+    assert parent.childCount() == 2
+    nested = next(
+        (parent.child(i) for i in range(parent.childCount()) if parent.child(i).childCount() > 0),
+        None,
+    )
+    assert nested is not None, "test setup phải có 1 con là struct lồng (ctl)"
+    assert nested.childCount() == 2
+
+    leaf_names = ["outerInst.kp", "outerInst.ctl.ki", "outerInst.ctl.kd"]
+    for name in leaf_names:
+        assert name in db.characteristics
+
+    v._dirty.update(leaf_names)
+    for i in range(parent.childCount()):
+        child = parent.child(i)
+        if child.childCount() == 0:
+            child.setText(COL_VALUE, "1.0")
+    for j in range(nested.childCount()):
+        nested.child(j).setText(COL_VALUE, "2.0")
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("outerInst", parent)
+
+    total_written = sum(len(data) for _, _, data in writes)
+    expected_size = sum(db.characteristics[n].byte_size for n in leaf_names)
+    assert total_written == expected_size, (
+        f"phải ghi đủ cả struct lồng, không chỉ member trực tiếp: "
+        f"ghi {total_written} byte, cần {expected_size} byte (writes={writes})"
+    )
+
+    written_addrs: set[int] = set()
+    for _, addr, data in writes:
+        for off in range(len(data)):
+            written_addrs.add(addr + off)
+    for n in leaf_names:
+        c = db.characteristics[n]
+        for off in range(c.byte_size):
+            assert (c.address + off) in written_addrs, f"thiếu byte tại {n}+{off}"
+
+    # Sau khi ghi trọn, dirty phải sạch hết — kể cả các lá lồng sâu.
+    assert not v._dirty & set(leaf_names)
+
+
+def test_write_parent_clears_deep_nested_leaf_dirty_and_enables_write_btn(qtbot) -> None:
+    """Bug thật còn sót (residual, final review): _leaf_write_items() đã cho
+    _write_parent() ghi đúng lá lồng sâu, nhưng on_write_done() và
+    _update_write_btn() vẫn chỉ duyệt CON TRỰC TIẾP của dòng struct ngoài
+    cùng.
+
+    Với struct lồng 2 cấp (outerInst.kp trực tiếp + outerInst.ctl.{ki,kd}
+    lồng qua "ctl"), dirty đúng 1 lá SÂU "outerInst.ctl.ki" (không phải con
+    trực tiếp — con trực tiếp của outerInst là "kp" và "ctl"):
+
+    1. _update_write_btn(): trước fix chỉ soát "kp"/"ctl" trong self._dirty
+       (cả hai đều không có mặt — "ctl" mang tên hierarchical, không phải
+       key dirty thật) -> nút Write bị khoá dù _write_parent ghi đúng.
+    2. on_write_done(): trước fix cũng chỉ duyệt "kp"/"ctl" -> không bao giờ
+       refresh _original["outerInst.ctl.ki"], và node trung gian "ctl" (đã
+       bị _on_item_changed tô cam ở COL_NAME khi lá con nó dirty) không bao
+       giờ được dọn cam — kẹt cam mãi dù ECU đã nhận đủ byte.
+    """
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 8
+        /begin STRUCTURE_COMPONENT ki T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT kd T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 12
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ctl Inner_t 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE outerInst "outer instance" Outer_t 0x80100000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    parent = v._char_items["outerInst"]
+    nested = next(
+        (parent.child(i) for i in range(parent.childCount()) if parent.child(i).childCount() > 0),
+        None,
+    )
+    assert nested is not None, "test setup phải có 1 con là struct lồng (ctl)"
+    deep_leaf = next(
+        nested.child(j) for j in range(nested.childCount())
+        if nested.child(j).data(COL_NAME, Qt.UserRole) == "outerInst.ctl.ki"
+    )
+
+    # Mô phỏng đã đọc xong 1 lần — mọi lá (kp, ki, kd) đều có giá trị hợp lệ
+    # và _original đã ghi nhận, y hệt sau on_read_done() thật. Không đụng gì
+    # ngoài "ki" phía dưới, nên "kp"/"kd" vẫn phải sạch sau khi ghi.
+    for i in range(parent.childCount()):
+        child = parent.child(i)
+        if child.childCount() == 0:
+            child.setText(COL_VALUE, "1.0")
+            v._original[child.data(COL_NAME, Qt.UserRole)] = "1.0"
+    for j in range(nested.childCount()):
+        leaf = nested.child(j)
+        leaf.setText(COL_VALUE, "1.0")
+        v._original[leaf.data(COL_NAME, Qt.UserRole)] = "1.0"
+
+    # Dirty đúng 1 lá SÂU — không đụng tới "kp" hay bất kỳ con trực tiếp nào.
+    deep_leaf.setText(COL_VALUE, "5.0")
+    v._on_item_changed(deep_leaf, COL_VALUE)
+
+    neutral = v.tree.palette().text().color()
+    assert "outerInst.ctl.ki" in v._dirty
+    assert nested.foreground(COL_NAME).color() != neutral  # "ctl" đã tô cam khi sửa lá con
+    assert "outerInst.kp" not in v._dirty  # con trực tiếp còn lại KHÔNG dirty
+
+    # (1) _update_write_btn(): chọn dòng struct ngoài cùng — chỉ 1 lá SÂU
+    # dirty vẫn phải bật nút, vì _write_parent() ghi đúng lá đó.
+    v.tree.setCurrentItem(parent)
+    v._update_write_btn()
+    assert v.write_btn.isEnabled(), (
+        "Write button phải bật khi có lá SÂU dirty, dù không phải con trực tiếp"
+    )
+
+    # Ghi cả struct ngoài cùng — _write_parent() đệ quy đúng qua _leaf_write_items().
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("outerInst", parent)
+    assert writes, "_write_parent phải ghi được (đã kiểm chứng riêng ở test khác)"
+
+    # Mô phỏng ECU ack đoạn ghi.
+    v.on_write_done("outerInst")
+
+    # (2) on_write_done(): _original phải được refresh và dirty phải sạch cho
+    # lá sâu, và node trung gian "ctl" phải hết cam — không chỉ con trực tiếp.
+    assert "outerInst.ctl.ki" not in v._dirty
+    assert v._original["outerInst.ctl.ki"] == "5.0", (
+        "_original phải được refresh cho lá lồng sâu sau khi ghi thành công"
+    )
+    assert nested.foreground(COL_NAME).color() == neutral, (
+        "node trung gian 'ctl' phải hết cam sau khi ghi xong — trước fix vẫn kẹt cam"
+    )
+
+
+# ── _split_into_contiguous_runs — helper thuần, không cần Qt ────────────────
+
+def test_split_into_contiguous_runs_packed_gives_one_run() -> None:
+    entries = [(MEM_BASE, b"\x01\x00", "a"), (MEM_BASE + 2, b"\x02\x00", "b")]
+    runs = _split_into_contiguous_runs(entries, "grp")
+    assert runs == [(MEM_BASE, b"\x01\x00\x02\x00")]
+
+
+def test_split_into_contiguous_runs_splits_on_gap() -> None:
+    """INT16 @ base rồi INT32 @ base+4 (compiler chèn 2 byte align) → 2 đoạn,
+    không đoạn nào chứa 2 byte đệm ở giữa."""
+    entries = [
+        (MEM_BASE, b"\x2a\x00", "flag"),                    # 2 byte
+        (MEM_BASE + 4, b"\x39\x30\x00\x00", "threshold"),    # 4 byte, cách 2 byte
+    ]
+    runs = _split_into_contiguous_runs(entries, "grp")
+    assert runs == [
+        (MEM_BASE, b"\x2a\x00"),
+        (MEM_BASE + 4, b"\x39\x30\x00\x00"),
+    ]
+
+
+def test_split_into_contiguous_runs_raises_on_overlap() -> None:
+    entries = [(MEM_BASE, b"\x00\x00\x00\x00", "a"), (MEM_BASE + 2, b"\x00\x00", "b")]
+    with pytest.raises(ValueError, match="Overlapping members near b in struct grp"):
+        _split_into_contiguous_runs(entries, "grp")
+
+
+def test_write_struct_with_gap_sends_one_write_per_contiguous_run(qtbot) -> None:
+    """Trước fix: struct có gap từng ném 'Size overflow' và không ghi được gì.
+    Sau fix: mỗi đoạn liền khít ra đúng 1 lệnh WRITE riêng, không lệnh nào
+    đụng tới 2 byte đệm giữa 2 member."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_flag"] = Characteristic(
+        "grp_flag", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_threshold"] = Characteristic(
+        "grp_threshold", "", "VALUE", MEM_BASE + 4, "I32", 0, 100, datatype="SLONG", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_flag", "grp_threshold"])
+    v.set_database(db)
+
+    parent = v._char_items["grp"]
+    parent.child(0).setText(COL_VALUE, "42")     # grp_flag
+    parent.child(1).setText(COL_VALUE, "12345")  # grp_threshold
+    v._dirty.update({"grp_flag", "grp_threshold"})
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("grp", parent)
+
+    # Đoạn đầu bắn ngay trong _write_parent; đoạn 2 chỉ bắn tiếp khi
+    # on_write_done() báo đoạn 1 đã xong (mô phỏng ack bất đồng bộ của XCP).
+    assert len(writes) == 1
+    assert "grp" in v._pending_struct_runs and v._pending_struct_runs["grp"]
+    v.on_write_done("grp")
+    assert len(writes) == 2
+    assert "grp" not in v._pending_struct_runs or not v._pending_struct_runs["grp"]
+
+    addrs = {addr for _, addr, _ in writes}
+    assert addrs == {MEM_BASE, MEM_BASE + 4}
+    # Không lệnh nào ghi 2 byte đệm giữa hai member.
+    assert all(len(data) in (2, 4) for _, _, data in writes)
+
+    # Dirty phải hết sạch — kể cả sau nhiều đoạn.
+    assert "grp_flag" not in v._dirty
+    assert "grp_threshold" not in v._dirty
+
+
+def test_write_all_waits_for_every_run_before_next_queue_item(qtbot) -> None:
+    """'Write All' xếp 1 struct có gap + 1 scalar khác — scalar chỉ được ghi
+    SAU KHI mọi đoạn của struct hoàn tất, không chen ngang giữa chừng (Session
+    không reentrant, ghi chồng lên nhau sẽ ném BusyError)."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_flag"] = Characteristic(
+        "grp_flag", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_threshold"] = Characteristic(
+        "grp_threshold", "", "VALUE", MEM_BASE + 4, "I32", 0, 100, datatype="SLONG", array_size=1)
+    db.characteristics["solo"] = Characteristic(
+        "solo", "", "VALUE", MEM_BASE + 64, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_flag", "grp_threshold"])
+    v.set_database(db)
+
+    v._char_items["grp"].child(0).setText(COL_VALUE, "42")
+    v._char_items["grp"].child(1).setText(COL_VALUE, "12345")
+    v._char_items["solo"].setText(COL_VALUE, "7")
+    v._dirty.update({"grp_flag", "grp_threshold", "solo"})
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    # Đặt thẳng hàng đợi (thay vì qua _on_write_all()) để cố định thứ tự —
+    # _on_write_all dùng set() nội bộ nên thứ tự không đảm bảo, không phải
+    # điều test này muốn kiểm tra.
+    v._write_queue = [v._char_items["grp"], v._char_items["solo"]]
+    v._process_write_queue()
+
+    # Chỉ đoạn đầu của "grp" được bắn — "solo" chưa được đụng tới.
+    assert [name for name, _, _ in writes] == ["grp"]
+
+    v.on_write_done("grp")  # đoạn 1 xong -> tự bắn đoạn 2, "solo" vẫn chưa tới lượt
+    assert [name for name, _, _ in writes] == ["grp", "grp"]
+
+    v.on_write_done("grp")  # đoạn 2 (cuối) xong -> mới tiến hàng đợi ngoài
+    assert [name for name, _, _ in writes] == ["grp", "grp", "solo"]
+
+
+def test_write_selected_single_struct_child_clears_parent_name_color(qtbot) -> None:
+    """Bug thật gặp: chọn 1 dòng con trong STRUCT rồi 'Write Selected' — ghi
+    chỉ đúng member đó (không qua nhánh STRUCT của _write_parent), nên dòng
+    cha đang tô cam từ lúc sửa vẫn không được on_write_done() đi ngược lên
+    dọn — kẹt cam mãi dù mọi con đã sạch."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+
+    parent = v._char_items["grp"]
+    child_a = parent.child(0)
+    v._original["grp_a"] = child_a.text(COL_VALUE)
+
+    child_a.setText(COL_VALUE, "99")
+    v._on_item_changed(child_a, COL_VALUE)
+    neutral = v.tree.palette().text().color()
+    assert parent.foreground(COL_NAME).color() != neutral  # cha đã tô cam khi sửa
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v.tree.setCurrentItem(child_a)
+    v._on_write()
+    assert len(writes) == 1 and writes[0][0] == "grp_a"  # ghi lẻ 1 child, không qua STRUCT
+
+    v.on_write_done("grp_a")
+    assert child_a.foreground(COL_NAME).color() == neutral
+    assert parent.foreground(COL_NAME).color() == neutral  # trước fix: vẫn cam
+
+
+def test_write_selected_single_child_keeps_parent_dirty_if_sibling_still_dirty(qtbot) -> None:
+    """Ghi xong 1 child nhưng sibling khác vẫn đang sửa dở -> cha PHẢI còn cam,
+    không được vô tình dọn sạch cha khi vẫn còn con dirty."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+
+    parent = v._char_items["grp"]
+    child_a, child_b = parent.child(0), parent.child(1)
+    v._original["grp_a"] = child_a.text(COL_VALUE)
+    v._original["grp_b"] = child_b.text(COL_VALUE)
+
+    child_a.setText(COL_VALUE, "99")
+    v._on_item_changed(child_a, COL_VALUE)
+    child_b.setText(COL_VALUE, "42")
+    v._on_item_changed(child_b, COL_VALUE)
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v.tree.setCurrentItem(child_a)
+    v._on_write()
+    v.on_write_done("grp_a")
+
+    neutral = v.tree.palette().text().color()
+    assert child_a.foreground(COL_NAME).color() == neutral
+    assert "grp_b" in v._dirty
+    assert parent.foreground(COL_NAME).color() != neutral  # grp_b vẫn dirty -> cha còn cam
 
 
 def test_array_placeholder_edit_ignored(qtbot) -> None:
@@ -719,6 +1369,46 @@ def test_write_all_uses_queue(qtbot) -> None:
     
     assert len(writes) == 2
     assert len(v._write_queue) == 0
+
+
+def test_set_database_handled_filtered_by_type_keeps_flat_characteristic_name_collision(
+    qtbot,
+) -> None:
+    """Bug thật (final review, Fix 5): `handled` trong set_database() được
+    gom từ _leaf_names(node) đi trên TOÀN BỘ instance_trees — trước fix,
+    hàm này trả về MỌI leaf_name bất kể is_measurement. a2l/database.py chỉ
+    chống trùng tên TRONG CÙNG dict (characteristics riêng, measurements
+    riêng) nên 1 MEASUREMENT resolve-từ-INSTANCE hoàn toàn có thể trùng tên
+    với 1 CHARACTERISTIC phẳng độc lập mà parser không hề chặn. Nếu không
+    lọc theo is_measurement, CHARACTERISTIC phẳng đó bị `handled` loại êm và
+    biến mất khỏi CalibrationView dù hợp lệ."""
+    db = A2LDatabase()
+    db.characteristics["shared"] = Characteristic(
+        name="shared", description="", char_type="VALUE", address=MEM_BASE,
+        record_layout="RL_UBYTE", lower_limit=0.0, upper_limit=255.0,
+        datatype="UBYTE", array_size=1,
+    )
+    db.measurements["shared"] = Measurement(
+        name="shared", description="", datatype="UBYTE",
+        address=MEM_BASE + 0x10, lower_limit=0.0, upper_limit=255.0,
+    )
+    # INSTANCE-resolved MEASUREMENT leaf trùng tên "shared" — mô phỏng đúng
+    # shape mà a2l/database.py._resolve_type() dựng cho 1 INSTANCE trỏ tới
+    # TYPEDEF_MEASUREMENT tên "shared".
+    db.instance_trees["shared"] = InstanceNode(
+        name="shared", address=MEM_BASE + 0x10, leaf_name="shared",
+        is_measurement=True, struct_size=None,
+    )
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    # CHARACTERISTIC phẳng "shared" KHÔNG được handled loại êm chỉ vì trùng
+    # tên với 1 MEASUREMENT resolve-từ-INSTANCE khác hẳn.
+    assert v.tree.topLevelItemCount() == 1
+    only = v.tree.topLevelItem(0)
+    assert only.data(COL_NAME, Qt.UserRole) == "shared"
+    assert "shared" in v._char_items
 
 
 def test_float_radix_decode_and_encode() -> None:
