@@ -514,15 +514,29 @@ class CalibrationView(QWidget):
             
         if item.childCount() > 0:
             if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
-                for i in range(item.childCount()):
-                    child = item.child(i)
-                    child_name = child.data(COL_NAME, Qt.UserRole)
-                    if child.childCount() > 0:
-                        child_vals = [child.child(j).text(COL_VALUE) for j in range(child.childCount())]
-                        self._original[child_name] = ", ".join(child_vals)
+                # Đệ quy hết mọi độ sâu qua _leaf_write_items (giống _write_parent) —
+                # struct lồng nhiều cấp thì lá thật (CHARACTERISTIC) có thể nằm dưới
+                # các node trung gian (VD "outer.ctl"), không phải con trực tiếp của
+                # `item`. Chỉ duyệt con trực tiếp bỏ sót lá sâu: dirty/_original của
+                # nó không bao giờ được dọn, và node trung gian (đã bị _on_item_changed
+                # tô cam ở COL_NAME khi con nó dirty) kẹt cam mãi dù đã ghi xong.
+                for leaf_item, c_name, _c_def in self._leaf_write_items(item):
+                    if leaf_item.childCount() > 0:
+                        leaf_vals = [
+                            leaf_item.child(j).text(COL_VALUE)
+                            for j in range(leaf_item.childCount())
+                        ]
+                        self._original[c_name] = ", ".join(leaf_vals)
                     else:
-                        self._original[child_name] = child.text(COL_VALUE)
-                    self._dirty.discard(child_name)
+                        self._original[c_name] = leaf_item.text(COL_VALUE)
+                    self._dirty.discard(c_name)
+                    leaf_item.setForeground(COL_VALUE, self.tree.palette().text())
+                    # Dọn cam ở mọi node trung gian giữa lá và `item` — vòng lặp
+                    # ở trên (dòng ~508-511) chỉ đụng tới con TRỰC TIẾP của `item`.
+                    ancestor = leaf_item.parent()
+                    while ancestor is not None and ancestor is not item:
+                        ancestor.setForeground(COL_NAME, self.tree.palette().text())
+                        ancestor = ancestor.parent()
             else:
                 child_vals = [item.child(i).text(COL_VALUE) for i in range(item.childCount())]
                 self._original[name] = ", ".join(child_vals)
@@ -1058,12 +1072,13 @@ class CalibrationView(QWidget):
         if item and (
             item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY[")
         ):
-            enable = False
-            for i in range(item.childCount()):
-                child_name = item.child(i).data(COL_NAME, Qt.UserRole)
-                if isinstance(child_name, str) and child_name in self._dirty:
-                    enable = True
-                    break
+            # Đệ quy hết mọi độ sâu (giống _write_parent/_leaf_write_items) —
+            # struct lồng nhiều cấp thì chỉ 1 lá SÂU dirty (không phải con trực
+            # tiếp) vẫn phải bật nút, vì _write_parent sẽ ghi đúng lá đó.
+            enable = any(
+                c_name in self._dirty
+                for _leaf_item, c_name, _c_def in self._leaf_write_items(item)
+            )
             self.write_btn.setEnabled(enable)
         else:
             self.write_btn.setEnabled(char_name in self._dirty)

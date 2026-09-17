@@ -1035,6 +1035,116 @@ def test_write_parent_recurses_into_nested_struct_children(qtbot) -> None:
     assert not v._dirty & set(leaf_names)
 
 
+def test_write_parent_clears_deep_nested_leaf_dirty_and_enables_write_btn(qtbot) -> None:
+    """Bug thật còn sót (residual, final review): _leaf_write_items() đã cho
+    _write_parent() ghi đúng lá lồng sâu, nhưng on_write_done() và
+    _update_write_btn() vẫn chỉ duyệt CON TRỰC TIẾP của dòng struct ngoài
+    cùng.
+
+    Với struct lồng 2 cấp (outerInst.kp trực tiếp + outerInst.ctl.{ki,kd}
+    lồng qua "ctl"), dirty đúng 1 lá SÂU "outerInst.ctl.ki" (không phải con
+    trực tiếp — con trực tiếp của outerInst là "kp" và "ctl"):
+
+    1. _update_write_btn(): trước fix chỉ soát "kp"/"ctl" trong self._dirty
+       (cả hai đều không có mặt — "ctl" mang tên hierarchical, không phải
+       key dirty thật) -> nút Write bị khoá dù _write_parent ghi đúng.
+    2. on_write_done(): trước fix cũng chỉ duyệt "kp"/"ctl" -> không bao giờ
+       refresh _original["outerInst.ctl.ki"], và node trung gian "ctl" (đã
+       bị _on_item_changed tô cam ở COL_NAME khi lá con nó dirty) không bao
+       giờ được dọn cam — kẹt cam mãi dù ECU đã nhận đủ byte.
+    """
+    import tempfile, textwrap
+    from xcptool.a2l.database import load as a2l_load
+    a2l_text = textwrap.dedent("""
+    /begin RECORD_LAYOUT RL_F32
+        FNC_VALUES 1 FLOAT32_IEEE ROW_DIR DIRECT
+    /end RECORD_LAYOUT
+    /begin TYPEDEF_CHARACTERISTIC T_Gain "gain" VALUE RL_F32 0 CM_NONE 0 10
+    /end TYPEDEF_CHARACTERISTIC
+    /begin TYPEDEF_STRUCTURE Inner_t "inner" 8
+        /begin STRUCTURE_COMPONENT ki T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT kd T_Gain 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin TYPEDEF_STRUCTURE Outer_t "outer" 12
+        /begin STRUCTURE_COMPONENT kp T_Gain 0
+        /end STRUCTURE_COMPONENT
+        /begin STRUCTURE_COMPONENT ctl Inner_t 4
+        /end STRUCTURE_COMPONENT
+    /end TYPEDEF_STRUCTURE
+    /begin INSTANCE outerInst "outer instance" Outer_t 0x80100000
+    /end INSTANCE
+    """)
+    with tempfile.NamedTemporaryFile("w", suffix=".a2l", delete=False) as f:
+        f.write(a2l_text)
+        path = f.name
+    db = a2l_load(path)
+
+    v = _make_view(qtbot)
+    v.set_database(db)
+
+    parent = v._char_items["outerInst"]
+    nested = next(
+        (parent.child(i) for i in range(parent.childCount()) if parent.child(i).childCount() > 0),
+        None,
+    )
+    assert nested is not None, "test setup phải có 1 con là struct lồng (ctl)"
+    deep_leaf = next(
+        nested.child(j) for j in range(nested.childCount())
+        if nested.child(j).data(COL_NAME, Qt.UserRole) == "outerInst.ctl.ki"
+    )
+
+    # Mô phỏng đã đọc xong 1 lần — mọi lá (kp, ki, kd) đều có giá trị hợp lệ
+    # và _original đã ghi nhận, y hệt sau on_read_done() thật. Không đụng gì
+    # ngoài "ki" phía dưới, nên "kp"/"kd" vẫn phải sạch sau khi ghi.
+    for i in range(parent.childCount()):
+        child = parent.child(i)
+        if child.childCount() == 0:
+            child.setText(COL_VALUE, "1.0")
+            v._original[child.data(COL_NAME, Qt.UserRole)] = "1.0"
+    for j in range(nested.childCount()):
+        leaf = nested.child(j)
+        leaf.setText(COL_VALUE, "1.0")
+        v._original[leaf.data(COL_NAME, Qt.UserRole)] = "1.0"
+
+    # Dirty đúng 1 lá SÂU — không đụng tới "kp" hay bất kỳ con trực tiếp nào.
+    deep_leaf.setText(COL_VALUE, "5.0")
+    v._on_item_changed(deep_leaf, COL_VALUE)
+
+    neutral = v.tree.palette().text().color()
+    assert "outerInst.ctl.ki" in v._dirty
+    assert nested.foreground(COL_NAME).color() != neutral  # "ctl" đã tô cam khi sửa lá con
+    assert "outerInst.kp" not in v._dirty  # con trực tiếp còn lại KHÔNG dirty
+
+    # (1) _update_write_btn(): chọn dòng struct ngoài cùng — chỉ 1 lá SÂU
+    # dirty vẫn phải bật nút, vì _write_parent() ghi đúng lá đó.
+    v.tree.setCurrentItem(parent)
+    v._update_write_btn()
+    assert v.write_btn.isEnabled(), (
+        "Write button phải bật khi có lá SÂU dirty, dù không phải con trực tiếp"
+    )
+
+    # Ghi cả struct ngoài cùng — _write_parent() đệ quy đúng qua _leaf_write_items().
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._write_parent("outerInst", parent)
+    assert writes, "_write_parent phải ghi được (đã kiểm chứng riêng ở test khác)"
+
+    # Mô phỏng ECU ack đoạn ghi.
+    v.on_write_done("outerInst")
+
+    # (2) on_write_done(): _original phải được refresh và dirty phải sạch cho
+    # lá sâu, và node trung gian "ctl" phải hết cam — không chỉ con trực tiếp.
+    assert "outerInst.ctl.ki" not in v._dirty
+    assert v._original["outerInst.ctl.ki"] == "5.0", (
+        "_original phải được refresh cho lá lồng sâu sau khi ghi thành công"
+    )
+    assert nested.foreground(COL_NAME).color() == neutral, (
+        "node trung gian 'ctl' phải hết cam sau khi ghi xong — trước fix vẫn kẹt cam"
+    )
+
+
 # ── _split_into_contiguous_runs — helper thuần, không cần Qt ────────────────
 
 def test_split_into_contiguous_runs_packed_gives_one_run() -> None:
