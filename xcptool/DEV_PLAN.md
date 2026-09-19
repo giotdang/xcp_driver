@@ -2064,8 +2064,9 @@ git commit -m "docs(xcptool): mark ASAP2 struct-typedef feature as shipped"
 
 ## 11. Kế hoạch tiếp theo — Multi-select & Calibration Dataset (spec 2026-09-19)
 
-**Trạng thái: spec đã duyệt, chưa triển khai.** 3 tính năng liên quan, làm
-theo đúng thứ tự phụ thuộc dưới đây (branch `feature`).
+**Trạng thái: mục (1) đã triển khai xong (2026-09-19); (2) và (3) chưa bắt
+đầu.** 3 tính năng liên quan, làm theo đúng thứ tự phụ thuộc dưới đây
+(branch `feature`).
 
 1. **Multi-select trong CalibrationView (Read/Write Selected theo nhiều dòng)**
    — spec: [`docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md`](docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md).
