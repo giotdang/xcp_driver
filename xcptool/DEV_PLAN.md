@@ -2059,3 +2059,25 @@ git commit -m "docs(xcptool): mark ASAP2 struct-typedef feature as shipped"
 ```
 
 **→ Toàn bộ tính năng xong khi Task 14 commit xanh.** `_group_by_prefix` không còn tồn tại ở đâu trong codebase (`grep -rn "_group_by_prefix" src/` phải ra rỗng).
+
+---
+
+## 11. Kế hoạch tiếp theo — Multi-select & Calibration Dataset (spec 2026-09-19)
+
+**Trạng thái: spec đã duyệt, chưa triển khai.** 3 tính năng liên quan, làm
+theo đúng thứ tự phụ thuộc dưới đây (branch `feature`).
+
+1. **Multi-select trong CalibrationView (Read/Write Selected theo nhiều dòng)**
+   — spec: [`docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md`](docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md).
+   Tính năng nền tảng, không phụ thuộc gì — làm trước tiên. Đổi tree sang
+   `ExtendedSelection` (Ctrl/Shift chọn nhiều dòng), thêm helper
+   `_resolve_leaf_names()` dùng chung, mở rộng "Read" và "Write Selected"
+   ăn theo tập đang chọn thay vì chỉ 1 dòng.
+2. **Export / Import Calibration Dataset** — spec:
+   [`docs/superpowers/specs/2026-09-19-calibration-dataset-export-import-design.md`](docs/superpowers/specs/2026-09-19-calibration-dataset-export-import-design.md).
+   Phụ thuộc mục (1) — "Export Selected to File" cần multi-select. Chuột
+   phải trên tree: Export All / Export Selected / Import Dataset (file
+   JSON), module mới `a2l/dataset.py`.
+3. **Generate hex/s19 file** (calib đã hiệu chỉnh → merge vào file hex/s19
+   gốc nạp ECU) — **chưa thiết kế**, dự kiến tái dùng dataset engine của
+   mục (2) làm nguồn giá trị. Làm sau khi (1) và (2) xong.
