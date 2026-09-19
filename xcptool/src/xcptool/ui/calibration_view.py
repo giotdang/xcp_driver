@@ -225,7 +225,7 @@ class CalibrationView(QWidget):
     def __init__(
         self,
         read_all_cb: Callable[[], None],
-        read_cb: Callable[[str], None],                # (name)
+        read_cb: Callable[[list[str]], None],           # (names)
         write_cb: Callable[[str, int, bytes], None],   # (name, addr, data)
         get_pages_cb: Callable[[int], None],           # (segment)
         set_page_cb: Callable[[int, int], None],        # (segment, page) — set CẢ ECU lẫn XCP
@@ -636,12 +636,11 @@ class CalibrationView(QWidget):
         self._read_all_cb()
 
     def _on_read(self) -> None:
-        """Read only the selected parent characteristic."""
-        char_name = self._selected_char_name()
-        if not char_name:
+        """Read every selected characteristic (1 or many rows)."""
+        names = self._resolve_leaf_names(self.tree.selectedItems())
+        if not names:
             return
-            
-        self._read_cb(char_name)
+        self._read_cb(names)
 
     def _on_write(self) -> None:
         """Called when 'Write Selected' is clicked."""

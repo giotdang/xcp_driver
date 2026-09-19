@@ -140,7 +140,7 @@ class MainWindow(QMainWindow):
         )
         self.calibration_view = CalibrationView(
             read_all_cb=self.read_all_characteristics,
-            read_cb=self.read_characteristic,
+            read_cb=self.read_characteristics,
             write_cb=self.write_characteristic,
             get_pages_cb=self.cal_get_pages,
             set_page_cb=self.cal_set_page,
@@ -626,15 +626,19 @@ class MainWindow(QMainWindow):
         )
 
     def read_all_characteristics(self) -> None:
-        if not self._guard():
-            return
-        symbols = self.session.symbols
         names = self.calibration_view.loaded_characteristic_names()
         if not names:
             self.calibration_view.status_label.setText(
                 "No A2L loaded or file contains no CHARACTERISTICs."
             )
             return
+        self.read_characteristics(names)
+
+    def read_characteristics(self, names: list[str]) -> None:
+        if not self._guard():
+            return
+        symbols = self.session.symbols
+        label = f"Reading {names[0]}…" if len(names) == 1 else f"Reading {len(names)} parameters…"
 
         def _batch(task_ref: list[Any]) -> dict:
             results: dict[str, bytes | None] = {}
@@ -653,32 +657,9 @@ class MainWindow(QMainWindow):
 
         task_ref: list[Any] = [None]
         task_ref[0] = self._call(
-            "Reading all parameters…",
+            label,
             _batch,
             task_ref,
-            on_ok=self.calibration_view.on_batch_read_done,
-        )
-
-    def read_characteristic(self, name: str) -> None:
-        if not self._guard():
-            return
-        symbols = self.session.symbols
-        char = symbols.characteristics.get(name)
-        if not char:
-            return
-            
-        def _read() -> dict:
-            if char.byte_size <= 0:
-                return {name: None}
-            try:
-                data = self.session.read(char.address, char.byte_size)
-                return {name: data}
-            except Exception:
-                return {name: None}
-
-        self._call(
-            f"Reading {name}…",
-            _read,
             on_ok=self.calibration_view.on_batch_read_done,
         )
 

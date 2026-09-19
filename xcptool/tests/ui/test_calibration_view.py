@@ -96,13 +96,15 @@ def _add_struct_instance(db: A2LDatabase, group_name: str, leaf_names: list[str]
 
 
 def _make_view(qtbot) -> CalibrationView:
-    calls: dict[str, list] = {"read_all": [], "write": [], "pages": [], "set_page": [], "copy": []}
+    calls: dict[str, list] = {
+        "read_all": [], "read": [], "write": [], "pages": [], "set_page": [], "copy": [],
+    }
 
     def read_all_cb():
         calls["read_all"].append(True)
 
-    def read_cb(name):
-        calls["read"].append(name)
+    def read_cb(names):
+        calls["read"].append(names)
 
     def write_all_cb(dirty_items):
         calls["write_all"].append(dirty_items)
@@ -469,6 +471,17 @@ def test_doc_tat_ca_qua_session(qtbot, connected_window: MainWindow) -> None:
     assert items["OFFSET"].text(COL_VALUE) != "—"
 
 
+def test_read_characteristics_doc_nhieu_ten_qua_session(qtbot, connected_window: MainWindow) -> None:
+    db = _make_db()
+    connected_window.session._a2l_db = db  # type: ignore[attr-defined]
+    connected_window.calibration_view.set_database(db)
+    connected_window.read_characteristics(["GAIN", "OFFSET"])
+    qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
+    items = connected_window.calibration_view._char_items
+    assert items["GAIN"].text(COL_VALUE) != "—"
+    assert items["OFFSET"].text(COL_VALUE) != "—"
+
+
 def test_huy_read_all_dung_dung_task_dang_chay(
     qtbot, connected_window: MainWindow
 ) -> None:
@@ -493,7 +506,7 @@ def test_huy_read_all_dung_dung_task_dang_chay(
 
     # Làm bẩn _connect_task đúng như kịch bản bug: một _call() khác đã chạy
     # xong trước read-all.
-    connected_window.read_characteristic("P0")
+    connected_window.read_characteristics(["P0"])
     qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
 
     connected_window.read_all_characteristics()
@@ -1660,5 +1673,35 @@ def test_write_all_van_dung_sau_khi_tach_helper(qtbot) -> None:
     assert len(writes) == 1  # chỉ item đầu được bắn ngay
     v.on_write_done(writes[0])
     assert sorted(writes) == ["a", "b"]
+
+
+# ── Read — đa chọn (multi-select) ───────────────────────────────────────────
+
+def test_on_read_da_chon_nhieu_dong_goi_read_cb_voi_list(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    item_gain = v._char_items["GAIN"]
+    item_offset = v._char_items["OFFSET"]
+    item_gain.setSelected(True)
+    item_offset.setSelected(True)
+    v._on_read()
+    assert sorted(v._calls["read"][0]) == ["GAIN", "OFFSET"]
+
+
+def test_on_read_1_dong_goi_read_cb_voi_list_1_phan_tu(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    item_gain = v._char_items["GAIN"]
+    v.tree.setCurrentItem(item_gain)
+    item_gain.setSelected(True)
+    v._on_read()
+    assert v._calls["read"] == [["GAIN"]]
+
+
+def test_on_read_khong_chon_gi_khong_goi_cb(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v._on_read()
+    assert v._calls["read"] == []
 
 
