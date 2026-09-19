@@ -645,22 +645,33 @@ class CalibrationView(QWidget):
 
     def _on_write(self) -> None:
         """Called when 'Write Selected' is clicked."""
+        selected = self.tree.selectedItems()
+        if len(selected) > 1:
+            names = set(self._resolve_leaf_names(selected)) & self._dirty
+            if not names:
+                return
+            self._write_queue = list(self._write_roots_for(names))
+            self._process_write_queue()
+            return
+
         char_name = self._selected_char_name()
         if not char_name:
             return
-            
+
         item = self._char_items.get(char_name)
         if item:
             self._write_parent(char_name, item)
 
-    def _on_write_all(self) -> None:
-        """Called when 'Write All' is clicked."""
-        dirty_names = list(self._dirty)
-        items_to_write = set()
-        for char_name in dirty_names:
+    def _write_roots_for(self, names: Iterable[str]) -> set[QTreeWidgetItem]:
+        """Map CHARACTERISTIC names to the tree item(s) that must actually be
+        written — a STRUCT/ARRAY member is promoted to its parent, since a
+        struct write always sends the whole contiguous run, never one member
+        alone (see `_write_parent`'s STRUCT/ARRAY branch)."""
+        items_to_write: set[QTreeWidgetItem] = set()
+        for char_name in names:
             item = self._char_items.get(char_name)
-            if not item: continue
-            
+            if not item:
+                continue
             if item.parent() is not None and (
                 item.parent().text(COL_TYPE).startswith("STRUCT")
                 or item.parent().text(COL_TYPE).startswith("ARRAY[")
@@ -668,8 +679,11 @@ class CalibrationView(QWidget):
                 items_to_write.add(item.parent())
             else:
                 items_to_write.add(item)
-                
-        self._write_queue = list(items_to_write)
+        return items_to_write
+
+    def _on_write_all(self) -> None:
+        """Called when 'Write All' is clicked."""
+        self._write_queue = list(self._write_roots_for(self._dirty))
         self._process_write_queue()
         
     def _process_write_queue(self) -> None:
@@ -1093,11 +1107,17 @@ class CalibrationView(QWidget):
         self._update_write_btn()
 
     def _update_write_btn(self) -> None:
+        selected = self.tree.selectedItems()
+        if len(selected) > 1:
+            enable = bool(set(self._resolve_leaf_names(selected)) & self._dirty)
+            self.write_btn.setEnabled(enable)
+            return
+
         char_name = self._selected_char_name()
         if not char_name:
             self.write_btn.setEnabled(False)
             return
-            
+
         item = self._char_items.get(char_name)
         if item and (
             item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY[")

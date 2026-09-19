@@ -1516,3 +1516,149 @@ def test_encode_value_ascii_support() -> None:
     assert encode_value("0x48", "UWORD", "little", 1) == b"\x48\x00"
 
 
+# ── Write Selected — đa chọn (multi-select) ─────────────────────────────────
+
+def test_write_selected_da_chon_chi_ghi_dong_dirty(qtbot) -> None:
+    """Chọn 3 dòng, chỉ 1 dòng dirty -> chỉ đúng 1 lệnh WRITE được gửi."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic(
+        "a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["b"] = Characteristic(
+        "b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["c"] = Characteristic(
+        "c", "", "VALUE", MEM_BASE + 4, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+
+    item_a, item_b, item_c = v._char_items["a"], v._char_items["b"], v._char_items["c"]
+    v._original["a"] = item_a.text(COL_VALUE)
+    v._original["b"] = item_b.text(COL_VALUE)
+    v._original["c"] = item_c.text(COL_VALUE)
+
+    item_b.setText(COL_VALUE, "42")
+    v._on_item_changed(item_b, COL_VALUE)
+    assert v._dirty == {"b"}
+
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+    item_c.setSelected(True)
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._on_write()
+
+    assert [w[0] for w in writes] == ["b"]
+
+
+def test_write_selected_struct_cha_co_con_dirty_ghi_ca_khoi(qtbot) -> None:
+    """Chọn nhiều dòng gồm 1 struct cha có con dirty -> ghi TOÀN BỘ struct
+    (đúng cơ chế contiguous-run cũ), không chỉ đúng con dirty; dòng không
+    dirty trong tập chọn bị bỏ qua.
+
+    Phải giả lập đã đọc (on_read_done) cho MỌI leaf trong struct trước khi
+    sửa — nhánh STRUCT của _write_parent ghi cả khối (kể cả leaf không
+    dirty), nếu leaf nào còn giữ placeholder "—" (chưa từng đọc) thì
+    encode_value() ném lỗi và cả khối bị bỏ qua êm (không throw ra ngoài)."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["solo"] = Characteristic(
+        "solo", "", "VALUE", MEM_BASE + 64, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+
+    v.on_read_done("grp_a", (10).to_bytes(2, "little", signed=True))
+    v.on_read_done("grp_b", (20).to_bytes(2, "little", signed=True))
+    v.on_read_done("solo", (30).to_bytes(2, "little", signed=True))
+
+    parent = v._char_items["grp"]
+    child_a = parent.child(0)
+    solo_item = v._char_items["solo"]
+
+    child_a.setText(COL_VALUE, "99")
+    v._on_item_changed(child_a, COL_VALUE)
+    assert v._dirty == {"grp_a"}
+
+    parent.setSelected(True)
+    solo_item.setSelected(True)
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._on_write()
+
+    # solo không dirty -> bỏ qua; "grp" (2 member liền khít) ghi 1 lệnh duy nhất.
+    assert [w[0] for w in writes] == ["grp"]
+
+
+def test_write_selected_khong_ai_dirty_khong_ghi_gi(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic(
+        "a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["b"] = Characteristic(
+        "b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+    item_a, item_b = v._char_items["a"], v._char_items["b"]
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._on_write()
+    assert writes == []
+
+
+def test_write_btn_enable_theo_multi_select(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic(
+        "a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["b"] = Characteristic(
+        "b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+    item_a, item_b = v._char_items["a"], v._char_items["b"]
+    v._original["a"] = item_a.text(COL_VALUE)
+    item_a.setText(COL_VALUE, "5")
+    v._on_item_changed(item_a, COL_VALUE)
+
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+    v._update_write_btn()
+    assert v.write_btn.isEnabled()
+
+    item_a.setSelected(False)
+    v.tree.setCurrentItem(item_b)
+    v._update_write_btn()
+    # chỉ còn "b" chọn (đường 1-item cũ), "b" không dirty -> tắt nút
+    assert not v.write_btn.isEnabled()
+
+
+def test_write_all_van_dung_sau_khi_tach_helper(qtbot) -> None:
+    """Regression: _on_write_all() phải cho kết quả giống hệt trước khi tách
+    _write_roots_for() ra khỏi nó — hàng đợi vẫn xử lý tuần tự từng item,
+    chỉ bắn item kế tiếp sau khi on_write_done() báo item trước xong (giống
+    test_write_all_uses_queue đã có)."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic("a", "", "VALUE", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    db.characteristics["b"] = Characteristic("b", "", "VALUE", MEM_BASE + 4, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    v.set_database(db)
+
+    item_a, item_b = v._char_items["a"], v._char_items["b"]
+    item_a.setText(COL_VALUE, "1.0")
+    item_b.setText(COL_VALUE, "2.0")
+    v._dirty.add("a")
+    v._dirty.add("b")
+
+    writes: list[str] = []
+    v._write_parent = lambda name, item: writes.append(name)
+    v._on_write_all()
+
+    assert len(writes) == 1  # chỉ item đầu được bắn ngay
+    v.on_write_done(writes[0])
+    assert sorted(writes) == ["a", "b"]
+
+
