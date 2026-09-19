@@ -6,6 +6,7 @@ import struct
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractItemView
 
 from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, Measurement, RecordLayout
 from xcptool.session.api import BusConfig, ConnState, PageMode
@@ -1143,6 +1144,76 @@ def test_write_parent_clears_deep_nested_leaf_dirty_and_enables_write_btn(qtbot)
     assert nested.foreground(COL_NAME).color() == neutral, (
         "node trung gian 'ctl' phải hết cam sau khi ghi xong — trước fix vẫn kẹt cam"
     )
+
+
+# ── multi-select: ExtendedSelection + _resolve_leaf_names ───────────────────
+
+def test_tree_ho_tro_multi_select(qtbot) -> None:
+    v = _make_view(qtbot)
+    assert v.tree.selectionMode() == QAbstractItemView.ExtendedSelection
+
+
+def test_resolve_leaf_names_don_1_scalar(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    item = v._char_items["GAIN"]
+    assert v._resolve_leaf_names([item]) == ["GAIN"]
+
+
+def test_resolve_leaf_names_struct_cha_ra_het_la_that(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+    parent = v._char_items["grp"]
+    assert sorted(v._resolve_leaf_names([parent])) == ["grp_a", "grp_b"]
+
+
+def test_resolve_leaf_names_khu_trung_cha_va_con(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+    parent = v._char_items["grp"]
+    child_a = parent.child(0)
+    names = v._resolve_leaf_names([parent, child_a])
+    assert sorted(names) == ["grp_a", "grp_b"]  # grp_a không lặp lại dù chọn cả cha lẫn con
+
+
+def test_resolve_leaf_names_val_blk_tra_ve_1_ten_cha(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    parent = v._char_items["LUT"]
+    assert v._resolve_leaf_names([parent]) == ["LUT"]
+
+
+def test_resolve_leaf_names_array_elem_con_tra_ve_ten_cha(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    child = v._char_items["LUT"].child(2)
+    assert v._resolve_leaf_names([child]) == ["LUT"]
+
+
+def test_resolve_leaf_names_gop_2_nhom_doc_lap(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp1_a"] = Characteristic(
+        "grp1_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp2_a"] = Characteristic(
+        "grp2_a", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp1", ["grp1_a"])
+    _add_struct_instance(db, "grp2", ["grp2_a"])
+    v.set_database(db)
+    names = v._resolve_leaf_names([v._char_items["grp1"], v._char_items["grp2"]])
+    assert sorted(names) == ["grp1_a", "grp2_a"]
 
 
 # ── _split_into_contiguous_runs — helper thuần, không cần Qt ────────────────

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import struct
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
@@ -312,7 +312,7 @@ class CalibrationView(QWidget):
         self.tree.setHeaderLabels(_HEADERS)
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
-        self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         # Chỉ cho sửa khi double-click cột Value — xem _start_value_edit
         self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tree.itemDoubleClicked.connect(self._start_value_edit)
@@ -703,6 +703,36 @@ class CalibrationView(QWidget):
                 result.append((child, c_name, c_def))
             else:
                 result.extend(self._leaf_write_items(child))
+        return result
+
+    def _resolve_leaf_names(self, items: Iterable[QTreeWidgetItem]) -> list[str]:
+        """Flatten a set of tree items (leaves, VAL_BLK array parents, or
+        STRUCT/ARRAY group nodes) into a deduplicated list of real A2L
+        CHARACTERISTIC names, in input order.
+
+        Mirrors `_selected_char_name()`'s Qt.UserRole handling (array_elem
+        tuple -> parent char name; a name already in self._db.characteristics
+        -> itself) for a single item, and falls back to `_leaf_write_items()`'s
+        existing struct/array recursion for group nodes whose data role is a
+        hierarchical (non-CHARACTERISTIC-key) name."""
+        seen: set[str] = set()
+        result: list[str] = []
+
+        def add(name: str) -> None:
+            if name not in seen:
+                seen.add(name)
+                result.append(name)
+
+        for item in items:
+            data_role = item.data(COL_NAME, Qt.UserRole)
+            if isinstance(data_role, tuple):
+                add(data_role[1] if data_role[0] == "array_elem" else data_role[0])
+                continue
+            if isinstance(data_role, str) and data_role in self._db.characteristics:
+                add(data_role)
+                continue
+            for _leaf_item, c_name, _c_def in self._leaf_write_items(item):
+                add(c_name)
         return result
 
     def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
