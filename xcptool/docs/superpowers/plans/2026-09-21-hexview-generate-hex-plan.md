@@ -94,17 +94,20 @@ import pytest
 
 from xcptool.a2l import hexfile
 
-# A minimal 8-byte Intel HEX file: 0x0100-0x0107 = 01 02 03 04 05 06 07 08
+# A minimal 8-byte Intel HEX file: 0x0100-0x0107 = 01 02 03 04 05 06 07 08.
+# Generated with `bincopy.BinFile().add_binary(bytes(range(1,9)), address=0x100).as_ihex()`
+# rather than hand-computed, to avoid a hand-arithmetic checksum error (confirmed
+# during implementation — a hand-typed checksum here was wrong on the first try).
 _IHEX = (
-    ":08010000010203040506070882\n"
+    ":080100000102030405060708D3\n"
     ":00000001FF\n"
 )
 
-# The same 8 bytes at the same address, as Motorola S-record (S1, 16-bit addr).
+# Same 8 bytes at the same address, as Motorola S-record — generated with
+# `.as_srec()` the same way, for the same reason.
 _SREC = (
-    "S1130100010203040506070800000000000000E0\n"
+    "S30D000001000102030405060708CD\n"
     "S5030001FB\n"
-    "S9030000FC\n"
 )
 
 
@@ -286,7 +289,9 @@ def test_patch_and_save_srec_to_srec(tmp_path: Path) -> None:
     out = tmp_path / "image_mod.s19"
     hexfile.patch_and_save(src, [(0x0100, b"\x99", "p")], out)
 
-    assert out.read_text(encoding="ascii").startswith("S1")  # S-record, not Intel HEX
+    assert out.read_text(encoding="ascii").startswith("S")  # S-record, not Intel HEX
+    # (bincopy's as_srec() emits S3/S5 — 32-bit-address records — not S1, confirmed
+    # during implementation; assert the family, not a specific record type)
     result = hexfile.load(out)
     assert hexfile.read_region(result, 0x0100, 1) == b"\x99"
 
@@ -1000,7 +1005,7 @@ from xcptool.session.api import XcpToolError
 from xcptool.session.fake import FakeSession
 from xcptool.session.real import RealSession
 
-_IHEX = ":08010000010203040506070882\n:00000001FF\n"
+_IHEX = ":080100000102030405060708D3\n:00000001FF\n"
 
 
 def _write_hex(tmp_path: Path) -> Path:
@@ -1777,7 +1782,7 @@ Characteristic` to its imports):
 ```python
 def test_load_hex_success_refreshes_origin_table(window: MainWindow, tmp_path: Path, qtbot) -> None:
     p = tmp_path / "image.hex"
-    p.write_text(":08010000010203040506070882\n:00000001FF\n", encoding="ascii")
+    p.write_text(":080100000102030405060708D3\n:00000001FF\n", encoding="ascii")
 
     char = Characteristic(
         name="kp", description="", char_type="VALUE", address=0x0100,
@@ -2348,7 +2353,7 @@ def test_connect_success_persists_byte_order_and_updates_hexview(qtbot) -> None:
 
 def test_startup_auto_reloads_last_hex_path_if_file_exists(tmp_path, qtbot) -> None:
     p = tmp_path / "golden.hex"
-    p.write_text(":08010000010203040506070882\n:00000001FF\n", encoding="ascii")
+    p.write_text(":080100000102030405060708D3\n:00000001FF\n", encoding="ascii")
 
     session = FakeSession(FakeBehavior())
     session._app_cfg = AppConfig(
