@@ -65,13 +65,33 @@ def load(path: Path) -> HexImage:
     return HexImage(_binfile=bf, _format=fmt)
 
 
+def _covered(bf: "bincopy.BinFile", address: int, size: int) -> bool:
+    """Whether [address, address+size) is fully contained in one real
+    segment of `bf`.
+
+    Deliberately does NOT use `as_binary()`'s return length as a coverage
+    proxy: `BinFile.as_binary(minimum_address, maximum_address)` pads with
+    `b'\\xff' * word_size_bytes` up to `maximum_address` whenever that
+    address is reached while walking segments — including when the entire
+    requested range sits *before* the lowest real segment (but still below
+    the file's overall `maximum_address`). That makes a full-length,
+    entirely-fabricated 0xFF read indistinguishable from a real one by
+    length alone — confirmed by direct reproduction while implementing
+    Task 6 (querying address 0x100 on a file whose only real data starts
+    at 0x200 returned 4 bytes of 0xFF, not an empty/short read). Coverage
+    must be decided from the segment list itself.
+    """
+    end = address + size
+    return any(seg.address <= address and end <= seg.address + len(seg.data) for seg in bf.segments)
+
+
 def read_region(image: HexImage, address: int, size: int) -> bytes | None:
     """`size` bytes at `address` from `image`, or None if that range isn't
-    fully covered by the file's existing data (`bincopy` returns a short
-    read for a gap instead of raising — verified against bincopy 20.1.1
-    during planning)."""
+    fully covered by one real segment of the file's existing data."""
+    if not _covered(image._binfile, address, size):
+        return None
     data = image._binfile.as_binary(minimum_address=address, maximum_address=address + size)
-    return bytes(data) if len(data) == size else None
+    return bytes(data)
 
 
 def patch_and_save(
@@ -96,8 +116,7 @@ def patch_and_save(
 
     missing: list[str] = []
     for address, data, name in patches:
-        covered = bf.as_binary(minimum_address=address, maximum_address=address + len(data))
-        if len(covered) != len(data):
+        if not _covered(bf, address, len(data)):
             missing.append(f"{name} (0x{address:08X}, {len(data)} byte(s))")
     if missing:
         raise ValueError(

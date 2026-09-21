@@ -224,13 +224,50 @@ def load(path: Path) -> HexImage:
     return HexImage(_binfile=bf, _format=fmt)
 
 
+def _covered(bf: "bincopy.BinFile", address: int, size: int) -> bool:
+    """Whether [address, address+size) is fully contained in one real
+    segment of `bf`.
+
+    Deliberately does NOT use `as_binary()`'s return length as a coverage
+    proxy: `BinFile.as_binary(minimum_address, maximum_address)` pads with
+    `b'\\xff' * word_size_bytes` up to `maximum_address` whenever that
+    address is reached while walking segments — including when the ENTIRE
+    requested range sits *before* the lowest real segment (but still below
+    the file's overall `maximum_address`). A naive length check reads that
+    fabricated padding as real, covered data — confirmed by direct
+    reproduction: querying 4 bytes at address 0x100 on a file whose only
+    real segment starts at 0x200 returns 4 bytes of 0xFF, not an
+    empty/short read (this is genuinely different from the "query strictly
+    after the last segment" case, which does return empty — the two are
+    not symmetric). Coverage must be decided from the segment list itself.
+    """
+    end = address + size
+    return any(seg.address <= address and end <= seg.address + len(seg.data) for seg in bf.segments)
+
+
 def read_region(image: HexImage, address: int, size: int) -> bytes | None:
     """`size` bytes at `address` from `image`, or None if that range isn't
-    fully covered by the file's existing data (`bincopy` returns a short
-    read for a gap instead of raising — see Task 1's verification note)."""
+    fully covered by one real segment of the file's existing data."""
+    if not _covered(image._binfile, address, size):
+        return None
     data = image._binfile.as_binary(minimum_address=address, maximum_address=address + size)
-    return bytes(data) if len(data) == size else None
+    return bytes(data)
 ```
+
+**This coverage-check bug was caught empirically while implementing Task
+6** (the failure showed up as a `test_load_hex_file_replaces_previous`
+assertion mismatch — a second, unrelated hex file's low address read back
+as real data from the first file instead of `None`). It is written
+correctly here, in the plan, because this plan is a living record of the
+actual implementation, not because it was foreseen during the original
+design — a future reader should not need to rediscover it. Add
+`test_read_region_before_lowest_segment_returns_none_not_ff_padding` (and
+`test_patch_and_save_rejects_address_below_lowest_segment` in Task 2's
+test file) using a fixture whose lowest real segment is NOT at the start
+of the address space (e.g. data only at 0x0200, queried/patched at
+0x0100) — every other fixture in this plan happens to have its calibration
+address at or after the file's lowest segment, which would pass even with
+the buggy length-only check and silently miss this regression.
 
 `patch_and_save()` is deliberately left out of this step — Task 2 adds it
 with its own tests, so this task's diff stays reviewable on its own.
@@ -344,12 +381,24 @@ def test_patch_and_save_sequential_calls_are_independent(tmp_path: Path) -> None
     result2 = hexfile.load(out2)
     assert hexfile.read_region(result1, 0x0100, 1) == b"\xAA"
     assert hexfile.read_region(result2, 0x0100, 1) == b"\xBB"
+
+
+def test_patch_and_save_rejects_address_below_lowest_segment(tmp_path: Path) -> None:
+    """Same regression as Task 1's test_read_region_before_lowest_segment_...
+    but for the write path — this is the more dangerous half of the bug: it
+    would have silently accepted a bogus patch as 'covered' and written it,
+    rather than just misreporting a read."""
+    src = _write(tmp_path, "gap.hex", ":04020000AABBCCDDEC\n:00000001FF\n")
+    out = tmp_path / "gap_mod.hex"
+    with pytest.raises(ValueError, match="belowLowestSegment"):
+        hexfile.patch_and_save(src, [(0x0100, b"\x01\x02\x03\x04", "belowLowestSegment")], out)
+    assert not out.exists()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `xcptool/.venv/Scripts/python.exe -m pytest xcptool/tests/unit/test_hexfile.py -v`
-Expected: the 7 new tests FAIL/ERROR — `patch_and_save` doesn't exist yet.
+Expected: the 8 new tests FAIL/ERROR — `patch_and_save` doesn't exist yet.
 
 - [ ] **Step 3: Implement `patch_and_save()`**
 
@@ -379,8 +428,7 @@ def patch_and_save(
 
     missing: list[str] = []
     for address, data, name in patches:
-        covered = bf.as_binary(minimum_address=address, maximum_address=address + len(data))
-        if len(covered) != len(data):
+        if not _covered(bf, address, len(data)):
             missing.append(f"{name} (0x{address:08X}, {len(data)} byte(s))")
     if missing:
         raise ValueError(
@@ -397,7 +445,7 @@ def patch_and_save(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `xcptool/.venv/Scripts/python.exe -m pytest xcptool/tests/unit/test_hexfile.py -v`
-Expected: 12 passed (5 from Task 1 + 7 new).
+Expected: 14 passed (6 from Task 1 + 8 new).
 
 - [ ] **Step 5: Commit**
 
@@ -1049,7 +1097,9 @@ def test_load_hex_file_replaces_previous(session, tmp_path) -> None:
     first = _write_hex(tmp_path)
     session.load_hex_file(first)
 
-    second_content = ":04020000AABBCCDD5A\n:00000001FF\n"
+    # Checksum generated via bincopy itself, not hand-computed (same lesson
+    # as Task 1's fixture — applied preemptively here during implementation).
+    second_content = ":04020000AABBCCDDEC\n:00000001FF\n"
     second = tmp_path / "second.hex"
     second.write_text(second_content, encoding="ascii")
     session.load_hex_file(second)
@@ -1101,13 +1151,12 @@ add the hex-file state fields to `__init__` (alongside wherever
 ```
 
 ```python
+    @_guarded("nạp hex/s19")
     def load_hex_file(self, path: str | Path) -> None:
-        try:
-            self._hex_image = hexfile.load(Path(path))
-        except (ValueError, OSError) as exc:
-            raise XcpToolError(f"Không nạp được file hex/s19: {exc}") from exc
+        self._hex_image = hexfile.load(Path(path))
         self._hex_path = Path(path)
 
+    @_guarded("đọc vùng hex/s19")
     def hex_regions(self, addresses: list[tuple[int, int, str]]) -> dict[str, bytes | None]:
         if self._hex_image is None:
             return {name: None for _addr, _size, name in addresses}
@@ -1116,6 +1165,18 @@ add the hex-file state fields to `__init__` (alongside wherever
             for addr, size, name in addresses
         }
 ```
+
+`real.py` already has a `_guarded(what: str)` decorator (`real.py:86-103`)
+— catches any non-`XcpToolError` exception, logs it, and re-raises as
+`XcpToolError(f"Lỗi nội bộ khi {what}: {exc!r}")`. `load_a2l`/
+`export_dataset`/`import_dataset` all use it; use it here too instead of
+a manual `try/except` (discovered by reading `real.py` in full during
+implementation — the manual try/except this plan originally showed for
+`load_hex_file` is redundant with what `_guarded` already does, and
+inconsistent with every neighboring method in the same file).
+`hex_regions()` never actually raises, but every neighboring method has
+the decorator regardless — apply it for the same defensive-safety-net
+reason, not because this method needs it.
 
 Add the import at the top of `real.py` (alongside the existing
 `from ..a2l...` imports used by `export_dataset`/`import_dataset`):
@@ -1259,8 +1320,26 @@ In `xcptool/src/xcptool/session/api.py`, right after `hex_regions`:
 
 - [ ] **Step 4: Implement in `RealSession` and `FakeSession`**
 
-Identical body in both files (same reasoning as Task 6 — no bus I/O), right
-after `hex_regions`:
+Same reasoning as Task 6 (no bus I/O), right after `hex_regions` in each
+file — but not byte-identical bodies, per Task 6's `_guarded` correction:
+`real.py` relies on its `@_guarded` decorator to convert `patch_and_save`'s
+`ValueError`/`OSError` into `XcpToolError`, `fake.py` (no such decorator)
+does it with an explicit `try/except`, matching each file's own established
+convention for `export_dataset`/`import_dataset`.
+
+In `real.py`:
+
+```python
+    @_guarded("generate hex/s19")
+    def generate_hex_from_dataset(
+        self, patches: list[tuple[int, bytes, str]], output_path: str | Path,
+    ) -> None:
+        if self._hex_path is None:
+            raise XcpToolError("Chưa nạp file hex/s19 — không thể generate")
+        hexfile.patch_and_save(self._hex_path, patches, Path(output_path))
+```
+
+In `fake.py`:
 
 ```python
     def generate_hex_from_dataset(

@@ -61,6 +61,18 @@ def test_read_region_partially_covered_returns_none(tmp_path: Path) -> None:
     assert hexfile.read_region(image, 0x0104, 8) is None
 
 
+def test_read_region_before_lowest_segment_returns_none_not_ff_padding(tmp_path: Path) -> None:
+    """Regression: bincopy's as_binary(min, max) pads with 0xFF up to `max`
+    whenever a real segment lies beyond it — including when the ENTIRE
+    requested range sits before the file's lowest real segment. A naive
+    length check would misread that padding as real, covered data."""
+    # A file whose only real data is at 0x0200, nothing anywhere near 0x0100.
+    src = _write(tmp_path, "gap.hex", ":04020000AABBCCDDEC\n:00000001FF\n")
+    image = hexfile.load(src)
+    assert hexfile.read_region(image, 0x0100, 4) is None
+    assert hexfile.read_region(image, 0x0200, 4) == b"\xAA\xBB\xCC\xDD"
+
+
 def test_patch_and_save_writes_patched_bytes_ihex(tmp_path: Path) -> None:
     src = _write(tmp_path, "image.hex", _IHEX)
     out = tmp_path / "image_mod.hex"
@@ -114,6 +126,17 @@ def test_patch_and_save_lists_every_missing_address_not_just_first(tmp_path: Pat
         )
     assert "firstMissing" in str(excinfo.value)
     assert "secondMissing" in str(excinfo.value)
+
+
+def test_patch_and_save_rejects_address_below_lowest_segment(tmp_path: Path) -> None:
+    """Same regression as test_read_region_before_lowest_segment_... but for
+    the write path — this is the more dangerous half of the bug, since it
+    would have silently accepted a bogus patch as 'covered' and written it."""
+    src = _write(tmp_path, "gap.hex", ":04020000AABBCCDDEC\n:00000001FF\n")
+    out = tmp_path / "gap_mod.hex"
+    with pytest.raises(ValueError, match="belowLowestSegment"):
+        hexfile.patch_and_save(src, [(0x0100, b"\x01\x02\x03\x04", "belowLowestSegment")], out)
+    assert not out.exists()
 
 
 def test_patch_and_save_unrecognized_output_extension_raises(tmp_path: Path) -> None:

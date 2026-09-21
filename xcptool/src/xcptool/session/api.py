@@ -553,6 +553,36 @@ class Session(Protocol):
         format_version/values, format_version không nhận diện được).
         """
 
+    # ── Hex View ─────────────────────────────────────────────────────────────
+
+    def load_hex_file(self, path: str | Path) -> None:
+        """Parse and hold `path` in session state, replacing any previously
+        loaded hex/s19 file. Pure file operation — no ECU connection needed.
+
+        Raises: XcpToolError nếu extension không nhận ra, hoặc file không
+        đọc được/nội dung không hợp lệ.
+        """
+
+    def hex_regions(
+        self, addresses: list[tuple[int, int, str]],
+    ) -> dict[str, bytes | None]:
+        """For each (address, size, name) in `addresses`, the raw bytes at
+        that range in the currently loaded hex/s19 file, keyed by name —
+        None for a name if no hex file is loaded, or its range isn't fully
+        covered. Never raises per-entry."""
+
+    def generate_hex_from_dataset(
+        self, patches: list[tuple[int, bytes, str]], output_path: str | Path,
+    ) -> None:
+        """Patch the currently loaded hex/s19 file with `patches` (already
+        address/byte-resolved and encoded by the caller) and save to
+        `output_path`.
+
+        Raises: XcpToolError nếu chưa có hex file nào được nạp, hoặc một
+        hay nhiều patch nằm ngoài vùng dữ liệu đã có trong file (liệt kê
+        đủ mọi name+address vi phạm). Không ghi gì nếu lỗi.
+        """
+
     # ── DAQ (M4) ─────────────────────────────────────────────────────────────
 
     def start_daq(self, lists: list[DaqList]) -> None:
