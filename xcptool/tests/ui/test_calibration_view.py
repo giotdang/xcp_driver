@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import struct
 
 import pytest
@@ -279,6 +280,79 @@ def test_context_menu_enabled_state_with_data_and_selection(qtbot) -> None:
     assert export_all is True
     assert export_selected is True
     assert import_enabled is True
+
+
+def test_export_all_no_eligible_values_shows_status_no_dialog(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    called = []
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: called.append(1) or ("", ""),
+    )
+    v._on_export_all_to_file()
+    assert called == []  # dialog never opened
+    assert "nothing" in v.status_label.text().lower()
+    assert v._calls["export_dataset"] == []
+
+
+def test_export_all_calls_export_cb_with_gathered_values(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: ("C:/tmp/out.json", "JSON (*.json)"),
+    )
+    v._on_export_all_to_file()
+    assert v._calls["export_dataset"] == [{"GAIN": "42"}]
+
+
+def test_export_selected_uses_resolve_leaf_names(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    v.on_read_done("OFFSET", bytes([1, 0, 0, 0]))
+    v._char_items["GAIN"].setSelected(True)
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: ("C:/tmp/out.json", "JSON (*.json)"),
+    )
+    v._on_export_selected_to_file()
+    assert v._calls["export_dataset"] == [{"GAIN": "42"}]  # OFFSET not selected -> excluded
+
+
+def test_export_cancelled_dialog_does_not_call_cb(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: ("", ""),  # user cancelled
+    )
+    v._on_export_all_to_file()
+    assert v._calls["export_dataset"] == []
+
+
+def test_on_export_ready_writes_file_and_updates_status(qtbot, monkeypatch, tmp_path) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    out_path = tmp_path / "out.json"
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out_path), "JSON (*.json)"),
+    )
+    v._on_export_all_to_file()
+    payload = {
+        "format_version": 1, "tool_version": "0.1.0", "exported_at": "2026-09-21T00:00:00",
+        "a2l_filename": "x.a2l", "a2l_checksum": "sha256:abc", "values": {"GAIN": "42"},
+    }
+    v.on_export_ready(payload)
+    assert out_path.is_file()
+    written = json.loads(out_path.read_text(encoding="utf-8"))
+    assert written == payload
+    assert "Exported 1" in v.status_label.text()
 
 
 def test_set_database_theo_thu_tu_abc(qtbot) -> None:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import struct
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from PySide6.QtCore import Qt, Signal
@@ -838,10 +840,40 @@ class CalibrationView(QWidget):
             self._on_import_dataset_from_file()
 
     def _on_export_all_to_file(self) -> None:
-        pass
+        self._export_to_file(set(self._original) | self._dirty)
 
     def _on_export_selected_to_file(self) -> None:
-        pass
+        self._export_to_file(self._resolve_leaf_names(self.tree.selectedItems()))
+
+    def _export_to_file(self, names: Iterable[str]) -> None:
+        values = self._gather_dataset_values(names)
+        if not values:
+            self.status_label.setText(
+                "Nothing to export — no CHARACTERISTIC has been read or edited yet."
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Calibration Dataset", "dataset.json", "JSON (*.json)"
+        )
+        if not path:
+            return
+        self._pending_export = (path, values)
+        self._export_dataset_cb(values)
+
+    def on_export_ready(self, payload: dict) -> None:
+        """Called by MainWindow with the dict Session.export_dataset() returned,
+        after the worker-thread call started by _export_to_file() completes."""
+        pending = self._pending_export
+        self._pending_export = None
+        if pending is None:
+            return
+        path, values = pending
+        try:
+            Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError as e:
+            self.status_label.setText(f"Failed to write dataset file: {e}")
+            return
+        self.status_label.setText(f"Exported {len(values)} parameter(s) to {Path(path).name}.")
 
     def _on_import_dataset_from_file(self) -> None:
         pass
