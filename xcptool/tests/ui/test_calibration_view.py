@@ -24,6 +24,7 @@ from xcptool.ui.calibration_view import (
     _ROUTE_WORKING,
     _split_into_contiguous_runs,
     decode_value,
+    decode_value_precise,
     encode_value,
 )
 from xcptool.ui.main_window import MainWindow
@@ -153,6 +154,32 @@ def test_decode_array() -> None:
 
 def test_decode_too_short_returns_placeholder() -> None:
     assert decode_value(b"", "ULONG", "little") == "???"
+
+
+def test_decode_value_precise_float64_full_precision() -> None:
+    v = 1.234567890123456
+    data = struct.pack("<d", v)
+    text = decode_value_precise(data, "FLOAT64_IEEE", "little")
+    assert float(text) == v
+    assert text != f"{v:.6g}"  # must NOT be the lossy display rounding
+
+
+def test_decode_value_precise_float32_full_precision() -> None:
+    data = struct.pack("<f", 3.14159265)
+    text = decode_value_precise(data, "FLOAT32_IEEE", "little")
+    # round-trips exactly through the same 32-bit float, even if not equal to
+    # the original 64-bit Python float
+    assert struct.pack("<f", float(text)) == data
+
+
+def test_decode_value_precise_int_matches_decode_value() -> None:
+    data = bytes([1, 2, 3])
+    assert decode_value_precise(data, "UBYTE", "little") == decode_value(data, "UBYTE", "little")
+
+
+def test_decode_value_precise_array_joins_with_comma() -> None:
+    data = struct.pack("<3f", 1.0, 2.0, 3.0)
+    assert decode_value_precise(data, "FLOAT32_IEEE", "little") == "1, 2, 3"
 
 
 def test_encode_ubyte() -> None:

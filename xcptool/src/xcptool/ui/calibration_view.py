@@ -122,6 +122,27 @@ def decode_value(data: bytes, datatype: str, byte_order: str, radix: str = "DEC"
     return ", ".join(parts)
 
 
+def decode_value_precise(data: bytes, datatype: str, byte_order: str) -> str:
+    """Like `decode_value(data, datatype, byte_order, radix="DEC")` but with full
+    round-trip precision for floats (`%.17g` for FLOAT64_IEEE, `%.9g` for
+    FLOAT32_IEEE) instead of `decode_value`'s display-only `%.6g` rounding.
+    Integer formatting is identical — only used for calibration-dataset export
+    (`_gather_dataset_values`), never for on-screen display."""
+    fmt_char = _DTYPE_FMT.get(datatype, "B")
+    endian = _ENDIAN.get(byte_order, "<")
+    item_size = struct.calcsize(fmt_char)
+    if item_size == 0 or len(data) < item_size:
+        return "???"
+    n = len(data) // item_size
+    float_fmt = "%.9g" if datatype == "FLOAT32_IEEE" else "%.17g"
+    parts: list[str] = []
+    for i in range(n):
+        chunk = data[i * item_size:(i + 1) * item_size]
+        v = struct.unpack_from(endian + fmt_char, chunk)[0]
+        parts.append(float_fmt % v if datatype.startswith("FLOAT") else str(v))
+    return ", ".join(parts)
+
+
 def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> bytes:
     """Mã hoá chuỗi nhập từ người dùng thành bytes để ghi xuống ECU.
 
