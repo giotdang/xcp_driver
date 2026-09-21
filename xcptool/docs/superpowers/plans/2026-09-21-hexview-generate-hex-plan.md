@@ -863,9 +863,14 @@ In `xcptool/tests/unit/test_config.py`, add `load_app_config`,
 
 ```python
 def test_app_config_round_trips_hex_path_and_byte_order() -> None:
-    cfg = load_app_config()
-    cfg.last_hex_path = "C:/proj/golden.hex"
-    cfg.last_byte_order = "big"
+    # replace(), not in-place mutation: load_app_config() returns the shared
+    # DEFAULT_APP_CONFIG object by reference when no config.toml exists yet
+    # (transport/config.py:117-119) — mutating it directly leaks into every
+    # other test in the process, not just this one (caught by running this
+    # exact test during implementation — the second test below failed with
+    # a value clearly leaked from the first, non-deterministically, until
+    # this was fixed to use `replace()`).
+    cfg = replace(load_app_config(), last_hex_path="C:/proj/golden.hex", last_byte_order="big")
     save_app_config(cfg)
 
     reloaded = load_app_config()
@@ -879,9 +884,12 @@ def test_app_config_defaults_hex_path_empty_and_byte_order_little() -> None:
     assert cfg.last_byte_order == "little"
 ```
 
-(No `tmp_path`/`monkeypatch` arguments needed — the file's `home` fixture
-is `autouse=True` and already isolates every test in it to its own
-`XCPTOOL_HOME`.)
+`replace` is already imported at the top of this file (`from dataclasses
+import replace`) — used by several of its existing `BusConfig` tests, e.g.
+`test_sample_point_solver_fields_round_trip`. No `tmp_path`/`monkeypatch`
+arguments needed on either test — the file's `home` fixture is
+`autouse=True` and already isolates every test in it to its own
+`XCPTOOL_HOME`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 

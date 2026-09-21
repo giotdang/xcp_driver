@@ -166,6 +166,8 @@ class AppConfig:
     """Toàn bộ cấu hình ứng dụng được lưu lại giữa các phiên làm việc."""
     bus: BusConfig
     last_a2l_path: str = ""
+    last_hex_path: str = ""
+    last_byte_order: str = "little"
     scope_enabled: bool = True
     trace_row_limit: int = 20_000
     active_route: str = "calibration"
