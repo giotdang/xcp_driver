@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
 from ..a2l import A2LDatabase
+from ..a2l.dataset import DatasetImportResult, SkipReason
 from ..a2l.types import InstanceNode
 
 __all__ = [
@@ -65,7 +66,7 @@ __all__ = [
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
     "SlaveError", "WriteProtectedError", "OutOfRangeError", "SequenceError",
     "AccessDeniedError", "NotConnectedError", "BusyError", "UnsupportedByEcuError",
-    "A2LDatabase", "InstanceNode", "Session",
+    "A2LDatabase", "InstanceNode", "DatasetImportResult", "SkipReason", "Session",
 ]
 
 
@@ -527,6 +528,27 @@ class Session(Protocol):
         trăm ms với file lớn.
 
         Raises: XcpToolError nếu file không đọc được hoặc lỗi parse nghiêm trọng
+        """
+
+    def export_dataset(self, values: dict[str, str]) -> dict:
+        """Build a calibration-dataset JSON dict (name->text values, plus
+        traceability metadata) from the currently loaded A2L. CHẶN — reads the
+        A2L file once to compute its checksum.
+
+        Raises: XcpToolError nếu chưa `load_a2l()` thành công, hoặc file A2L
+        không đọc lại được để tính checksum.
+        """
+
+    def import_dataset(self, payload: dict) -> DatasetImportResult:
+        """Validate a parsed dataset JSON payload and cross-check it against the
+        currently loaded A2L. CHẶN nhẹ — không I/O ngoài, chỉ so khớp trong bộ
+        nhớ (cộng một lần đọc A2L để so checksum, nếu còn file).
+
+        Does NOT touch `symbols` or write anything — the caller applies
+        `result.matched` to its own UI state.
+
+        Raises: XcpToolError nếu `payload` sai cấu trúc (thiếu
+        format_version/values, format_version không nhận diện được).
         """
 
     # ── DAQ (M4) ─────────────────────────────────────────────────────────────
