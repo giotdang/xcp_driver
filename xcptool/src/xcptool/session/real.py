@@ -17,6 +17,7 @@ from typing import Any, TypeVar
 
 from ..a2l import A2LDatabase
 from ..a2l import load as _a2l_load
+from ..a2l.dataset import DatasetImportResult, apply_dataset, build_dataset
 from ..master.core import XcpMaster
 from ..master.daq import (
     DaqListConfig,
@@ -107,6 +108,7 @@ class RealSession:
         self._transport: Transport | None = None
         self._last_state = ConnState.DISCONNECTED
         self._a2l_db: A2LDatabase = A2LDatabase()
+        self._a2l_path: Path | None = None
 
         # DAQ state — protected bởi _daq_lock khi cập nhật _daq_ring
         self._daq_pid_table: dict[int, PidEntry] | None = None
@@ -268,6 +270,17 @@ class RealSession:
     @_guarded("nạp A2L")
     def load_a2l(self, path: str | Path) -> None:
         self._a2l_db = _a2l_load(path)
+        self._a2l_path = Path(path)
+
+    @_guarded("export dataset")
+    def export_dataset(self, values: dict[str, str]) -> dict:
+        if self._a2l_path is None:
+            raise XcpToolError("Chưa nạp file A2L — không thể export dataset")
+        return build_dataset(values, self._a2l_db, self._a2l_path)
+
+    @_guarded("import dataset")
+    def import_dataset(self, payload: dict) -> DatasetImportResult:
+        return apply_dataset(payload, self._a2l_db, self._a2l_path)
 
     # ── DAQ ──────────────────────────────────────────────────────────────────
 
