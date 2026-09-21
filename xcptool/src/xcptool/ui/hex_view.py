@@ -23,6 +23,7 @@ from qfluentwidgets import PushButton
 
 from ..session.api import A2LDatabase, DatasetImportResult
 from .leaf_enum import LeafInfo, enumerate_leaves
+from .value_codec import decode_value
 
 __all__ = ["HexView"]
 
@@ -104,6 +105,26 @@ class HexView(QWidget):
 
     def current_byte_order(self) -> str:
         return _BYTE_ORDER_VALUES.get(self.byte_order_combo.currentText(), "little")
+
+    def on_regions_ready(self, regions: dict[str, bytes | None]) -> None:
+        self._origin_bytes = regions
+        self._render_table(self.origin_table, regions)
+
+    def _render_table(self, table: QTableWidget, values: dict[str, bytes | None]) -> None:
+        table.setRowCount(len(self._leaves))
+        byte_order = self.current_byte_order()
+        for row, leaf in enumerate(self._leaves):
+            data = values.get(leaf.name)
+            table.setItem(row, 0, QTableWidgetItem(f"0x{leaf.address:08X}"))
+            table.setItem(row, 1, QTableWidgetItem(leaf.name))
+            table.setItem(row, 2, QTableWidgetItem(str(leaf.size)))
+            if data is None:
+                table.setItem(row, 3, QTableWidgetItem("— (not in file)"))
+                table.setItem(row, 4, QTableWidgetItem("— (not in file)"))
+            else:
+                table.setItem(row, 3, QTableWidgetItem(data.hex().upper()))
+                value_text = decode_value(data, leaf.datatype, byte_order)
+                table.setItem(row, 4, QTableWidgetItem(value_text))
 
     # ── internal ─────────────────────────────────────────────────────────────
 

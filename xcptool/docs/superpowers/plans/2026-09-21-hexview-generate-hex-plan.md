@@ -1811,7 +1811,21 @@ elsewhere in this plan:**
    `_save_current_app_config()` and would otherwise pass while quietly
    wiping those two fields on every single call from here on.
 
-- [ ] **Step 7: Run tests to verify they pass**
+**A third, easier-to-repeat mistake from doing (1) above, worth flagging
+explicitly:** `_after_a2l_load()` does not end where its first few lines
+suggest. Reading only its opening (`db = ...`, three `set_database` calls,
+`if path: ...`) makes it look like the function ends right after that
+`if` block — it does not. It has an unconditional `self.notify("A2L
+Loaded", f"...")` tail *after* the `if path:` block. Editing this function
+(e.g. via a string-replace tool) using an `old_string` that stops at the
+`if path:` block, then inserting new methods immediately after, silently
+splits the function: the `notify()` call gets orphaned onto the very next
+method instead of staying part of `_after_a2l_load`. If that next method
+also happens to reference a variable (like `db`) that only existed in
+`_after_a2l_load`'s scope, the mistake surfaces immediately as a
+`NameError` — but only once something actually calls that next method,
+which may not be until a much later task's test runs. Read a function's
+full body (not just its first several lines) before editing near its end.
 
 Run: `xcptool/.venv/Scripts/python.exe -m pytest xcptool/tests/ui/test_hex_view_integration.py -v`
 Expected: all pass, including the new ones.

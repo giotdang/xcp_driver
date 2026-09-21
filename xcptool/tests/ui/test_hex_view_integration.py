@@ -6,8 +6,11 @@ tests/ui/conftest.py.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtWidgets import QMenu
 
+from xcptool.a2l.types import A2LDatabase, Characteristic
 from xcptool.ui.main_window import MainWindow
 
 
@@ -28,3 +31,20 @@ def test_session_menu_has_load_hex_action(window: MainWindow) -> None:
     menus = window.menuBar().findChildren(QMenu)
     session_menu = next(m for m in menus if m.title() == "&Session")
     assert window.act_load_hex in session_menu.actions()
+
+
+def test_load_hex_success_refreshes_origin_table(window: MainWindow, tmp_path: Path, qtbot) -> None:
+    p = tmp_path / "image.hex"
+    p.write_text(":080100000102030405060708D3\n:00000001FF\n", encoding="ascii")
+
+    char = Characteristic(
+        name="kp", description="", char_type="VALUE", address=0x0100,
+        record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE",
+    )
+    db = A2LDatabase()
+    db.characteristics["kp"] = char
+    window.hex_view.set_database(db)
+
+    window._on_hex_load_requested(str(p))
+    qtbot.waitUntil(lambda: window.hex_view.origin_table.rowCount() == 1, timeout=2000)
+    assert window.hex_view.origin_table.item(0, 3).text() == "01"

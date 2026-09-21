@@ -49,3 +49,38 @@ def test_current_byte_order_reflects_manual_combo_change(qtbot) -> None:
     view, _, _ = _make_view(qtbot)
     view.byte_order_combo.setCurrentText("Big Endian")
     assert view.current_byte_order() == "big"
+
+
+def test_on_regions_ready_populates_origin_table(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    char = Characteristic(
+        name="kp", description="", char_type="VALUE", address=0x1000,
+        record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE",
+    )
+    db = A2LDatabase()
+    db.characteristics["kp"] = char
+    view.set_database(db)
+
+    view.on_regions_ready({"kp": b"\x2A"})
+
+    assert view.origin_table.rowCount() == 1
+    assert view.origin_table.item(0, 0).text() == "0x00001000"
+    assert view.origin_table.item(0, 1).text() == "kp"
+    assert view.origin_table.item(0, 3).text() == "2A"
+    assert view.origin_table.item(0, 4).text() == "42"
+
+
+def test_on_regions_ready_shows_not_in_file_for_missing_address(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    char = Characteristic(
+        name="kp", description="", char_type="VALUE", address=0x1000,
+        record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE",
+    )
+    db = A2LDatabase()
+    db.characteristics["kp"] = char
+    view.set_database(db)
+
+    view.on_regions_ready({"kp": None})
+
+    assert view.origin_table.item(0, 3).text() == "— (not in file)"
+    assert view.origin_table.item(0, 4).text() == "— (not in file)"

@@ -172,7 +172,12 @@ class MainWindow(QMainWindow):
         pass  # wired in Task 13
 
     def _on_hex_regions_requested(self, addresses: list[tuple[int, int, str]]) -> None:
-        pass  # wired in Task 11
+        self._call(
+            "Reading hex/s19 regions…",
+            self.session.hex_regions, addresses,
+            on_ok=self.hex_view.on_regions_ready,
+            on_err=lambda exc: self.hex_view.status_label.setText(f"Read failed: {exc}"),
+        )
 
     def _build_navigation(self) -> None:
         central = QWidget(self)
@@ -656,6 +661,10 @@ class MainWindow(QMainWindow):
         if path:
             self._app_config.last_a2l_path = path
             self._save_current_app_config()
+        self.notify(
+            "A2L Loaded",
+            f"{len(db.characteristics)} CHARACTERISTIC(s), {len(db.measurements)} MEASUREMENT(s)",
+        )
 
     # ── Hex View ─────────────────────────────────────────────────────────────
 
@@ -669,11 +678,17 @@ class MainWindow(QMainWindow):
         self._on_hex_load_requested(path)
 
     def _on_hex_load_requested(self, path: str) -> None:
-        pass  # wired in Task 10
-        self.notify(
-            "A2L Loaded",
-            f"{len(db.characteristics)} CHARACTERISTIC(s), {len(db.measurements)} MEASUREMENT(s)",
+        self._call(
+            "Loading hex/s19…",
+            self.session.load_hex_file, path,
+            on_ok=lambda _: self._after_hex_load(path),
+            on_err=lambda exc: self.hex_view.status_label.setText(f"Load failed: {exc}"),
         )
+
+    def _after_hex_load(self, path: str) -> None:
+        self.hex_view.set_hex_loaded(path)
+        self._app_config.last_hex_path = path
+        self._save_current_app_config()
 
     def _on_export_dataset_requested(self, values: dict[str, str]) -> None:
         self._call(
