@@ -1789,6 +1789,28 @@ and extend it to three branches:
 then use `active_route=active_route` in the `AppConfig(...)` construction
 in place of the old inline ternary.
 
+**Two gaps found while implementing this step, neither anticipated
+elsewhere in this plan:**
+1. `_after_a2l_load()` (`main_window.py:651-658`) calls
+   `self.calibration_view.set_database(db)` and
+   `self.measurement_view.set_database(db)` but was never told to also
+   call `self.hex_view.set_database(db)` — without this, HexView's
+   `_leaves` stays empty forever and the Origin table never populates,
+   regardless of what Task 10-13 wire up. Add
+   `self.hex_view.set_database(db)` right alongside the other two calls.
+2. The same `AppConfig(...)` construction in `_save_current_app_config()`
+   only copies `last_a2l_path` and `trace_visible_kinds` forward from
+   `self._app_config` — `last_hex_path`/`last_byte_order` (Task 5) are
+   NOT in that constructor call, so every save would silently reset them
+   to their dataclass defaults (`""`/`"little"`), discarding whatever
+   `_after_hex_load`/Connect-success (Tasks 10, 13) had just set. Add
+   `last_hex_path=self._app_config.last_hex_path` and
+   `last_byte_order=self._app_config.last_byte_order` to that
+   constructor call now, alongside `last_a2l_path` — don't defer this to
+   Task 13, since Task 9's own route-persistence test already calls
+   `_save_current_app_config()` and would otherwise pass while quietly
+   wiping those two fields on every single call from here on.
+
 - [ ] **Step 7: Run tests to verify they pass**
 
 Run: `xcptool/.venv/Scripts/python.exe -m pytest xcptool/tests/ui/test_hex_view_integration.py -v`

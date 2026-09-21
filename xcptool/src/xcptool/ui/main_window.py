@@ -17,6 +17,7 @@ from typing import Any, Callable
 from PySide6.QtCore import Qt, QSettings, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QMainWindow,
     QStackedWidget,
@@ -54,6 +55,7 @@ from .calibration_view import (
 from .console_view import ConsoleView
 from .device_dialog import DeviceDialog
 from .dock_manager import DockManager
+from .hex_view import HexView
 from .logging_setup import current_log_path
 from .measurement_view import MeasurementView
 from .memory_view import WORKING_PAGE, MemoryView, ask_switch_to_working_page
@@ -156,6 +158,22 @@ class MainWindow(QMainWindow):
         self.measurement_view.daq_start_requested.connect(self.start_daq)
         self.measurement_view.daq_stop_requested.connect(self.stop_daq)
 
+        self.hex_view = HexView(
+            import_dataset_cb=self._on_hexview_import_dataset_requested,
+            generate_cb=self._on_hexview_generate_requested,
+            parent=self,
+        )
+        self.hex_view.regions_requested.connect(self._on_hex_regions_requested)
+
+    def _on_hexview_import_dataset_requested(self, payload: dict) -> None:
+        pass  # wired in Task 12
+
+    def _on_hexview_generate_requested(self, patches: list[tuple[int, bytes, str]], output_path: str) -> None:
+        pass  # wired in Task 13
+
+    def _on_hex_regions_requested(self, addresses: list[tuple[int, int, str]]) -> None:
+        pass  # wired in Task 11
+
     def _build_navigation(self) -> None:
         central = QWidget(self)
         central.setObjectName("chrome")
@@ -171,6 +189,7 @@ class MainWindow(QMainWindow):
 
         self.stack.addWidget(self.calibration_view)
         self.stack.addWidget(self.measurement_view)
+        self.stack.addWidget(self.hex_view)
 
         self.nav.addItem(
             routeKey="calibration",
@@ -184,6 +203,13 @@ class MainWindow(QMainWindow):
             icon=FluentIcon.DEVELOPER_TOOLS,
             text="Measurement",
             onClick=lambda: self.switch_to(self.measurement_view),
+            position=NavigationItemPosition.SCROLL,
+        )
+        self.nav.addItem(
+            routeKey="hex",
+            icon=FluentIcon.DOCUMENT,
+            text="Hex View",
+            onClick=lambda: self.switch_to(self.hex_view),
             position=NavigationItemPosition.SCROLL,
         )
         self.nav.addItem(
@@ -201,6 +227,9 @@ class MainWindow(QMainWindow):
         if active == "measurement":
             self.switch_to(self.measurement_view)
             self.nav.setCurrentItem("measurement")
+        elif active == "hex":
+            self.switch_to(self.hex_view)
+            self.nav.setCurrentItem("hex")
         else:
             self.switch_to(self.calibration_view)
             self.nav.setCurrentItem("calibration")
@@ -228,6 +257,10 @@ class MainWindow(QMainWindow):
         act_load_a2l.setShortcut(QKeySequence("Ctrl+O"))
         act_load_a2l.triggered.connect(self.calibration_view.load_btn.click)
         session_menu.addAction(act_load_a2l)
+
+        self.act_load_hex = QAction("&Load Hex/S19…", self)
+        self.act_load_hex.triggered.connect(self._on_load_hex_clicked)
+        session_menu.addAction(self.act_load_hex)
         session_menu.addSeparator()
 
         act_quit = QAction("E&xit", self)
@@ -619,9 +652,24 @@ class MainWindow(QMainWindow):
         db = self.session.symbols
         self.calibration_view.set_database(db)
         self.measurement_view.set_database(db)
+        self.hex_view.set_database(db)
         if path:
             self._app_config.last_a2l_path = path
             self._save_current_app_config()
+
+    # ── Hex View ─────────────────────────────────────────────────────────────
+
+    def _on_load_hex_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Hex/S19 File", "",
+            "Hex / S-record (*.hex *.ihex *.s19 *.s28 *.s37 *.srec *.mot)",
+        )
+        if not path:
+            return
+        self._on_hex_load_requested(path)
+
+    def _on_hex_load_requested(self, path: str) -> None:
+        pass  # wired in Task 10
         self.notify(
             "A2L Loaded",
             f"{len(db.characteristics)} CHARACTERISTIC(s), {len(db.measurements)} MEASUREMENT(s)",
@@ -879,12 +927,21 @@ class MainWindow(QMainWindow):
         dock_bytes = self.dock_manager.save_state()
         dock_hex = binascii.hexlify(dock_bytes).decode('ascii') if dock_bytes else ""
         
+        if self.stack.currentWidget() == self.measurement_view:
+            active_route = "measurement"
+        elif self.stack.currentWidget() == self.hex_view:
+            active_route = "hex"
+        else:
+            active_route = "calibration"
+
         new_app_cfg = AppConfig(
             bus=self.session.load_config(),
             last_a2l_path=self._app_config.last_a2l_path,
+            last_hex_path=self._app_config.last_hex_path,
+            last_byte_order=self._app_config.last_byte_order,
             scope_enabled=self.measurement_view.scope_switch.isChecked(),
             trace_row_limit=self.trace_view.cap_spin.value(),
-            active_route="measurement" if self.stack.currentWidget() == self.measurement_view else "calibration",
+            active_route=active_route,
             dock_state=dock_hex,
             debug_area_collapsed=self.dock_manager.is_debug_area_collapsed(),
             trace_visible_kinds=self._app_config.trace_visible_kinds,
