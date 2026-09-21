@@ -691,6 +691,13 @@ def test_main_window_co_calibration_view(window: MainWindow) -> None:
     assert isinstance(window.calibration_view, CalibrationView)
 
 
+def test_main_window_wires_calibration_dataset_callbacks(window: MainWindow) -> None:
+    """MainWindow must construct CalibrationView with working dataset callbacks —
+    a smoke test that the wiring doesn't raise and reaches Session."""
+    assert window.calibration_view._export_dataset_cb is not None
+    assert window.calibration_view._import_dataset_cb is not None
+
+
 def test_calibration_view_co_trong_stack(window: MainWindow) -> None:
     stack = window.stack
     found = any(
