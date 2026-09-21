@@ -650,7 +650,7 @@ Create `xcptool/tests/unit/test_leaf_enum.py`:
 """Unit tests for ui/leaf_enum.py — pure data, no Qt required to run."""
 from __future__ import annotations
 
-from xcptool.session.api import A2LDatabase, Characteristic, InstanceNode
+from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode
 from xcptool.ui.leaf_enum import LeafInfo, enumerate_leaves
 
 
@@ -1317,7 +1317,8 @@ fixture for a headless run (it already does this — reuse the exact same
 pattern already used in tests/ui/test_calibration_view.py."""
 from __future__ import annotations
 
-from xcptool.session.api import A2LDatabase, Characteristic, DatasetImportResult, SkipReason
+from xcptool.a2l.types import Characteristic
+from xcptool.session.api import A2LDatabase, DatasetImportResult, SkipReason
 from xcptool.ui.hex_view import HexView
 
 
@@ -1776,8 +1777,11 @@ def test_on_regions_ready_shows_not_in_file_for_missing_address(qtbot) -> None:
 ```
 
 In `xcptool/tests/ui/test_hex_view_integration.py` (add `from pathlib
-import Path` and `from xcptool.session.api import A2LDatabase,
-Characteristic` to its imports):
+import Path`, `from xcptool.a2l.types import Characteristic`, and
+`from xcptool.session.api import A2LDatabase` to its imports —
+`Characteristic` is not re-exported through `session.api`, only
+`A2LDatabase`/`DatasetImportResult`/`SkipReason`/`InstanceNode` are;
+confirmed against `session/api.py:57-59` during Task 4's implementation):
 
 ```python
 def test_load_hex_success_refreshes_origin_table(window: MainWindow, tmp_path: Path, qtbot) -> None:
