@@ -145,6 +145,8 @@ class MainWindow(QMainWindow):
             get_pages_cb=self.cal_get_pages,
             set_page_cb=self.cal_set_page,
             copy_page_cb=self.cal_copy_page,
+            export_dataset_cb=self._on_export_dataset_requested,
+            import_dataset_cb=self._on_import_dataset_requested,
             parent=self,
         )
         self.calibration_view.a2l_load_requested.connect(self._on_a2l_load_requested)
@@ -623,6 +625,26 @@ class MainWindow(QMainWindow):
         self.notify(
             "A2L Loaded",
             f"{len(db.characteristics)} CHARACTERISTIC(s), {len(db.measurements)} MEASUREMENT(s)",
+        )
+
+    def _on_export_dataset_requested(self, values: dict[str, str]) -> None:
+        self._call(
+            "Exporting calibration dataset…",
+            self.session.export_dataset, values,
+            on_ok=self.calibration_view.on_export_ready,
+            on_err=lambda exc: self.calibration_view.status_label.setText(
+                f"Export failed: {exc}"
+            ),
+        )
+
+    def _on_import_dataset_requested(self, payload: dict) -> None:
+        self._call(
+            "Importing calibration dataset…",
+            self.session.import_dataset, payload,
+            on_ok=self.calibration_view.on_import_done,
+            on_err=lambda exc: self.calibration_view.status_label.setText(
+                f"Import failed: {exc}"
+            ),
         )
 
     def read_all_characteristics(self) -> None:

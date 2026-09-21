@@ -99,6 +99,7 @@ def _add_struct_instance(db: A2LDatabase, group_name: str, leaf_names: list[str]
 def _make_view(qtbot) -> CalibrationView:
     calls: dict[str, list] = {
         "read_all": [], "read": [], "write": [], "pages": [], "set_page": [], "copy": [],
+        "export_dataset": [], "import_dataset": [],
     }
 
     def read_all_cb():
@@ -122,6 +123,12 @@ def _make_view(qtbot) -> CalibrationView:
     def copy_page_cb(src_seg, src_page, dst_seg, dst_page):
         calls["copy"].append((src_seg, src_page, dst_seg, dst_page))
 
+    def export_dataset_cb(values):
+        calls["export_dataset"].append(values)
+
+    def import_dataset_cb(payload):
+        calls["import_dataset"].append(payload)
+
     v = CalibrationView(
         read_all_cb=read_all_cb,
         read_cb=read_cb,
@@ -129,6 +136,8 @@ def _make_view(qtbot) -> CalibrationView:
         get_pages_cb=pages_cb,
         set_page_cb=set_page_cb,
         copy_page_cb=copy_page_cb,
+        export_dataset_cb=export_dataset_cb,
+        import_dataset_cb=import_dataset_cb,
     )
     qtbot.addWidget(v)
     v._calls = calls  # type: ignore[attr-defined]
@@ -219,6 +228,57 @@ def test_set_database_dien_tree(qtbot) -> None:
     v.set_database(db)
     assert v.tree.topLevelItemCount() == 3
     assert "3 CHARACTERISTIC" in v.count_label.text()
+
+
+def test_gather_dataset_values_excludes_untouched(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    # nothing read or edited yet -> nothing eligible
+    assert v._gather_dataset_values(["GAIN", "OFFSET"]) == {}
+
+
+def test_gather_dataset_values_uses_precise_text_for_clean_read(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    values = v._gather_dataset_values(["GAIN"])
+    assert values == {"GAIN": "42"}
+
+
+def test_gather_dataset_values_uses_tree_text_for_dirty(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    item = v._char_items["GAIN"]
+    item.setFlags(item.flags() | Qt.ItemIsEditable)
+    item.setText(COL_VALUE, "99")  # simulate a manual edit -> _on_item_changed fires
+    assert "GAIN" in v._dirty
+    assert v._gather_dataset_values(["GAIN"]) == {"GAIN": "99"}
+
+
+def test_gather_dataset_values_array_joins_children(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("LUT", bytes([1, 2, 3, 4]))
+    assert v._gather_dataset_values(["LUT"]) == {"LUT": "1, 2, 3, 4"}
+
+
+def test_context_menu_enabled_state_no_data(qtbot) -> None:
+    v = _make_view(qtbot)
+    export_all, export_selected, import_enabled = v._context_menu_enabled_state()
+    assert export_all is False
+    assert export_selected is False
+    assert import_enabled is False
+
+
+def test_context_menu_enabled_state_with_data_and_selection(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.tree.topLevelItem(0).setSelected(True)
+    export_all, export_selected, import_enabled = v._context_menu_enabled_state()
+    assert export_all is True
+    assert export_selected is True
+    assert import_enabled is True
 
 
 def test_set_database_theo_thu_tu_abc(qtbot) -> None:

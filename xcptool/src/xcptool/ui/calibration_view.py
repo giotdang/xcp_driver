@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
+    QMenu,
+    QMessageBox,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -251,6 +253,8 @@ class CalibrationView(QWidget):
         get_pages_cb: Callable[[int], None],           # (segment)
         set_page_cb: Callable[[int, int], None],        # (segment, page) — set CẢ ECU lẫn XCP
         copy_page_cb: Callable[[int, int, int, int], None],
+        export_dataset_cb: Callable[[dict[str, str]], None],  # (values) -> Session.export_dataset
+        import_dataset_cb: Callable[[dict], None],             # (payload) -> Session.import_dataset
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -261,6 +265,10 @@ class CalibrationView(QWidget):
         self._get_pages_cb = get_pages_cb
         self._set_page_cb = set_page_cb
         self._copy_page_cb = copy_page_cb
+        self._export_dataset_cb = export_dataset_cb
+        self._import_dataset_cb = import_dataset_cb
+        # (path, values) awaiting on_export_ready(); None when no export in flight
+        self._pending_export: tuple[str, dict[str, str]] | None = None
 
         self._db: A2LDatabase = A2LDatabase()
         self._byte_order = "little"
@@ -339,6 +347,8 @@ class CalibrationView(QWidget):
         self.tree.itemDoubleClicked.connect(self._start_value_edit)
         self.tree.itemSelectionChanged.connect(self._update_write_btn)
         self.tree.itemChanged.connect(self._on_item_changed)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
 
 
         hdr = self.tree.header()
@@ -768,6 +778,73 @@ class CalibrationView(QWidget):
             for _leaf_item, c_name, _c_def in self._leaf_write_items(item):
                 add(c_name)
         return result
+
+    def _gather_dataset_values(self, names: Iterable[str]) -> dict[str, str]:
+        """For each name that is eligible (read or edited at least once this
+        session — present in `self._original` or `self._dirty`), produce
+        name -> value text. Dirty values are read straight from the tree (they
+        are exactly what the user typed, already full precision). Clean values
+        are reformatted from `self._raw_data` with `decode_value_precise` —
+        NOT the tree's displayed text, which for floats is `decode_value`'s
+        lossy `%.6g`."""
+        values: dict[str, str] = {}
+        for name in names:
+            if name not in self._original and name not in self._dirty:
+                continue
+            item = self._char_items.get(name)
+            char = self._db.characteristics.get(name)
+            if item is None or char is None:
+                continue
+            if name in self._dirty:
+                if item.childCount() > 0:
+                    text = ", ".join(item.child(i).text(COL_VALUE) for i in range(item.childCount()))
+                else:
+                    text = item.text(COL_VALUE)
+            else:
+                raw = self._raw_data.get(name)
+                if raw is None or char.datatype is None:
+                    continue
+                text = decode_value_precise(raw, char.datatype, self._byte_order)
+            values[name] = text
+        return values
+
+    def _context_menu_enabled_state(self) -> tuple[bool, bool, bool]:
+        """(export_all_enabled, export_selected_enabled, import_enabled) —
+        factored out of `_on_tree_context_menu` so tests can assert enablement
+        without popping up a real QMenu."""
+        return (
+            bool(self._char_items),
+            bool(self.tree.selectedItems()),
+            bool(self._char_items),
+        )
+
+    def _on_tree_context_menu(self, pos) -> None:
+        export_all_enabled, export_selected_enabled, import_enabled = self._context_menu_enabled_state()
+        menu = QMenu(self)
+        export_all_act = menu.addAction("Export All to File…")
+        export_all_act.setEnabled(export_all_enabled)
+        export_selected_act = menu.addAction("Export Selected to File…")
+        export_selected_act.setEnabled(export_selected_enabled)
+        menu.addSeparator()
+        import_act = menu.addAction("Import Dataset from File…")
+        import_act.setEnabled(import_enabled)
+
+        chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
+        if chosen is export_all_act:
+            self._on_export_all_to_file()
+        elif chosen is export_selected_act:
+            self._on_export_selected_to_file()
+        elif chosen is import_act:
+            self._on_import_dataset_from_file()
+
+    def _on_export_all_to_file(self) -> None:
+        pass
+
+    def _on_export_selected_to_file(self) -> None:
+        pass
+
+    def _on_import_dataset_from_file(self) -> None:
+        pass
 
     def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
         if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
