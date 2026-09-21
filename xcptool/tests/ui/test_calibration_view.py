@@ -257,6 +257,40 @@ def test_gather_dataset_values_uses_tree_text_for_dirty(qtbot) -> None:
     assert v._gather_dataset_values(["GAIN"]) == {"GAIN": "99"}
 
 
+def test_gather_dataset_values_reflects_value_after_successful_write(qtbot) -> None:
+    """Regression: editing a value then writing it successfully must keep the
+    NEW value exportable -- on_write_done clears _dirty (so the "clean" branch
+    of _gather_dataset_values kicks in) but previously never refreshed
+    _raw_data, so export silently reverted to the pre-edit value."""
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    item = v._char_items["GAIN"]
+    item.setFlags(item.flags() | Qt.ItemIsEditable)
+    item.setText(COL_VALUE, "99")
+    assert "GAIN" in v._dirty
+
+    v.on_write_done("GAIN")  # simulate the ECU confirming the write succeeded
+    assert "GAIN" not in v._dirty
+    assert v._gather_dataset_values(["GAIN"]) == {"GAIN": "99"}
+
+
+def test_on_write_done_never_read_item_does_not_crash_or_populate_raw_data(qtbot) -> None:
+    """MainWindow.write_characteristic() can be called directly, bypassing the
+    tree UI entirely (console/debug tooling, or a caller writing a name that
+    was never read/edited) -- the tree cell is still the unpopulated "—"
+    placeholder when on_write_done() fires. Must degrade gracefully, not
+    raise trying to encode() that placeholder."""
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    assert v._char_items["GAIN"].text(COL_VALUE) == "—"
+
+    v.on_write_done("GAIN")  # no prior on_read_done / edit at all
+
+    assert "GAIN" not in v._raw_data
+    assert v._gather_dataset_values(["GAIN"]) == {}  # still not eligible for export
+
+
 def test_gather_dataset_values_array_joins_children(qtbot) -> None:
     v = _make_view(qtbot)
     v.set_database(_make_db())

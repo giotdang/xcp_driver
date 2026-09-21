@@ -518,6 +518,24 @@ class CalibrationView(QWidget):
             + (f" {fail} failed (out of range or ECU rejected)." if fail else "")
         )
 
+    def _refresh_raw_data(self, name: str, text: str, datatype: str, array_size: int) -> None:
+        """Keep `self._raw_data` in sync with a just-confirmed write, by
+        re-encoding the same text `_write_parent` already validated moments
+        earlier — without this, `_gather_dataset_values()`'s "not dirty"
+        branch would reformat stale pre-write bytes for dataset export.
+
+        `text` can still be the unpopulated "—" placeholder when the write
+        was issued directly through `MainWindow.write_characteristic()`
+        rather than via the tree UI (e.g. console/debug tooling, or tests) —
+        `encode_value` can't parse that, so skip the refresh rather than
+        raising out of a write-completion callback; `_raw_data` simply stays
+        whatever it was (stale or absent), same as before this method existed.
+        """
+        try:
+            self._raw_data[name] = encode_value(text, datatype, self._byte_order, array_size)
+        except (ValueError, struct.error):
+            pass
+
     def on_write_done(self, name: str) -> None:
         """Clear dirty indicator after successful write.
 
@@ -553,7 +571,7 @@ class CalibrationView(QWidget):
                 # `item`. Chỉ duyệt con trực tiếp bỏ sót lá sâu: dirty/_original của
                 # nó không bao giờ được dọn, và node trung gian (đã bị _on_item_changed
                 # tô cam ở COL_NAME khi con nó dirty) kẹt cam mãi dù đã ghi xong.
-                for leaf_item, c_name, _c_def in self._leaf_write_items(item):
+                for leaf_item, c_name, c_def in self._leaf_write_items(item):
                     if leaf_item.childCount() > 0:
                         leaf_vals = [
                             leaf_item.child(j).text(COL_VALUE)
@@ -562,6 +580,7 @@ class CalibrationView(QWidget):
                         self._original[c_name] = ", ".join(leaf_vals)
                     else:
                         self._original[c_name] = leaf_item.text(COL_VALUE)
+                    self._refresh_raw_data(c_name, self._original[c_name], c_def.datatype, c_def.array_size)
                     self._dirty.discard(c_name)
                     leaf_item.setForeground(COL_VALUE, self.tree.palette().text())
                     # Dọn cam ở mọi node trung gian giữa lá và `item` — vòng lặp
@@ -575,6 +594,10 @@ class CalibrationView(QWidget):
                 self._original[name] = ", ".join(child_vals)
         else:
             self._original[name] = item.text(COL_VALUE)
+
+        char_def = self._db.characteristics.get(name)
+        if char_def is not None and char_def.datatype is not None:
+            self._refresh_raw_data(name, self._original[name], char_def.datatype, char_def.array_size)
 
         self._dirty.discard(name)
 
