@@ -24,11 +24,9 @@ from xcptool.ui.calibration_view import (
     _ROUTE_REFERENCE,
     _ROUTE_WORKING,
     _split_into_contiguous_runs,
-    decode_value,
-    decode_value_precise,
-    encode_value,
 )
 from xcptool.ui.main_window import MainWindow
+from xcptool.ui.value_codec import decode_value, decode_value_precise, encode_value
 
 
 # ── fixture helpers ──────────────────────────────────────────────────────────
