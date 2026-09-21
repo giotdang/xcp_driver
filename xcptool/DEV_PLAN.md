@@ -2064,9 +2064,8 @@ git commit -m "docs(xcptool): mark ASAP2 struct-typedef feature as shipped"
 
 ## 11. Kế hoạch tiếp theo — Multi-select & Calibration Dataset (spec 2026-09-19)
 
-**Trạng thái: mục (1) đã triển khai xong (2026-09-19); (2) và (3) chưa bắt
-đầu.** 3 tính năng liên quan, làm theo đúng thứ tự phụ thuộc dưới đây
-(branch `feature`).
+**Trạng thái: mục (1) và (2) đã triển khai xong; (3) chưa bắt đầu.** 3 tính
+năng liên quan, làm theo đúng thứ tự phụ thuộc dưới đây (branch `feature`).
 
 1. **Multi-select trong CalibrationView (Read/Write Selected theo nhiều dòng)**
    — spec: [`docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md`](docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md).
@@ -2075,10 +2074,22 @@ git commit -m "docs(xcptool): mark ASAP2 struct-typedef feature as shipped"
    `_resolve_leaf_names()` dùng chung, mở rộng "Read" và "Write Selected"
    ăn theo tập đang chọn thay vì chỉ 1 dòng.
 2. **Export / Import Calibration Dataset** — spec:
-   [`docs/superpowers/specs/2026-09-19-calibration-dataset-export-import-design.md`](docs/superpowers/specs/2026-09-19-calibration-dataset-export-import-design.md).
+   [`docs/superpowers/specs/2026-09-19-calibration-dataset-export-import-design.md`](docs/superpowers/specs/2026-09-19-calibration-dataset-export-import-design.md),
+   plan: [`docs/superpowers/plans/2026-09-21-calibration-dataset-export-import-plan.md`](docs/superpowers/plans/2026-09-21-calibration-dataset-export-import-plan.md).
    Phụ thuộc mục (1) — "Export Selected to File" cần multi-select. Chuột
    phải trên tree: Export All / Export Selected / Import Dataset (file
    JSON), module mới `a2l/dataset.py`.
+
+   **Triển khai thật (khác spec ở một điểm, bắt buộc bởi kiến trúc):**
+   `calibration_view.py` không gọi `a2l.dataset.build_dataset`/`apply_dataset`
+   trực tiếp như spec mô tả — `tests/test_boundaries.py` cấm `ui/` import
+   `xcptool.a2l`. Hai hàm đó được gọi qua `Session.export_dataset()`/
+   `import_dataset()` mới (giống hệt cách `load_a2l()` đã làm) — xem plan ở
+   trên cho lý do đầy đủ. `apply_dataset()` cũng nhận thêm `a2l_path`
+   (không có trong signature gốc của spec) vì việc so checksum với A2L đang
+   nạp cần đọc lại file đó — `A2LDatabase` không tự lưu checksum của chính
+   nó. Test: 565 test pass (`pytest tests/ -x -q`), `--selftest --session
+   fake` xanh 15/15 bước qua event loop thật.
 3. **Generate hex/s19 file** (calib đã hiệu chỉnh → merge vào file hex/s19
    gốc nạp ECU) — **chưa thiết kế**, dự kiến tái dùng dataset engine của
    mục (2) làm nguồn giá trị. Làm sau khi (1) và (2) xong.
