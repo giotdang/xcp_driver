@@ -33,7 +33,7 @@ from qfluentwidgets import (
     isDarkTheme,
 )
 
-from ..session.api import A2LDatabase, InstanceNode
+from ..session.api import A2LDatabase, DatasetImportResult, InstanceNode, SkipReason
 
 __all__ = ["CalibrationView", "WORKING_PAGE", "REFERENCE_PAGE"]
 
@@ -876,7 +876,46 @@ class CalibrationView(QWidget):
         self.status_label.setText(f"Exported {len(values)} parameter(s) to {Path(path).name}.")
 
     def _on_import_dataset_from_file(self) -> None:
-        pass
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Calibration Dataset", "", "JSON (*.json)"
+        )
+        if not path:
+            return
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            self.status_label.setText(f"Failed to read dataset file: {e}")
+            return
+        self._import_dataset_cb(payload)
+
+    def on_import_done(self, result: DatasetImportResult) -> None:
+        """Called by MainWindow with what Session.import_dataset() returned."""
+        for name, text in result.matched.items():
+            item = self._char_items.get(name)
+            char = self._db.characteristics.get(name)
+            if item is None or char is None:
+                continue
+            if char.array_size > 1 and item.childCount() > 0:
+                parts = [p.strip() for p in text.split(",")]
+                for i in range(min(item.childCount(), len(parts))):
+                    item.child(i).setText(COL_VALUE, parts[i])
+            else:
+                item.setText(COL_VALUE, text)
+
+        total = len(result.matched) + len(result.skipped)
+        msg = f"Imported {len(result.matched)}/{total} params."
+        if result.skipped:
+            msg += f" {len(result.skipped)} skipped — see details."
+        if result.a2l_mismatch_warning:
+            msg += f" {result.a2l_mismatch_warning}"
+        self.status_label.setText(msg)
+
+        if result.skipped:
+            self._show_skip_summary(result.skipped)
+
+    def _show_skip_summary(self, skipped: list[SkipReason]) -> None:
+        lines = "\n".join(f"{s.name}: {s.reason}" for s in skipped)
+        QMessageBox.information(self, "Import Skipped Entries", lines)
 
     def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
         if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):

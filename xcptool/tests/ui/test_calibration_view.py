@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView
 
 from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, Measurement, RecordLayout
-from xcptool.session.api import BusConfig, ConnState, PageMode
+from xcptool.session.api import BusConfig, ConnState, DatasetImportResult, PageMode, SkipReason
 from xcptool.session.fake import MEM_BASE, FakeBehavior, FakeSession
 from xcptool.ui.calibration_view import (
     REFERENCE_PAGE,
@@ -353,6 +353,99 @@ def test_on_export_ready_writes_file_and_updates_status(qtbot, monkeypatch, tmp_
     written = json.loads(out_path.read_text(encoding="utf-8"))
     assert written == payload
     assert "Exported 1" in v.status_label.text()
+
+
+def test_import_dataset_from_file_reads_and_calls_cb(qtbot, monkeypatch, tmp_path) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    payload = {"format_version": 1, "values": {"GAIN": "99"}}
+    in_path = tmp_path / "in.json"
+    in_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getOpenFileName",
+        lambda *a, **k: (str(in_path), "JSON (*.json)"),
+    )
+    v._on_import_dataset_from_file()
+    assert v._calls["import_dataset"] == [payload]
+
+
+def test_import_dataset_from_file_invalid_json_shows_status(qtbot, monkeypatch, tmp_path) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getOpenFileName",
+        lambda *a, **k: (str(bad_path), "JSON (*.json)"),
+    )
+    v._on_import_dataset_from_file()
+    assert v._calls["import_dataset"] == []
+    assert "Failed to read" in v.status_label.text()
+
+
+def test_import_dataset_cancelled_dialog_noop(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getOpenFileName",
+        lambda *a, **k: ("", ""),
+    )
+    v._on_import_dataset_from_file()
+    assert v._calls["import_dataset"] == []
+
+
+def test_on_import_done_stages_scalar_as_dirty(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))  # original = "42"
+    result = DatasetImportResult(matched={"GAIN": "99"}, skipped=[], a2l_mismatch_warning=None)
+    v.on_import_done(result)
+    assert v._char_items["GAIN"].text(COL_VALUE) == "99"
+    assert "GAIN" in v._dirty
+    assert "Imported 1/1" in v.status_label.text()
+
+
+def test_on_import_done_stages_array_children(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("LUT", bytes([1, 2, 3, 4]))
+    result = DatasetImportResult(matched={"LUT": "9, 9, 9, 9"}, skipped=[], a2l_mismatch_warning=None)
+    v.on_import_done(result)
+    item = v._char_items["LUT"]
+    assert [item.child(i).text(COL_VALUE) for i in range(item.childCount())] == ["9", "9", "9", "9"]
+    assert "LUT" in v._dirty
+
+
+def test_on_import_done_shows_skip_summary_when_skipped(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    shown = []
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QMessageBox.information",
+        lambda *a, **k: shown.append(a),
+    )
+    result = DatasetImportResult(
+        matched={}, skipped=[SkipReason(name="ghost", reason="not found in A2L")],
+        a2l_mismatch_warning=None,
+    )
+    v.on_import_done(result)
+    assert len(shown) == 1
+    assert "Imported 0/1" in v.status_label.text()
+    assert "1 skipped" in v.status_label.text()
+
+
+def test_on_import_done_no_skips_no_dialog(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    shown = []
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QMessageBox.information",
+        lambda *a, **k: shown.append(a),
+    )
+    result = DatasetImportResult(matched={"GAIN": "1"}, skipped=[], a2l_mismatch_warning=None)
+    v.on_import_done(result)
+    assert shown == []
 
 
 def test_set_database_theo_thu_tu_abc(qtbot) -> None:
