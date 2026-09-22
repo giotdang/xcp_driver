@@ -2118,8 +2118,22 @@ quan, làm theo đúng thứ tự phụ thuộc dưới đây (branch `feature`)
    không được suy từ độ dài kết quả trả về, phải soi trực tiếp
    `bf.segments`. Cũng phát hiện `QFileDialog`/`QMessageBox` treo vô thời
    hạn dưới `QT_QPA_PLATFORM=offscreen` nếu test không mock — không timeout
-   sạch, cả suite trông như "chạy chậm" chứ không fail rõ ràng. Test: 621
-   test pass (`pytest tests/ -q`), `--selftest --session fake` xanh 15/15
-   bước qua event loop thật (không thêm bước riêng cho Hex View vào
-   selftest — đúng tiền lệ mục (2) cũng không thêm, pytest là nơi verify
-   theo tính năng).
+   sạch, cả suite trông như "chạy chậm" chứ không fail rõ ràng. Test: 618
+   test pass lúc merge (`pytest tests/ -q` — con số "621" từng ghi ở đây
+   trước đó là sai, chưa verify lại sau khi viết), `--selftest --session
+   fake` xanh 15/15 bước qua event loop thật (không thêm bước riêng cho
+   Hex View vào selftest — đúng tiền lệ mục (2) cũng không thêm, pytest là
+   nơi verify theo tính năng).
+
+   **Bug phát hiện sau khi merge, lúc tự tay thử với A2L ví dụ
+   (`examples/xcp_daq_example.a2l` + `dataset.json` đã export sẵn):**
+   `leaf_enum.enumerate_leaves()` từng tách mảng VAL_BLK thành 1 leaf/phần
+   tử (`table[0]`, `table[1]`...) giống cách CalibrationView dựng tree —
+   nhưng dataset JSON (mục 2) lưu cả mảng dưới 1 key duy nhất, text nối
+   dấu phẩy. Kết quả: patch cho 1 tham số kiểu mảng (VD `adcCalPoints`)
+   bị "biến mất" êm re trong `on_dataset_validated()` vì tra theo tên
+   không khớp bất kỳ leaf nào. Sửa: `LeafInfo` thêm field `array_size`,
+   `enumerate_leaves()` phát 1 leaf/CHARACTERISTIC (kể cả mảng), không
+   tách phần tử nữa; `on_dataset_validated()` truyền
+   `array_size=leaf.array_size` xuống `encode_value()` thay vì hằng số 1.
+   619 test pass sau khi sửa.
