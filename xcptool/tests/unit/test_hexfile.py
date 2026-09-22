@@ -222,3 +222,36 @@ def test_read_records_srec_skips_count_and_termination_records(tmp_path: Path) -
                 "S70500000000FA\n")
     records = hexfile.read_records(p)
     assert records == [(0x80100000, bytes(range(1, 9)))]
+
+
+def test_dominant_record_size_picks_majority() -> None:
+    records = [(0, b"x" * 16), (16, b"x" * 16), (32, b"x" * 4)]
+    assert hexfile._dominant_record_size(records) == 16
+
+
+def test_dominant_record_size_ties_broken_by_first_occurrence() -> None:
+    # 8-byte and 16-byte records both appear twice; 8 appears FIRST in
+    # file order and must win — not an arbitrary/hash-order tie-break.
+    records = [(0, b"x" * 8), (8, b"x" * 16), (24, b"x" * 8), (40, b"x" * 16)]
+    assert hexfile._dominant_record_size(records) == 8
+
+
+def test_dominant_record_size_empty_defaults_to_32() -> None:
+    assert hexfile._dominant_record_size([]) == 32
+
+
+def test_patch_and_save_preserves_uniform_source_record_size(tmp_path: Path) -> None:
+    src = _write(tmp_path, "image.hex",
+                ":080100000001020304050607DB\n"
+                ":0801080008090A0B0C0D0E0F93\n"
+                ":0801100010111213141516174B\n"
+                ":00000001FF\n")
+    out = tmp_path / "image_mod.hex"
+    hexfile.patch_and_save(src, [(0x0108, b"\xAA\xBB", "midRecordParam")], out)
+
+    out_records = hexfile.read_records(out)
+    # Same THREE records, same addresses — only the middle one's bytes changed.
+    assert [addr for addr, _data in out_records] == [0x0100, 0x0108, 0x0110]
+    assert out_records[1][1] == b"\xAA\xBB" + bytes(range(10, 16))
+    assert out_records[0][1] == bytes(range(0, 8))  # untouched record unchanged
+    assert out_records[2][1] == bytes(range(16, 24))  # untouched record unchanged

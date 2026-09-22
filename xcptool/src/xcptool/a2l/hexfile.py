@@ -94,6 +94,32 @@ def read_region(image: HexImage, address: int, size: int) -> bytes | None:
     return bytes(data)
 
 
+def _dominant_record_size(records: list[tuple[int, bytes]]) -> int:
+    """Most common byte length among `records`' data. Ties are broken by
+    whichever length appears FIRST in file order (not an arbitrary/hash
+    tie-break) — deliberately not implemented via `collections.Counter`,
+    whose `most_common()` tie order isn't a documented guarantee. Empty
+    `records` defaults to 32, matching bincopy's own default so an empty
+    or unparseable source doesn't change existing behavior."""
+    if not records:
+        return 32
+    counts: dict[int, int] = {}
+    order: list[int] = []
+    for _address, data in records:
+        size = len(data)
+        if size not in counts:
+            counts[size] = 0
+            order.append(size)
+        counts[size] += 1
+    best_size = order[0]
+    best_count = counts[best_size]
+    for size in order[1:]:
+        if counts[size] > best_count:
+            best_size = size
+            best_count = counts[size]
+    return best_size
+
+
 def patch_and_save(
     source_path: Path, patches: list[tuple[int, bytes, str]], output_path: Path,
 ) -> None:
@@ -126,7 +152,11 @@ def patch_and_save(
     for address, data, _name in patches:
         bf.add_binary(bytes(data), address=address, overwrite=True)
 
-    text = bf.as_ihex() if out_fmt == "ihex" else bf.as_srec()
+    record_size = _dominant_record_size(read_records(source_path))
+    text = (
+        bf.as_ihex(number_of_data_bytes=record_size) if out_fmt == "ihex"
+        else bf.as_srec(number_of_data_bytes=record_size)
+    )
     output_path.write_text(text, encoding="ascii")
 
 
