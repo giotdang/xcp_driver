@@ -11,6 +11,8 @@ from pathlib import Path
 from PySide6.QtWidgets import QMenu
 
 from xcptool.a2l.types import A2LDatabase, Characteristic
+from xcptool.session.api import AppConfig, BusConfig, ConnState
+from xcptool.session.fake import FakeBehavior, FakeSession
 from xcptool.ui.main_window import MainWindow
 
 
@@ -72,3 +74,40 @@ def test_hexview_generate_requested_reaches_session_and_reports_error(window: Ma
     qtbot.waitUntil(
         lambda: "Generate failed" in window.hex_view.status_label.text(), timeout=2000
     )
+
+
+def test_connect_success_persists_byte_order_and_updates_hexview(qtbot) -> None:
+    # FakeSession.connect() hardcodes SlaveCaps(byte_order="little", ...) —
+    # it cannot be made to report "big". Pre-seed a non-default starting
+    # value so a pass proves the wiring actually ran, not that the field
+    # already matched its default.
+    session = FakeSession(FakeBehavior())
+    session._app_cfg = AppConfig(
+        bus=BusConfig(backend="virtual", channel="fake0"), last_byte_order="big",
+    )
+    window = MainWindow(session)
+    qtbot.addWidget(window)
+
+    window.connect_to(BusConfig(backend="virtual", channel="fake0"))
+    qtbot.waitUntil(lambda: window.session.state is ConnState.CONNECTED, timeout=5000)
+    qtbot.waitUntil(lambda: not window.busy, timeout=5000)
+
+    assert window._app_config.last_byte_order == "little"  # FakeSession always reports "little"
+    assert window.hex_view.byte_order_combo.currentText() == "Little Endian"
+    window.close()
+
+
+def test_startup_auto_reloads_last_hex_path_if_file_exists(tmp_path: Path, qtbot) -> None:
+    p = tmp_path / "golden.hex"
+    p.write_text(":080100000102030405060708D3\n:00000001FF\n", encoding="ascii")
+
+    session = FakeSession(FakeBehavior())
+    session._app_cfg = AppConfig(
+        bus=BusConfig(backend="virtual", channel="fake0"), last_hex_path=str(p),
+    )
+    window = MainWindow(session)
+    qtbot.addWidget(window)
+
+    qtbot.waitUntil(lambda: window.hex_view._hex_loaded, timeout=2000)
+    assert window.hex_view._hex_path_str == str(p)
+    window.close()

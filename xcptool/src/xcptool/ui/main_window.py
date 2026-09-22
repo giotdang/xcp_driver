@@ -111,7 +111,8 @@ class MainWindow(QMainWindow):
 
         self.measurement_view.scope_switch.setChecked(self._app_config.scope_enabled)
         self.trace_view.cap_spin.setValue(self._app_config.trace_row_limit)
-        
+        self.hex_view.set_byte_order(self._app_config.last_byte_order)
+
         # Navigation restore will happen after navigation is built, wait until _build_navigation is done
 
         self.trace_timer = QTimer(self)
@@ -125,6 +126,10 @@ class MainWindow(QMainWindow):
         # Auto-load A2L nếu file lần trước vẫn tồn tại
         if self._app_config.last_a2l_path and Path(self._app_config.last_a2l_path).is_file():
             QTimer.singleShot(50, lambda: self._on_a2l_load_requested(self._app_config.last_a2l_path))
+
+        # Auto-load hex/s19 nếu file lần trước vẫn tồn tại
+        if self._app_config.last_hex_path and Path(self._app_config.last_hex_path).is_file():
+            QTimer.singleShot(50, lambda: self._on_hex_load_requested(self._app_config.last_hex_path))
 
 
     # ── dựng giao diện ───────────────────────────────────────────────────────
@@ -518,6 +523,9 @@ class MainWindow(QMainWindow):
             self._end_busy()
             self.calibration_view.set_byte_order(caps.byte_order)
             self.measurement_view.set_byte_order(caps.byte_order)
+            self.hex_view.set_byte_order(caps.byte_order)
+            self._app_config.last_byte_order = caps.byte_order
+            self._save_current_app_config()
             self.notify("Connected", self._caps_summary(caps))
             self._refresh_pages_after_connect()
 
