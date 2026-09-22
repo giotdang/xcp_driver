@@ -5,12 +5,15 @@ docs/superpowers/specs/2026-09-21-hexfile-generate-design.md.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -23,7 +26,7 @@ from qfluentwidgets import PushButton
 
 from ..session.api import A2LDatabase, DatasetImportResult
 from .leaf_enum import LeafInfo, enumerate_leaves
-from .value_codec import decode_value
+from .value_codec import decode_value, encode_value
 
 __all__ = ["HexView"]
 
@@ -138,4 +141,41 @@ class HexView(QWidget):
         self.regions_requested.emit(addresses)
 
     def _on_generate_clicked(self) -> None:
-        raise NotImplementedError  # wired in Task 12
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Calibration Dataset", "", "JSON (*.json)",
+        )
+        if not path:
+            return
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            self.status_label.setText(f"Failed to read dataset file: {e}")
+            return
+        self._import_dataset_cb(payload)
+
+    def on_dataset_validated(self, result: DatasetImportResult) -> None:
+        assert self._db is not None  # generate_btn is disabled otherwise
+        by_name = {leaf.name: leaf for leaf in self._leaves}
+        byte_order = self.current_byte_order()
+        patches: list[tuple[int, bytes, str]] = []
+        errors: list[str] = []
+        for name, text in result.matched.items():
+            leaf = by_name.get(name)
+            if leaf is None:
+                continue  # not a leaf HexView knows about (e.g. a MEASUREMENT-only name)
+            try:
+                data = encode_value(text, leaf.datatype, byte_order, array_size=1)
+            except ValueError as e:
+                errors.append(f"{name}: {e}")
+                continue
+            patches.append((leaf.address, data, name))
+
+        self._pending_patches = patches
+        if errors:
+            self.status_label.setText(f"{len(errors)} value(s) failed to encode: {errors[0]}")
+            self._pending_patches = []
+            return
+        if not patches:
+            self.status_label.setText("Nothing to patch — dataset matched 0 known parameter(s).")
+            return
+        self.status_label.setText(f"{len(patches)} parameter(s) ready — choose where to save.")

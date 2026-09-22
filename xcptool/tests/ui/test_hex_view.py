@@ -84,3 +84,70 @@ def test_on_regions_ready_shows_not_in_file_for_missing_address(qtbot) -> None:
 
     assert view.origin_table.item(0, 3).text() == "— (not in file)"
     assert view.origin_table.item(0, 4).text() == "— (not in file)"
+
+
+def test_generate_clicked_opens_dataset_file_dialog_and_calls_import_cb(qtbot, monkeypatch) -> None:
+    view, import_calls, _ = _make_view(qtbot)
+    db = A2LDatabase()
+    view.set_database(db)
+    view.set_hex_loaded("golden.hex")
+
+    monkeypatch.setattr(
+        "xcptool.ui.hex_view.QFileDialog.getOpenFileName",
+        lambda *a, **k: ("dataset.json", ""),
+    )
+    monkeypatch.setattr(
+        "xcptool.ui.hex_view.Path.read_text",
+        lambda self, encoding="utf-8": '{"format_version": 1, "values": {"kp": "5"}}',
+    )
+
+    view.generate_btn.click()
+
+    assert len(import_calls) == 1
+    assert import_calls[0] == {"format_version": 1, "values": {"kp": "5"}}
+
+
+def test_generate_clicked_cancel_dialog_does_not_call_import_cb(qtbot, monkeypatch) -> None:
+    view, import_calls, _ = _make_view(qtbot)
+    view.set_database(A2LDatabase())
+    view.set_hex_loaded("golden.hex")
+    monkeypatch.setattr(
+        "xcptool.ui.hex_view.QFileDialog.getOpenFileName", lambda *a, **k: ("", "")
+    )
+
+    view.generate_btn.click()
+
+    assert import_calls == []
+
+
+def test_on_dataset_validated_builds_patches_from_matched_values(qtbot) -> None:
+    # Task 11 scope: on_dataset_validated() computes _pending_patches and
+    # stops (status label only) — Task 12 adds the save dialog + generate_cb
+    # call after this same point, so this test predates that behavior.
+    view, _, _ = _make_view(qtbot)
+    char = Characteristic(
+        name="kp", description="", char_type="VALUE", address=0x1000,
+        record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE",
+    )
+    db = A2LDatabase()
+    db.characteristics["kp"] = char
+    view.set_database(db)
+
+    result = DatasetImportResult(matched={"kp": "42"}, skipped=[], a2l_mismatch_warning=None)
+    view.on_dataset_validated(result)
+
+    assert view._pending_patches == [(0x1000, b"\x2A", "kp")]
+
+
+def test_on_dataset_validated_empty_matched_shows_status_no_patches(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    view.set_database(A2LDatabase())
+
+    result = DatasetImportResult(
+        matched={}, skipped=[SkipReason(name="x", reason="not found in A2L")],
+        a2l_mismatch_warning=None,
+    )
+    view.on_dataset_validated(result)
+
+    assert view._pending_patches == []
+    assert "0" in view.status_label.text() or "no" in view.status_label.text().lower()

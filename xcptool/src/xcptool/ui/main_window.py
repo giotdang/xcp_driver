@@ -166,7 +166,12 @@ class MainWindow(QMainWindow):
         self.hex_view.regions_requested.connect(self._on_hex_regions_requested)
 
     def _on_hexview_import_dataset_requested(self, payload: dict) -> None:
-        pass  # wired in Task 12
+        self._call(
+            "Validating calibration dataset…",
+            self.session.import_dataset, payload,
+            on_ok=self.hex_view.on_dataset_validated,
+            on_err=lambda exc: self.hex_view.status_label.setText(f"Validate failed: {exc}"),
+        )
 
     def _on_hexview_generate_requested(self, patches: list[tuple[int, bytes, str]], output_path: str) -> None:
         pass  # wired in Task 13
