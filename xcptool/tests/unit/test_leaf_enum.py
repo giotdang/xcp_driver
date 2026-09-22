@@ -30,7 +30,21 @@ def test_enumerate_skips_unresolved_datatype() -> None:
     assert enumerate_leaves(_db({"broken": char})) == []
 
 
-def test_enumerate_expands_val_blk_array_into_one_leaf_per_element() -> None:
+def test_enumerate_keeps_val_blk_array_as_one_leaf() -> None:
+    """Regression: a VAL_BLK array must stay ONE leaf, not one per element.
+
+    dataset.json (a2l/dataset.py's build_dataset/apply_dataset) stores an
+    array as a single name -> comma-joined-text entry, matching
+    encode_value()'s array_size parameter — exactly like CalibrationView's
+    Export All already does. An earlier version of this function expanded
+    arrays into per-element leaves (table[0], table[1], ...), which meant
+    a dataset entry for the bare array name ("table") never matched
+    anything in HexView's by-name lookup and was silently dropped —
+    caught by hand-testing Generate-from-dataset against a real example
+    A2L/dataset pair (examples/xcp_daq_example.a2l), where adcCalPoints'
+    real, non-zero values ("1, 2, 4, 5") vanished silently instead of
+    being patched.
+    """
     char = Characteristic(
         name="table", description="", char_type="VAL_BLK", address=0x2000,
         record_layout="", lower_limit=0.0, upper_limit=10.0,
@@ -38,9 +52,7 @@ def test_enumerate_expands_val_blk_array_into_one_leaf_per_element() -> None:
     )
     leaves = enumerate_leaves(_db({"table": char}))
     assert leaves == [
-        LeafInfo(name="table[0]", address=0x2000, datatype="UWORD", size=2),
-        LeafInfo(name="table[1]", address=0x2002, datatype="UWORD", size=2),
-        LeafInfo(name="table[2]", address=0x2004, datatype="UWORD", size=2),
+        LeafInfo(name="table", address=0x2000, datatype="UWORD", size=6, array_size=3),
     ]
 
 

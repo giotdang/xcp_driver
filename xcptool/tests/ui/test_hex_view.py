@@ -245,3 +245,31 @@ def test_on_generate_error_shows_critical_dialog_leaves_mod_table_unchanged(qtbo
 
     assert shown["text"]
     assert view.mod_table.rowCount() == 0
+
+
+def test_on_dataset_validated_builds_one_patch_for_a_whole_val_blk_array(qtbot, monkeypatch) -> None:
+    """Regression: a dataset entry keyed by an array's bare name (e.g.
+    "adcCalPoints": "1, 2, 4, 5" — exactly how a2l/dataset.py exports a
+    VAL_BLK) must resolve to one patch covering the whole array, not be
+    silently dropped because by-name lookup only knew per-element names.
+    """
+    monkeypatch.setattr("xcptool.ui.hex_view.QFileDialog.getSaveFileName", lambda *a, **k: ("", ""))
+    view, _, _ = _make_view(qtbot)
+    char = Characteristic(
+        name="adcCalPoints", description="", char_type="VAL_BLK", address=0x2000,
+        record_layout="", lower_limit=0.0, upper_limit=4095.0,
+        datatype="UWORD", array_size=4,
+    )
+    db = A2LDatabase()
+    db.characteristics["adcCalPoints"] = char
+    view.set_database(db)
+    view.set_hex_loaded("C:/proj/golden.hex")
+
+    result = DatasetImportResult(
+        matched={"adcCalPoints": "1, 2, 4, 5"}, skipped=[], a2l_mismatch_warning=None,
+    )
+    view.on_dataset_validated(result)
+
+    assert view._pending_patches == [
+        (0x2000, b"\x01\x00\x02\x00\x04\x00\x05\x00", "adcCalPoints"),
+    ]

@@ -165,7 +165,7 @@ class HexView(QWidget):
             if leaf is None:
                 continue  # not a leaf HexView knows about (e.g. a MEASUREMENT-only name)
             try:
-                data = encode_value(text, leaf.datatype, byte_order, array_size=1)
+                data = encode_value(text, leaf.datatype, byte_order, array_size=leaf.array_size)
             except ValueError as e:
                 errors.append(f"{name}: {e}")
                 continue

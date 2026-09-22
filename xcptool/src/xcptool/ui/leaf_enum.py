@@ -20,6 +20,7 @@ class LeafInfo:
     address: int
     datatype: str
     size: int
+    array_size: int = 1  # >1 for a VAL_BLK array kept as one leaf, not one per element
 
 
 def _leaf_names(node: InstanceNode) -> set[str]:
@@ -38,36 +39,27 @@ def _leaves_from_node(node: InstanceNode, db: A2LDatabase, out: list[LeafInfo]) 
         char = db.characteristics.get(node.leaf_name)
         if char is None or char.datatype is None:
             return
-        if char.array_size > 1:
-            _append_array_elements(out, char)
-        else:
-            out.append(LeafInfo(
-                name=node.leaf_name, address=char.address,
-                datatype=char.datatype, size=char.byte_size,
-            ))
+        out.append(LeafInfo(
+            name=node.leaf_name, address=char.address,
+            datatype=char.datatype, size=char.byte_size, array_size=char.array_size,
+        ))
         return
     for child in node.children:
         _leaves_from_node(child, db, out)
 
 
-def _append_array_elements(out: list[LeafInfo], char) -> None:
-    elem_size = char.byte_size // char.array_size
-    for i in range(char.array_size):
-        out.append(LeafInfo(
-            name=f"{char.name}[{i}]",
-            address=char.address + i * elem_size,
-            datatype=char.datatype,
-            size=elem_size,
-        ))
-
-
 def enumerate_leaves(db: A2LDatabase) -> list[LeafInfo]:
     """Every calibration leaf in `db` — flat CHARACTERISTICs and struct/
-    array INSTANCE trees alike, one entry per addressable leaf (array
-    elements get their own entry, e.g. `table[0]`). Characteristics with
-    no resolved `datatype` are skipped (nothing to read/write for them).
-    Order: instance-tree leaves first (in `db.instance_trees` iteration
-    order), then remaining flat characteristics sorted by name.
+    array INSTANCE trees alike, one entry per CHARACTERISTIC (a VAL_BLK
+    array is ONE leaf with `array_size > 1` and `size` covering the whole
+    array, not one leaf per element — matches the granularity
+    `a2l/dataset.py`'s dataset JSON and `encode_value()`'s `array_size`
+    parameter already use; expanding into per-element leaves here would
+    make a dataset entry for the array's bare name unmatchable).
+    Characteristics with no resolved `datatype` are skipped (nothing to
+    read/write for them). Order: instance-tree leaves first (in
+    `db.instance_trees` iteration order), then remaining flat
+    characteristics sorted by name.
     """
     out: list[LeafInfo] = []
     handled: set[str] = set()
@@ -78,9 +70,9 @@ def enumerate_leaves(db: A2LDatabase) -> list[LeafInfo]:
     for name, char in sorted(db.characteristics.items()):
         if name in handled or char.datatype is None:
             continue
-        if char.array_size > 1:
-            _append_array_elements(out, char)
-        else:
-            out.append(LeafInfo(name=name, address=char.address, datatype=char.datatype, size=char.byte_size))
+        out.append(LeafInfo(
+            name=name, address=char.address, datatype=char.datatype,
+            size=char.byte_size, array_size=char.array_size,
+        ))
 
     return out
