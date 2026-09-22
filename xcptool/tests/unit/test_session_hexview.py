@@ -57,3 +57,25 @@ def test_load_hex_file_replaces_previous(session, tmp_path) -> None:
 
     result = session.hex_regions([(0x0100, 4, "fromFirst"), (0x0200, 4, "fromSecond")])
     assert result == {"fromFirst": None, "fromSecond": b"\xAA\xBB\xCC\xDD"}
+
+
+def test_hex_raw_rows_before_load_returns_empty(session) -> None:
+    assert session.hex_raw_rows() == []
+
+
+def test_hex_raw_rows_matches_read_records(session, tmp_path) -> None:
+    p = _write_hex(tmp_path)
+    session.load_hex_file(p)
+    from xcptool.a2l import hexfile
+    assert session.hex_raw_rows() == hexfile.read_records(p)
+
+
+def test_hex_raw_rows_of_reads_an_arbitrary_file_not_the_loaded_one(session, tmp_path) -> None:
+    loaded = _write_hex(tmp_path)
+    session.load_hex_file(loaded)
+
+    other = tmp_path / "other.hex"
+    other.write_text(":04020000AABBCCDDEC\n:00000001FF\n", encoding="ascii")
+
+    assert session.hex_raw_rows() == [(0x0100, bytes(range(1, 9)))]
+    assert session.hex_raw_rows_of(other) == [(0x0200, b"\xAA\xBB\xCC\xDD")]

@@ -583,6 +583,20 @@ class Session(Protocol):
         đủ mọi name+address vi phạm). Không ghi gì nếu lỗi.
         """
 
+    def hex_raw_rows(self) -> list[tuple[int, bytes]]:
+        """Every original data record of the currently loaded hex/s19
+        file, in file order — see a2l.hexfile.read_records(). Empty list
+        if no file is loaded."""
+
+    def hex_raw_rows_of(self, path: str | Path) -> list[tuple[int, bytes]]:
+        """Every original data record of the file at `path` — same as
+        `hex_raw_rows()` but for an arbitrary file, not necessarily the
+        currently loaded one (used to re-read a just-generated output
+        file).
+
+        Raises: XcpToolError nếu file không đọc được/nội dung không hợp lệ.
+        """
+
     # ── DAQ (M4) ─────────────────────────────────────────────────────────────
 
     def start_daq(self, lists: list[DaqList]) -> None:

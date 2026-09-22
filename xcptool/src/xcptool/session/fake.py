@@ -499,6 +499,20 @@ class FakeSession:
         except (ValueError, OSError) as exc:
             raise XcpToolError(str(exc)) from exc
 
+    def hex_raw_rows(self) -> list[tuple[int, bytes]]:
+        if self._hex_path is None:
+            return []
+        try:
+            return hexfile.read_records(self._hex_path)
+        except (ValueError, OSError) as exc:
+            raise XcpToolError(str(exc)) from exc
+
+    def hex_raw_rows_of(self, path: str | Path) -> list[tuple[int, bytes]]:
+        try:
+            return hexfile.read_records(Path(path))
+        except (ValueError, OSError) as exc:
+            raise XcpToolError(str(exc)) from exc
+
     # ── DAQ (stub) ───────────────────────────────────────────────────────────
 
     def start_daq(self, lists: list[DaqList]) -> None:

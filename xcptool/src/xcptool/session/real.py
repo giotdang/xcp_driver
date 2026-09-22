@@ -310,6 +310,16 @@ class RealSession:
             raise XcpToolError("Chưa nạp file hex/s19 — không thể generate")
         hexfile.patch_and_save(self._hex_path, patches, Path(output_path))
 
+    @_guarded("đọc toàn bộ hex/s19")
+    def hex_raw_rows(self) -> list[tuple[int, bytes]]:
+        if self._hex_path is None:
+            return []
+        return hexfile.read_records(self._hex_path)
+
+    @_guarded("đọc toàn bộ hex/s19")
+    def hex_raw_rows_of(self, path: str | Path) -> list[tuple[int, bytes]]:
+        return hexfile.read_records(Path(path))
+
     # ── DAQ ──────────────────────────────────────────────────────────────────
 
     @_guarded("cấu hình DAQ")
