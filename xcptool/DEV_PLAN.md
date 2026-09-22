@@ -2137,3 +2137,32 @@ quan, làm theo đúng thứ tự phụ thuộc dưới đây (branch `feature`)
    tách phần tử nữa; `on_dataset_validated()` truyền
    `array_size=leaf.array_size` xuống `encode_value()` thay vì hằng số 1.
    619 test pass sau khi sửa.
+
+   **Bổ sung sau đó (2026-09-22) — tab "Raw" trong Hex View:** spec
+   [`docs/superpowers/specs/2026-09-22-hexview-raw-tab-design.md`](docs/superpowers/specs/2026-09-22-hexview-raw-tab-design.md),
+   plan: [`docs/superpowers/plans/2026-09-22-hexview-raw-tab-plan.md`](docs/superpowers/plans/2026-09-22-hexview-raw-tab-plan.md).
+   Hex View có thêm `QTabWidget`: tab "Calibration" (như cũ) và tab
+   "Raw" mới — hiện toàn bộ record gốc của file hex/s19 (địa chỉ +
+   byte, đúng như ghi trong file, không gộp/không chia lại), không cần
+   nạp A2L. Module mới `a2l/hexfile.py::read_records()` đọc từng dòng
+   gốc qua `bincopy.unpack_ihex()`/`unpack_srec()` — **không** dùng
+   `BinFile.segments`/`chunks()` vì cái đó gộp mất ranh giới dòng gốc
+   (kiểm chứng lúc brainstorm: 2 record 20-byte liền nhau bị gộp rồi
+   chia lại thành 16+16+8). `patch_and_save()` cũng sửa để giữ nguyên
+   kích thước dòng phổ biến nhất của file gốc khi ghi file output
+   (thay vì mặc định ~32 byte/dòng của bincopy), nhờ vậy bảng Raw
+   Origin/Mod so hàng đúng theo địa chỉ. Bảng Raw dùng
+   `QAbstractTableModel`/`QTableView` (lazy) thay vì `QTableWidget`
+   (eager) vì số dòng của 1 file flash thật có thể lên tới hàng chục
+   nghìn — `QTableWidget` dựng hết ngay sẽ đơ UI.
+
+   Lúc viết plan, mọi fixture Intel HEX/S-record gõ tay đều được verify
+   lại qua `bincopy` trước khi đưa vào — bắt được 2 checksum sai (cùng
+   loại lỗi đã gặp lúc làm mục 3 phần trước, lần này bắt được trước khi
+   lọt vào code thật). Test: 642 test pass (`pytest tests/ -q`), thử
+   tay bằng cách gọi thẳng `Session` với `examples/xcp_daq_example.hex`
+   + `xcptool/dataset.json` thật — Raw Origin ra đúng 5 dòng ngay sau
+   khi nạp hex (chưa nạp A2L), generate xong Raw Mod vẫn 5 dòng (đúng
+   như kỳ vọng — record size được giữ nguyên), và đúng 3 dòng được
+   đánh dấu thay đổi (khớp chính xác với 5 giá trị dataset thật đổi,
+   rơi vào 3 dòng 32-byte khác nhau).
