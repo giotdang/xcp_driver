@@ -2064,8 +2064,8 @@ git commit -m "docs(xcptool): mark ASAP2 struct-typedef feature as shipped"
 
 ## 11. Kế hoạch tiếp theo — Multi-select & Calibration Dataset (spec 2026-09-19)
 
-**Trạng thái: mục (1) và (2) đã triển khai xong; (3) chưa bắt đầu.** 3 tính
-năng liên quan, làm theo đúng thứ tự phụ thuộc dưới đây (branch `feature`).
+**Trạng thái: mục (1), (2) và (3) đã triển khai xong.** 3 tính năng liên
+quan, làm theo đúng thứ tự phụ thuộc dưới đây (branch `feature`).
 
 1. **Multi-select trong CalibrationView (Read/Write Selected theo nhiều dòng)**
    — spec: [`docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md`](docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md).
@@ -2091,5 +2091,35 @@ năng liên quan, làm theo đúng thứ tự phụ thuộc dưới đây (branc
    nó. Test: 565 test pass (`pytest tests/ -x -q`), `--selftest --session
    fake` xanh 15/15 bước qua event loop thật.
 3. **Generate hex/s19 file** (calib đã hiệu chỉnh → merge vào file hex/s19
-   gốc nạp ECU) — **chưa thiết kế**, dự kiến tái dùng dataset engine của
-   mục (2) làm nguồn giá trị. Làm sau khi (1) và (2) xong.
+   gốc nạp ECU) — spec:
+   [`docs/superpowers/specs/2026-09-21-hexfile-generate-design.md`](docs/superpowers/specs/2026-09-21-hexfile-generate-design.md),
+   plan: [`docs/superpowers/plans/2026-09-21-hexview-generate-hex-plan.md`](docs/superpowers/plans/2026-09-21-hexview-generate-hex-plan.md).
+
+   **Triển khai thật (khác dự kiến ban đầu ở dòng trên, chốt lại lúc
+   brainstorm):** không tái dùng dataset engine của mục (2) làm nguồn giá
+   trị trực tiếp trong CalibrationView như dự kiến — thay vào đó là một
+   **view mới hoàn toàn, "Hex View"**, ngang hàng Calibration/Measurement
+   trên nav rail. Luồng: menu Session → "Load Hex/S19…" nạp file gốc vào
+   session state (`Session.load_hex_file()`), hiển thị 2 bảng
+   Origin/Mod song song (1 dòng/leaf calibration, không phải hex-dump toàn
+   file); nút "Generate hex from dataset" đọc 1 file dataset JSON đã
+   export từ mục (2), validate qua `Session.import_dataset()` (dùng lại y
+   nguyên), UI tự encode bằng `encode_value()` (mới tách ra
+   `ui/value_codec.py` dùng chung Calibration/Hex View) rồi patch qua
+   `Session.generate_hex_from_dataset()`. Module mới `a2l/hexfile.py`
+   (bọc `bincopy`) thuần address/bytes, không biết gì về A2L — giữ đúng
+   nguyên tắc "UI tự encode, backend chỉ patch thô" đã dùng cho mục (2).
+   Địa chỉ không khớp file gốc → dừng toàn bộ, liệt kê đủ lỗi (không
+   silent-skip như mismatch A2L của mục 2).
+
+   Bắt được 1 bug thật lúc code: `bincopy.BinFile.as_binary(min, max)` độn
+   `0xFF` tới `max` khi có segment thật nằm sau khoảng hỏi — kể cả khi
+   toàn bộ khoảng hỏi nằm *trước* segment thấp nhất — nên coverage-check
+   không được suy từ độ dài kết quả trả về, phải soi trực tiếp
+   `bf.segments`. Cũng phát hiện `QFileDialog`/`QMessageBox` treo vô thời
+   hạn dưới `QT_QPA_PLATFORM=offscreen` nếu test không mock — không timeout
+   sạch, cả suite trông như "chạy chậm" chứ không fail rõ ràng. Test: 621
+   test pass (`pytest tests/ -q`), `--selftest --session fake` xanh 15/15
+   bước qua event loop thật (không thêm bước riêng cho Hex View vào
+   selftest — đúng tiền lệ mục (2) cũng không thêm, pytest là nơi verify
+   theo tính năng).

@@ -2578,9 +2578,13 @@ git commit -m "feat(xcptool): persist byte_order after Connect, auto-reload last
 - [ ] **Step 1: Run the entire test suite**
 
 Run: `xcptool/.venv/Scripts/python.exe -m pytest xcptool/tests/ -q`
-Expected: all pass, zero failures, zero errors. Compare the total count
-against the 565 baseline noted in `DEV_PLAN.md §11` — it should now read
-"565 + every test added in Tasks 1-13 above".
+Expected: all pass, zero failures, zero errors. Final count after Tasks
+1-13: 618 tests (up from the 565 baseline noted in `DEV_PLAN.md §11` for
+item (2) — one pre-existing, unrelated soak/timing test,
+`test_flood_2000_fps_ui_van_muot_ram_khong_phinh`, was observed flaky
+during implementation — a RAM-growth threshold assertion sensitive to
+system load at the moment it runs, nothing this plan touched; it passed
+clean on every full-suite run actually used to verify this plan's work).
 
 - [ ] **Step 2: Run the architecture boundary test specifically**
 
@@ -2589,15 +2593,26 @@ Expected: all pass — confirms `ui/hex_view.py` and the edited
 `ui/calibration_view.py` never import `xcptool.a2l` or `xcptool.master`
 directly.
 
-- [ ] **Step 3: Manual smoke test via `--selftest`**
+- [ ] **Step 3: Regression-run `--selftest`, do not extend it**
 
-Run whatever self-test entry point `DEV_PLAN.md §11` referenced for the
-dataset feature ("`--selftest --session fake` xanh 15/15 bước qua event
-loop thật") — extend that walkthrough manually once, interactively, to
-also: load a hex/s19 fixture, load an A2L, export a dataset from
-CalibrationView, switch to Hex View, generate, and visually confirm the
-Mod table highlights the changed row(s). This is the one step in this plan
-that isn't automated — do it before considering the feature done.
+Run `xcptool/.venv/Scripts/python.exe -m xcptool.ui.app --session fake --selftest`
+(under `QT_QPA_PLATFORM=offscreen` — no real display needed; the script
+drives a real `QApplication` event loop, real worker threads, real
+`QTimer`s, headless).
+
+**Revise this step's original framing** — it assumed the dataset feature
+(item 2) had extended `selftest.py` with dataset-specific steps and that
+Hex View should follow suit. Reading `src/xcptool/ui/selftest.py` in full
+during implementation showed this is false: its 15 steps (list_devices
+through close) are exactly M1-M4 baseline connectivity/read/write/trace —
+A2L loading, calibration, dataset export/import were never added to it,
+verified entirely through their own pytest suites instead, per
+`DEV_PLAN.md §11` item (2)'s own note. Extending `selftest.py` for Hex
+View now would be new precedent, not consistency with one. Run it
+unmodified as a regression check (a real event loop actually booting and
+running MainWindow end-to-end, wiring in Hex View and all, is worth
+confirming) — expect all 15 steps green, unrelated to anything this plan
+touched.
 
 - [ ] **Step 4: Update `DEV_PLAN.md` §11**
 
