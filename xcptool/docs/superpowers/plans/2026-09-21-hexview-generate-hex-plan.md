@@ -2326,16 +2326,38 @@ def test_on_generate_error_shows_critical_dialog_leaves_mod_table_unchanged(qtbo
 In `xcptool/tests/ui/test_hex_view_integration.py`:
 
 ```python
-def test_hexview_generate_requested_reaches_session_and_reports_error(window: MainWindow, qtbot) -> None:
+def test_hexview_generate_requested_reaches_session_and_reports_error(window: MainWindow, qtbot, monkeypatch) -> None:
     # Exercises the MainWindow wiring only — HexView's own dialog/patch-
     # building behavior is covered in test_hex_view.py. `window`'s
     # FakeSession has no hex file loaded here, so this exercises (and
     # pins) the error path: the call must reach HexView, not crash
     # MainWindow or silently vanish.
+    #
+    # on_generate_error() shows a real QMessageBox.critical(...) — under the
+    # offscreen QPA platform that blocks indefinitely without a mock (same
+    # class of hang as QFileDialog — confirmed empirically: without this
+    # monkeypatch, this test hangs well past pytest-timeout's 60s watchdog
+    # rather than failing cleanly, because the block happens inside a native
+    # Qt/Windows event loop a thread-based Python timeout can't cleanly
+    # interrupt).
+    monkeypatch.setattr(
+        "xcptool.ui.hex_view.QMessageBox.critical", lambda *a, **k: None
+    )
+
     window._on_hexview_generate_requested([(0x1000, b"\x2A", "kp")], "C:/proj/out.hex")
-    qtbot.waitUntil(lambda: window.hex_view.status_label.text() != "", timeout=2000)
-    assert "Generate failed" in window.hex_view.status_label.text()
+    # status_label starts non-empty ("Load an A2L…"), so waiting on it merely
+    # being non-empty passes instantly without ever observing the async call
+    # land (a real bug this exact test hit during implementation) — wait for
+    # the actual expected text instead.
+    qtbot.waitUntil(
+        lambda: "Generate failed" in window.hex_view.status_label.text(), timeout=2000
+    )
 ```
+
+**Both notes above were found the hard way while implementing this task** —
+run this specific test in isolation first, with a generous shell timeout,
+before trusting a green run of the whole file: a hang here can otherwise
+masquerade as "the suite is just slow."
 
 - [ ] **Step 2: Run tests to verify they fail**
 

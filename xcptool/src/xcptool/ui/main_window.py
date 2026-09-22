@@ -173,8 +173,15 @@ class MainWindow(QMainWindow):
             on_err=lambda exc: self.hex_view.status_label.setText(f"Validate failed: {exc}"),
         )
 
-    def _on_hexview_generate_requested(self, patches: list[tuple[int, bytes, str]], output_path: str) -> None:
-        pass  # wired in Task 13
+    def _on_hexview_generate_requested(
+        self, patches: list[tuple[int, bytes, str]], output_path: str,
+    ) -> None:
+        self._call(
+            "Generating calibration hex/s19…",
+            self.session.generate_hex_from_dataset, patches, output_path,
+            on_ok=lambda _: self.hex_view.on_generate_done(output_path),
+            on_err=self.hex_view.on_generate_error,
+        )
 
     def _on_hex_regions_requested(self, addresses: list[tuple[int, int, str]]) -> None:
         self._call(

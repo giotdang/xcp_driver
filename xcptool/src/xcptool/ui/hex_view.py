@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -179,3 +180,35 @@ class HexView(QWidget):
             self.status_label.setText("Nothing to patch — dataset matched 0 known parameter(s).")
             return
         self.status_label.setText(f"{len(patches)} parameter(s) ready — choose where to save.")
+
+        hex_path = Path(self._hex_path_str)
+        default_path = str(hex_path.with_name(hex_path.stem + "_mod" + hex_path.suffix))
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Patched Hex/S-record File", default_path,
+            "Hex / S-record (*.hex *.ihex *.s19 *.s28 *.s37 *.srec *.mot)",
+        )
+        if not out_path:
+            return
+        self._generate_cb(patches, out_path)
+
+    def on_generate_done(self, output_path: str) -> None:
+        patched_bytes = {name: data for _addr, data, name in self._pending_patches}
+        mod_values: dict[str, bytes | None] = dict(self._origin_bytes)
+        mod_values.update(patched_bytes)
+        self._render_table(self.mod_table, mod_values)
+
+        changed = {
+            name for name in patched_bytes
+            if self._origin_bytes.get(name) != patched_bytes[name]
+        }
+        for row, leaf in enumerate(self._leaves):
+            if leaf.name in changed:
+                for col in range(len(_COLUMNS)):
+                    self.mod_table.item(row, col).setBackground(_DIFF_BRUSH)
+
+        self.status_label.setText(f"Patched {len(self._pending_patches)} parameter(s) into {Path(output_path).name}.")
+        self._pending_patches = []
+
+    def on_generate_error(self, exc: Exception) -> None:
+        self.status_label.setText(f"Generate failed: {exc}")
+        QMessageBox.critical(self, "Generate Failed", str(exc))

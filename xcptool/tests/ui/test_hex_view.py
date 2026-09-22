@@ -120,11 +120,14 @@ def test_generate_clicked_cancel_dialog_does_not_call_import_cb(qtbot, monkeypat
     assert import_calls == []
 
 
-def test_on_dataset_validated_builds_patches_from_matched_values(qtbot) -> None:
-    # Task 11 scope: on_dataset_validated() computes _pending_patches and
-    # stops (status label only) — Task 12 adds the save dialog + generate_cb
-    # call after this same point, so this test predates that behavior.
-    view, _, _ = _make_view(qtbot)
+def test_on_dataset_validated_builds_patches_from_matched_values(qtbot, monkeypatch) -> None:
+    # Since Task 12, on_dataset_validated() opens a save dialog right after
+    # computing _pending_patches — QFileDialog.getSaveFileName hangs under
+    # the offscreen QPA platform without a mock (confirmed empirically while
+    # implementing Task 12), so every test reaching this point must patch it.
+    # Cancelling it here isolates this test to just the patch-building step.
+    monkeypatch.setattr("xcptool.ui.hex_view.QFileDialog.getSaveFileName", lambda *a, **k: ("", ""))
+    view, _, generate_calls = _make_view(qtbot)
     char = Characteristic(
         name="kp", description="", char_type="VALUE", address=0x1000,
         record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE",
@@ -132,11 +135,13 @@ def test_on_dataset_validated_builds_patches_from_matched_values(qtbot) -> None:
     db = A2LDatabase()
     db.characteristics["kp"] = char
     view.set_database(db)
+    view.set_hex_loaded("C:/proj/golden.hex")
 
     result = DatasetImportResult(matched={"kp": "42"}, skipped=[], a2l_mismatch_warning=None)
     view.on_dataset_validated(result)
 
     assert view._pending_patches == [(0x1000, b"\x2A", "kp")]
+    assert generate_calls == []  # dialog was cancelled, generate_cb never called
 
 
 def test_on_dataset_validated_empty_matched_shows_status_no_patches(qtbot) -> None:
@@ -151,3 +156,92 @@ def test_on_dataset_validated_empty_matched_shows_status_no_patches(qtbot) -> No
 
     assert view._pending_patches == []
     assert "0" in view.status_label.text() or "no" in view.status_label.text().lower()
+
+
+def test_on_dataset_validated_opens_prefilled_save_dialog_and_calls_generate_cb(qtbot, monkeypatch) -> None:
+    view, _, generate_calls = _make_view(qtbot)
+    char = Characteristic(
+        name="kp", description="", char_type="VALUE", address=0x1000,
+        record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE",
+    )
+    db = A2LDatabase()
+    db.characteristics["kp"] = char
+    view.set_database(db)
+    view.set_hex_loaded("C:/proj/golden.hex")
+
+    captured_default = {}
+
+    def fake_save_dialog(parent, title, default_path, filt):
+        captured_default["path"] = default_path
+        return ("C:/proj/golden_mod.hex", "")
+
+    monkeypatch.setattr("xcptool.ui.hex_view.QFileDialog.getSaveFileName", fake_save_dialog)
+
+    result = DatasetImportResult(matched={"kp": "42"}, skipped=[], a2l_mismatch_warning=None)
+    view.on_dataset_validated(result)
+
+    assert "golden_mod.hex" in captured_default["path"]
+    assert len(generate_calls) == 1
+    patches, out_path = generate_calls[0]
+    assert patches == [(0x1000, b"\x2A", "kp")]
+    assert out_path == "C:/proj/golden_mod.hex"
+
+
+def test_on_dataset_validated_cancel_save_dialog_does_not_call_generate_cb(qtbot, monkeypatch) -> None:
+    view, _, generate_calls = _make_view(qtbot)
+    char = Characteristic(
+        name="kp", description="", char_type="VALUE", address=0x1000,
+        record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE",
+    )
+    db = A2LDatabase()
+    db.characteristics["kp"] = char
+    view.set_database(db)
+    view.set_hex_loaded("C:/proj/golden.hex")
+    monkeypatch.setattr("xcptool.ui.hex_view.QFileDialog.getSaveFileName", lambda *a, **k: ("", ""))
+
+    result = DatasetImportResult(matched={"kp": "42"}, skipped=[], a2l_mismatch_warning=None)
+    view.on_dataset_validated(result)
+
+    assert generate_calls == []
+
+
+def test_on_generate_done_populates_mod_table_with_patched_and_unchanged_values(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    kp = Characteristic(name="kp", description="", char_type="VALUE", address=0x1000,
+                         record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE")
+    ki = Characteristic(name="ki", description="", char_type="VALUE", address=0x1001,
+                         record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE")
+    db = A2LDatabase()
+    db.characteristics.update({"kp": kp, "ki": ki})
+    view.set_database(db)
+    view.on_regions_ready({"kp": b"\x01", "ki": b"\x02"})
+    view._pending_patches = [(0x1000, b"\x2A", "kp")]
+
+    view.on_generate_done("C:/proj/golden_mod.hex")
+
+    assert view.mod_table.rowCount() == 2
+    rows = {view.mod_table.item(r, 1).text(): r for r in range(view.mod_table.rowCount())}
+    assert view.mod_table.item(rows["kp"], 3).text() == "2A"   # patched
+    assert view.mod_table.item(rows["ki"], 3).text() == "02"   # unchanged, mirrors origin
+
+    from xcptool.ui.hex_view import _DIFF_BRUSH
+    assert view.mod_table.item(rows["kp"], 0).background().color() == _DIFF_BRUSH.color()
+    assert view.mod_table.item(rows["ki"], 0).background().color() != _DIFF_BRUSH.color()
+    assert "golden_mod.hex" in view.status_label.text()
+
+
+def test_on_generate_error_shows_critical_dialog_leaves_mod_table_unchanged(qtbot, monkeypatch) -> None:
+    view, _, _ = _make_view(qtbot)
+    view.set_database(A2LDatabase())
+    view.mod_table.setRowCount(0)
+
+    shown = {}
+    monkeypatch.setattr(
+        "xcptool.ui.hex_view.QMessageBox.critical",
+        lambda parent, title, text: shown.update(title=title, text=text),
+    )
+
+    view.on_generate_error(Exception("Address(es) not found in golden.hex: kp (0x00001000, 1 byte(s))"))
+
+    assert shown["text"]
+    assert view.mod_table.rowCount() == 0

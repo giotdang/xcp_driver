@@ -48,3 +48,27 @@ def test_load_hex_success_refreshes_origin_table(window: MainWindow, tmp_path: P
     window._on_hex_load_requested(str(p))
     qtbot.waitUntil(lambda: window.hex_view.origin_table.rowCount() == 1, timeout=2000)
     assert window.hex_view.origin_table.item(0, 3).text() == "01"
+
+
+def test_hexview_generate_requested_reaches_session_and_reports_error(window: MainWindow, qtbot, monkeypatch) -> None:
+    # Exercises the MainWindow wiring only — HexView's own dialog/patch-
+    # building behavior is covered in test_hex_view.py. `window`'s
+    # FakeSession has no hex file loaded here, so this exercises (and
+    # pins) the error path: the call must reach HexView, not crash
+    # MainWindow or silently vanish.
+    #
+    # on_generate_error() shows a real QMessageBox.critical(...) — under the
+    # offscreen QPA platform that blocks indefinitely without a mock (same
+    # class of hang as QFileDialog, confirmed empirically: this test hung
+    # past pytest-timeout's 60s watchdog before this monkeypatch was added).
+    monkeypatch.setattr(
+        "xcptool.ui.hex_view.QMessageBox.critical", lambda *a, **k: None
+    )
+
+    window._on_hexview_generate_requested([(0x1000, b"\x2A", "kp")], "C:/proj/out.hex")
+    # status_label starts non-empty ("Load an A2L…"), so waiting on it merely
+    # being non-empty would pass instantly without ever observing the async
+    # call land — wait for the actual expected text instead.
+    qtbot.waitUntil(
+        lambda: "Generate failed" in window.hex_view.status_label.text(), timeout=2000
+    )
