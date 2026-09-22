@@ -181,10 +181,19 @@ class MainWindow(QMainWindow):
     def _on_hexview_generate_requested(
         self, patches: list[tuple[int, bytes, str]], output_path: str,
     ) -> None:
+        def on_ok(_: object) -> None:
+            self.hex_view.on_generate_done(output_path)
+            self._call(
+                "Reading generated hex/s19 content…",
+                self.session.hex_raw_rows_of, output_path,
+                on_ok=self.hex_view.on_raw_mod_ready,
+                on_err=lambda exc: self.hex_view.status_label.setText(f"Raw read failed: {exc}"),
+            )
+
         self._call(
             "Generating calibration hex/s19…",
             self.session.generate_hex_from_dataset, patches, output_path,
-            on_ok=lambda _: self.hex_view.on_generate_done(output_path),
+            on_ok=on_ok,
             on_err=self.hex_view.on_generate_error,
         )
 
@@ -709,6 +718,12 @@ class MainWindow(QMainWindow):
         self.hex_view.set_hex_loaded(path)
         self._app_config.last_hex_path = path
         self._save_current_app_config()
+        self._call(
+            "Reading full hex/s19 content…",
+            self.session.hex_raw_rows,
+            on_ok=self.hex_view.on_raw_origin_ready,
+            on_err=lambda exc: self.hex_view.status_label.setText(f"Raw read failed: {exc}"),
+        )
 
     def _on_export_dataset_requested(self, values: dict[str, str]) -> None:
         self._call(

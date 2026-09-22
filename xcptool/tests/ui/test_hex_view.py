@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from xcptool.a2l.types import Characteristic
 from xcptool.session.api import A2LDatabase, DatasetImportResult, SkipReason
+from xcptool.ui.hex_raw_model import HexRawTableModel
 from xcptool.ui.hex_view import HexView
 
 
@@ -273,3 +274,30 @@ def test_on_dataset_validated_builds_one_patch_for_a_whole_val_blk_array(qtbot, 
     assert view._pending_patches == [
         (0x2000, b"\x01\x00\x02\x00\x04\x00\x05\x00", "adcCalPoints"),
     ]
+
+
+def test_raw_tab_exists_alongside_calibration_tab(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    assert isinstance(view.raw_origin_model, HexRawTableModel)
+    assert isinstance(view.raw_mod_model, HexRawTableModel)
+    assert view.raw_origin_view.model() is view.raw_origin_model
+    assert view.raw_mod_view.model() is view.raw_mod_model
+
+
+def test_on_raw_origin_ready_populates_the_raw_origin_model(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    view.on_raw_origin_ready([(0x100, b"\x01\x02"), (0x200, b"\x03\x04")])
+
+    assert view.raw_origin_model.rowCount() == 2
+    assert view.raw_origin_model.data(view.raw_origin_model.index(0, 1)) == "0102"
+
+
+def test_on_raw_mod_ready_populates_and_highlights_only_changed_rows(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    view.on_raw_origin_ready([(0x100, b"\x01\x02"), (0x200, b"\x03\x04")])
+    view.on_raw_mod_ready([(0x100, b"\xAA\xBB"), (0x200, b"\x03\x04")])
+
+    from PySide6.QtCore import Qt
+    model = view.raw_mod_model
+    assert model.data(model.index(0, 0), Qt.BackgroundRole) is not None  # 0x100 changed
+    assert model.data(model.index(1, 0), Qt.BackgroundRole) is None      # 0x200 unchanged

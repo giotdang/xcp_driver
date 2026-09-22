@@ -18,14 +18,17 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
+    QTableView,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import PushButton
 
 from ..session.api import A2LDatabase, DatasetImportResult
+from .hex_raw_model import HexRawTableModel
 from .leaf_enum import LeafInfo, enumerate_leaves
 from .value_codec import decode_value, encode_value
 
@@ -78,15 +81,31 @@ class HexView(QWidget):
         top.addWidget(self.generate_btn)
         self.status_label = QLabel("Load an A2L and a hex/s19 file to begin.")
 
-        tables = QHBoxLayout()
+        cal_page = QWidget()
+        cal_layout = QHBoxLayout(cal_page)
         self.origin_table = _make_table()
         self.mod_table = _make_table()
-        tables.addWidget(self.origin_table)
-        tables.addWidget(self.mod_table)
+        cal_layout.addWidget(self.origin_table)
+        cal_layout.addWidget(self.mod_table)
+
+        raw_page = QWidget()
+        raw_layout = QHBoxLayout(raw_page)
+        self.raw_origin_model = HexRawTableModel(_DIFF_BRUSH)
+        self.raw_mod_model = HexRawTableModel(_DIFF_BRUSH)
+        self.raw_origin_view = QTableView()
+        self.raw_origin_view.setModel(self.raw_origin_model)
+        self.raw_mod_view = QTableView()
+        self.raw_mod_view.setModel(self.raw_mod_model)
+        raw_layout.addWidget(self.raw_origin_view)
+        raw_layout.addWidget(self.raw_mod_view)
+
+        tab_widget = QTabWidget()
+        tab_widget.addTab(cal_page, "Calibration")
+        tab_widget.addTab(raw_page, "Raw")
 
         root = QVBoxLayout(self)
         root.addLayout(top)
-        root.addLayout(tables)
+        root.addWidget(tab_widget)
         root.addWidget(self.status_label)
 
     # ── public state transitions ────────────────────────────────────────────
@@ -113,6 +132,18 @@ class HexView(QWidget):
     def on_regions_ready(self, regions: dict[str, bytes | None]) -> None:
         self._origin_bytes = regions
         self._render_table(self.origin_table, regions)
+
+    def on_raw_origin_ready(self, rows: list[tuple[int, bytes]]) -> None:
+        self.raw_origin_model.set_rows(rows)
+
+    def on_raw_mod_ready(self, rows: list[tuple[int, bytes]]) -> None:
+        self.raw_mod_model.set_rows(rows)
+        origin_by_address = dict(self.raw_origin_model._rows)
+        changed = {
+            address for address, data in rows
+            if origin_by_address.get(address) != data
+        }
+        self.raw_mod_model.set_diff_addresses(changed)
 
     def _render_table(self, table: QTableWidget, values: dict[str, bytes | None]) -> None:
         table.setRowCount(len(self._leaves))

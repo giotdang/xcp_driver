@@ -111,3 +111,13 @@ def test_startup_auto_reloads_last_hex_path_if_file_exists(tmp_path: Path, qtbot
     qtbot.waitUntil(lambda: window.hex_view._hex_loaded, timeout=2000)
     assert window.hex_view._hex_path_str == str(p)
     window.close()
+
+
+def test_load_hex_success_also_populates_raw_tab_without_a2l(window: MainWindow, tmp_path: Path, qtbot) -> None:
+    # Raw must populate from the hex file alone — no A2L load in this test.
+    p = tmp_path / "image.hex"
+    p.write_text(":080100000102030405060708D3\n:00000001FF\n", encoding="ascii")
+
+    window._on_hex_load_requested(str(p))
+    qtbot.waitUntil(lambda: window.hex_view.raw_origin_model.rowCount() == 1, timeout=2000)
+    assert window.hex_view.raw_origin_model.data(window.hex_view.raw_origin_model.index(0, 1)) == "0102030405060708"
