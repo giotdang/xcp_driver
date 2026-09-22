@@ -160,3 +160,65 @@ def test_patch_and_save_sequential_calls_are_independent(tmp_path: Path) -> None
     result2 = hexfile.load(out2)
     assert hexfile.read_region(result1, 0x0100, 1) == b"\xAA"
     assert hexfile.read_region(result2, 0x0100, 1) == b"\xBB"
+
+
+def test_read_records_ihex_returns_original_lines_unmodified(tmp_path: Path) -> None:
+    # Three original 8-byte records — read_records() must return exactly
+    # these three, not re-chunked into anything else.
+    p = _write(tmp_path, "image.hex",
+                ":080100000001020304050607DB\n"
+                ":0801080008090A0B0C0D0E0F93\n"
+                ":0801100010111213141516174B\n"
+                ":00000001FF\n")
+    records = hexfile.read_records(p)
+    assert records == [
+        (0x0100, bytes(range(0, 8))),
+        (0x0108, bytes(range(8, 16))),
+        (0x0110, bytes(range(16, 24))),
+    ]
+
+
+def test_read_records_ihex_applies_extended_linear_address(tmp_path: Path) -> None:
+    # Regression: a type-04 record's offset must be combined with the
+    # following type-00 record's own (16-bit-only) address field — the
+    # type-00 line alone encodes 0x0000, not the real high address.
+    p = _write(tmp_path, "image.hex",
+                ":0200000480106A\n"
+                ":080000000102030405060708D4\n"
+                ":00000001FF\n")
+    records = hexfile.read_records(p)
+    assert records == [(0x80100000, bytes(range(1, 9)))]
+
+
+def test_read_records_ihex_stops_at_eof_record(tmp_path: Path) -> None:
+    # A record after :00000001FF (EOF) must not be parsed as data. Note:
+    # read_records() breaks the loop as soon as it sees the EOF record, so
+    # it never actually reaches (or validates the checksum of) this third
+    # line either way — its checksum is still correct here (verified via
+    # bincopy.unpack_ihex()) so the fixture stays honest even though this
+    # specific test doesn't exercise that path.
+    p = _write(tmp_path, "image.hex",
+                ":080100000001020304050607DB\n"
+                ":00000001FF\n"
+                ":080200000102030405060708D2\n")
+    records = hexfile.read_records(p)
+    assert records == [(0x0100, bytes(range(0, 8)))]
+
+
+def test_read_records_srec_returns_original_lines_unmodified(tmp_path: Path) -> None:
+    p = _write(tmp_path, "image.s19",
+                "S30D8010000001020304050607083E\n"
+                "S5030001FB\n")
+    records = hexfile.read_records(p)
+    assert records == [(0x80100000, bytes(range(1, 9)))]
+
+
+def test_read_records_srec_skips_count_and_termination_records(tmp_path: Path) -> None:
+    # S0 (header), S5 (count) must not appear as rows — only S1/S2/S3 data.
+    p = _write(tmp_path, "image.s19",
+                "S0030000FC\n"
+                "S30D8010000001020304050607083E\n"
+                "S5030001FB\n"
+                "S70500000000FA\n")
+    records = hexfile.read_records(p)
+    assert records == [(0x80100000, bytes(range(1, 9)))]

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import bincopy
 
-__all__ = ["HexImage", "load", "read_region", "patch_and_save"]
+__all__ = ["HexImage", "load", "read_region", "patch_and_save", "read_records"]
 
 _IHEX_EXTS = frozenset({".hex", ".ihex"})
 _SREC_EXTS = frozenset({".s19", ".s28", ".s37", ".srec", ".mot"})
@@ -128,3 +128,56 @@ def patch_and_save(
 
     text = bf.as_ihex() if out_fmt == "ihex" else bf.as_srec()
     output_path.write_text(text, encoding="ascii")
+
+
+def read_records(path: Path) -> list[tuple[int, bytes]]:
+    """Every ORIGINAL data record in `path`, in file order, address and
+    byte length exactly as written — no merging, no re-chunking (unlike
+    `load()`'s `bincopy.BinFile`, which coalesces adjacent data into flat
+    Segments at parse time and loses this).
+
+    Intel HEX: tracks type 0x04 (extended linear, offset = value << 16)
+    and type 0x02 (extended segment, offset = value << 4) records as
+    running state, applied to subsequent type 0x00 (data) records'
+    addresses. Type 0x01 (EOF) stops parsing. Types 0x03/0x05 (start
+    address) are informational and skipped.
+
+    Motorola S-record: S1/S2/S3 (data, 16/24/32-bit address) records are
+    returned directly — no running state needed, each carries its
+    complete address. S0 (header), S5/S6 (count), S7/S8/S9 (termination/
+    start address) are skipped.
+
+    Raises:
+        ValueError: extension not recognized.
+        OSError: file unreadable.
+        bincopy.Error: a line's checksum doesn't match its content.
+    """
+    fmt = _format_for(path)
+    text = path.read_text(encoding="ascii")
+    rows: list[tuple[int, bytes]] = []
+
+    if fmt == "ihex":
+        extended_offset = 0
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record_type, address, _size, data = bincopy.unpack_ihex(line)
+            if record_type == 0x00:
+                rows.append((extended_offset + address, bytes(data)))
+            elif record_type == 0x04:
+                extended_offset = int.from_bytes(data, "big") << 16
+            elif record_type == 0x02:
+                extended_offset = int.from_bytes(data, "big") << 4
+            elif record_type == 0x01:
+                break
+    else:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record_type, address, _size, data = bincopy.unpack_srec(line)
+            if record_type in ("1", "2", "3"):
+                rows.append((address, bytes(data)))
+
+    return rows
