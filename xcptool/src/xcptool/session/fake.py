@@ -18,7 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..a2l import A2LDatabase
+from ..a2l import hexfile
 from ..a2l import load as _a2l_load
+from ..a2l.dataset import DatasetImportResult, apply_dataset, build_dataset
+from ..a2l.hexfile import HexImage
 from .api import (
     AppConfig,
     BusConfig,
@@ -38,6 +41,7 @@ from .api import (
     TraceEntry,
     UnsupportedByEcuError,
     WriteProtectedError,
+    XcpToolError,
 )
 
 __all__ = ["FakeBehavior", "FakeSession", "MEM_BASE", "MEM_SIZE"]
@@ -172,6 +176,9 @@ class FakeSession:
         self._flood_stop = threading.Event()
 
         self._a2l_db: A2LDatabase = A2LDatabase()
+        self._a2l_path: Path | None = None
+        self._hex_image: HexImage | None = None
+        self._hex_path: Path | None = None
 
         # DAQ stub state — FakeSession giả lập DAQ không có bus thật
         self._daq_running: bool = False
@@ -449,6 +456,62 @@ class FakeSession:
 
     def load_a2l(self, path: str | Path) -> None:
         self._a2l_db = _a2l_load(path)
+        self._a2l_path = Path(path)
+
+    def export_dataset(self, values: dict[str, str]) -> dict:
+        if self._a2l_path is None:
+            raise XcpToolError("Chưa nạp file A2L — không thể export dataset")
+        try:
+            return build_dataset(values, self._a2l_db, self._a2l_path)
+        except OSError as exc:
+            raise XcpToolError(f"Không đọc được file A2L để tính checksum: {exc}") from exc
+
+    def import_dataset(self, payload: dict) -> DatasetImportResult:
+        try:
+            return apply_dataset(payload, self._a2l_db, self._a2l_path)
+        except ValueError as exc:
+            raise XcpToolError(str(exc)) from exc
+
+    # ── Hex View ─────────────────────────────────────────────────────────────
+
+    def load_hex_file(self, path: str | Path) -> None:
+        try:
+            self._hex_image = hexfile.load(Path(path))
+        except (ValueError, OSError) as exc:
+            raise XcpToolError(f"Không nạp được file hex/s19: {exc}") from exc
+        self._hex_path = Path(path)
+
+    def hex_regions(self, addresses: list[tuple[int, int, str]]) -> dict[str, bytes | None]:
+        if self._hex_image is None:
+            return {name: None for _addr, _size, name in addresses}
+        return {
+            name: hexfile.read_region(self._hex_image, addr, size)
+            for addr, size, name in addresses
+        }
+
+    def generate_hex_from_dataset(
+        self, patches: list[tuple[int, bytes, str]], output_path: str | Path,
+    ) -> None:
+        if self._hex_path is None:
+            raise XcpToolError("Chưa nạp file hex/s19 — không thể generate")
+        try:
+            hexfile.patch_and_save(self._hex_path, patches, Path(output_path))
+        except (ValueError, OSError) as exc:
+            raise XcpToolError(str(exc)) from exc
+
+    def hex_raw_rows(self) -> list[tuple[int, bytes]]:
+        if self._hex_path is None:
+            return []
+        try:
+            return hexfile.read_records(self._hex_path)
+        except (ValueError, OSError) as exc:
+            raise XcpToolError(str(exc)) from exc
+
+    def hex_raw_rows_of(self, path: str | Path) -> list[tuple[int, bytes]]:
+        try:
+            return hexfile.read_records(Path(path))
+        except (ValueError, OSError) as exc:
+            raise XcpToolError(str(exc)) from exc
 
     # ── DAQ (stub) ───────────────────────────────────────────────────────────
 

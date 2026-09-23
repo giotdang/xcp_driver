@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import struct
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractItemView
 
 from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, Measurement, RecordLayout
-from xcptool.session.api import BusConfig, ConnState, PageMode
+from xcptool.session.api import BusConfig, ConnState, DatasetImportResult, PageMode, SkipReason
 from xcptool.session.fake import MEM_BASE, FakeBehavior, FakeSession
 from xcptool.ui.calibration_view import (
     REFERENCE_PAGE,
@@ -22,10 +24,9 @@ from xcptool.ui.calibration_view import (
     _ROUTE_REFERENCE,
     _ROUTE_WORKING,
     _split_into_contiguous_runs,
-    decode_value,
-    encode_value,
 )
 from xcptool.ui.main_window import MainWindow
+from xcptool.ui.value_codec import decode_value, decode_value_precise, encode_value
 
 
 # ── fixture helpers ──────────────────────────────────────────────────────────
@@ -95,13 +96,16 @@ def _add_struct_instance(db: A2LDatabase, group_name: str, leaf_names: list[str]
 
 
 def _make_view(qtbot) -> CalibrationView:
-    calls: dict[str, list] = {"read_all": [], "write": [], "pages": [], "set_page": [], "copy": []}
+    calls: dict[str, list] = {
+        "read_all": [], "read": [], "write": [], "pages": [], "set_page": [], "copy": [],
+        "export_dataset": [], "import_dataset": [],
+    }
 
     def read_all_cb():
         calls["read_all"].append(True)
 
-    def read_cb(name):
-        calls["read"].append(name)
+    def read_cb(names):
+        calls["read"].append(names)
 
     def write_all_cb(dirty_items):
         calls["write_all"].append(dirty_items)
@@ -118,6 +122,12 @@ def _make_view(qtbot) -> CalibrationView:
     def copy_page_cb(src_seg, src_page, dst_seg, dst_page):
         calls["copy"].append((src_seg, src_page, dst_seg, dst_page))
 
+    def export_dataset_cb(values):
+        calls["export_dataset"].append(values)
+
+    def import_dataset_cb(payload):
+        calls["import_dataset"].append(payload)
+
     v = CalibrationView(
         read_all_cb=read_all_cb,
         read_cb=read_cb,
@@ -125,6 +135,8 @@ def _make_view(qtbot) -> CalibrationView:
         get_pages_cb=pages_cb,
         set_page_cb=set_page_cb,
         copy_page_cb=copy_page_cb,
+        export_dataset_cb=export_dataset_cb,
+        import_dataset_cb=import_dataset_cb,
     )
     qtbot.addWidget(v)
     v._calls = calls  # type: ignore[attr-defined]
@@ -150,6 +162,32 @@ def test_decode_array() -> None:
 
 def test_decode_too_short_returns_placeholder() -> None:
     assert decode_value(b"", "ULONG", "little") == "???"
+
+
+def test_decode_value_precise_float64_full_precision() -> None:
+    v = 1.234567890123456
+    data = struct.pack("<d", v)
+    text = decode_value_precise(data, "FLOAT64_IEEE", "little")
+    assert float(text) == v
+    assert text != f"{v:.6g}"  # must NOT be the lossy display rounding
+
+
+def test_decode_value_precise_float32_full_precision() -> None:
+    data = struct.pack("<f", 3.14159265)
+    text = decode_value_precise(data, "FLOAT32_IEEE", "little")
+    # round-trips exactly through the same 32-bit float, even if not equal to
+    # the original 64-bit Python float
+    assert struct.pack("<f", float(text)) == data
+
+
+def test_decode_value_precise_int_matches_decode_value() -> None:
+    data = bytes([1, 2, 3])
+    assert decode_value_precise(data, "UBYTE", "little") == decode_value(data, "UBYTE", "little")
+
+
+def test_decode_value_precise_array_joins_with_comma() -> None:
+    data = struct.pack("<3f", 1.0, 2.0, 3.0)
+    assert decode_value_precise(data, "FLOAT32_IEEE", "little") == "1, 2, 3"
 
 
 def test_encode_ubyte() -> None:
@@ -189,6 +227,257 @@ def test_set_database_dien_tree(qtbot) -> None:
     v.set_database(db)
     assert v.tree.topLevelItemCount() == 3
     assert "3 CHARACTERISTIC" in v.count_label.text()
+
+
+def test_gather_dataset_values_excludes_untouched(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    # nothing read or edited yet -> nothing eligible
+    assert v._gather_dataset_values(["GAIN", "OFFSET"]) == {}
+
+
+def test_gather_dataset_values_uses_precise_text_for_clean_read(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    values = v._gather_dataset_values(["GAIN"])
+    assert values == {"GAIN": "42"}
+
+
+def test_gather_dataset_values_uses_tree_text_for_dirty(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    item = v._char_items["GAIN"]
+    item.setFlags(item.flags() | Qt.ItemIsEditable)
+    item.setText(COL_VALUE, "99")  # simulate a manual edit -> _on_item_changed fires
+    assert "GAIN" in v._dirty
+    assert v._gather_dataset_values(["GAIN"]) == {"GAIN": "99"}
+
+
+def test_gather_dataset_values_reflects_value_after_successful_write(qtbot) -> None:
+    """Regression: editing a value then writing it successfully must keep the
+    NEW value exportable -- on_write_done clears _dirty (so the "clean" branch
+    of _gather_dataset_values kicks in) but previously never refreshed
+    _raw_data, so export silently reverted to the pre-edit value."""
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    item = v._char_items["GAIN"]
+    item.setFlags(item.flags() | Qt.ItemIsEditable)
+    item.setText(COL_VALUE, "99")
+    assert "GAIN" in v._dirty
+
+    v.on_write_done("GAIN")  # simulate the ECU confirming the write succeeded
+    assert "GAIN" not in v._dirty
+    assert v._gather_dataset_values(["GAIN"]) == {"GAIN": "99"}
+
+
+def test_on_write_done_never_read_item_does_not_crash_or_populate_raw_data(qtbot) -> None:
+    """MainWindow.write_characteristic() can be called directly, bypassing the
+    tree UI entirely (console/debug tooling, or a caller writing a name that
+    was never read/edited) -- the tree cell is still the unpopulated "—"
+    placeholder when on_write_done() fires. Must degrade gracefully, not
+    raise trying to encode() that placeholder."""
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    assert v._char_items["GAIN"].text(COL_VALUE) == "—"
+
+    v.on_write_done("GAIN")  # no prior on_read_done / edit at all
+
+    assert "GAIN" not in v._raw_data
+    assert v._gather_dataset_values(["GAIN"]) == {}  # still not eligible for export
+
+
+def test_gather_dataset_values_array_joins_children(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("LUT", bytes([1, 2, 3, 4]))
+    assert v._gather_dataset_values(["LUT"]) == {"LUT": "1, 2, 3, 4"}
+
+
+def test_context_menu_enabled_state_no_data(qtbot) -> None:
+    v = _make_view(qtbot)
+    export_all, export_selected, import_enabled = v._context_menu_enabled_state()
+    assert export_all is False
+    assert export_selected is False
+    assert import_enabled is False
+
+
+def test_context_menu_enabled_state_with_data_and_selection(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.tree.topLevelItem(0).setSelected(True)
+    export_all, export_selected, import_enabled = v._context_menu_enabled_state()
+    assert export_all is True
+    assert export_selected is True
+    assert import_enabled is True
+
+
+def test_export_all_no_eligible_values_shows_status_no_dialog(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    called = []
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: called.append(1) or ("", ""),
+    )
+    v._on_export_all_to_file()
+    assert called == []  # dialog never opened
+    assert "nothing" in v.status_label.text().lower()
+    assert v._calls["export_dataset"] == []
+
+
+def test_export_all_calls_export_cb_with_gathered_values(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: ("C:/tmp/out.json", "JSON (*.json)"),
+    )
+    v._on_export_all_to_file()
+    assert v._calls["export_dataset"] == [{"GAIN": "42"}]
+
+
+def test_export_selected_uses_resolve_leaf_names(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    v.on_read_done("OFFSET", bytes([1, 0, 0, 0]))
+    v._char_items["GAIN"].setSelected(True)
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: ("C:/tmp/out.json", "JSON (*.json)"),
+    )
+    v._on_export_selected_to_file()
+    assert v._calls["export_dataset"] == [{"GAIN": "42"}]  # OFFSET not selected -> excluded
+
+
+def test_export_cancelled_dialog_does_not_call_cb(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: ("", ""),  # user cancelled
+    )
+    v._on_export_all_to_file()
+    assert v._calls["export_dataset"] == []
+
+
+def test_on_export_ready_writes_file_and_updates_status(qtbot, monkeypatch, tmp_path) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    out_path = tmp_path / "out.json"
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getSaveFileName",
+        lambda *a, **k: (str(out_path), "JSON (*.json)"),
+    )
+    v._on_export_all_to_file()
+    payload = {
+        "format_version": 1, "tool_version": "0.1.0", "exported_at": "2026-09-21T00:00:00",
+        "a2l_filename": "x.a2l", "a2l_checksum": "sha256:abc", "values": {"GAIN": "42"},
+    }
+    v.on_export_ready(payload)
+    assert out_path.is_file()
+    written = json.loads(out_path.read_text(encoding="utf-8"))
+    assert written == payload
+    assert "Exported 1" in v.status_label.text()
+
+
+def test_import_dataset_from_file_reads_and_calls_cb(qtbot, monkeypatch, tmp_path) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    payload = {"format_version": 1, "values": {"GAIN": "99"}}
+    in_path = tmp_path / "in.json"
+    in_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getOpenFileName",
+        lambda *a, **k: (str(in_path), "JSON (*.json)"),
+    )
+    v._on_import_dataset_from_file()
+    assert v._calls["import_dataset"] == [payload]
+
+
+def test_import_dataset_from_file_invalid_json_shows_status(qtbot, monkeypatch, tmp_path) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getOpenFileName",
+        lambda *a, **k: (str(bad_path), "JSON (*.json)"),
+    )
+    v._on_import_dataset_from_file()
+    assert v._calls["import_dataset"] == []
+    assert "Failed to read" in v.status_label.text()
+
+
+def test_import_dataset_cancelled_dialog_noop(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QFileDialog.getOpenFileName",
+        lambda *a, **k: ("", ""),
+    )
+    v._on_import_dataset_from_file()
+    assert v._calls["import_dataset"] == []
+
+
+def test_on_import_done_stages_scalar_as_dirty(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))  # original = "42"
+    result = DatasetImportResult(matched={"GAIN": "99"}, skipped=[], a2l_mismatch_warning=None)
+    v.on_import_done(result)
+    assert v._char_items["GAIN"].text(COL_VALUE) == "99"
+    assert "GAIN" in v._dirty
+    assert "Imported 1/1" in v.status_label.text()
+
+
+def test_on_import_done_stages_array_children(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("LUT", bytes([1, 2, 3, 4]))
+    result = DatasetImportResult(matched={"LUT": "9, 9, 9, 9"}, skipped=[], a2l_mismatch_warning=None)
+    v.on_import_done(result)
+    item = v._char_items["LUT"]
+    assert [item.child(i).text(COL_VALUE) for i in range(item.childCount())] == ["9", "9", "9", "9"]
+    assert "LUT" in v._dirty
+
+
+def test_on_import_done_shows_skip_summary_when_skipped(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    shown = []
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QMessageBox.information",
+        lambda *a, **k: shown.append(a),
+    )
+    result = DatasetImportResult(
+        matched={}, skipped=[SkipReason(name="ghost", reason="not found in A2L")],
+        a2l_mismatch_warning=None,
+    )
+    v.on_import_done(result)
+    assert len(shown) == 1
+    assert "Imported 0/1" in v.status_label.text()
+    assert "1 skipped" in v.status_label.text()
+
+
+def test_on_import_done_no_skips_no_dialog(qtbot, monkeypatch) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([42]))
+    shown = []
+    monkeypatch.setattr(
+        "xcptool.ui.calibration_view.QMessageBox.information",
+        lambda *a, **k: shown.append(a),
+    )
+    result = DatasetImportResult(matched={"GAIN": "1"}, skipped=[], a2l_mismatch_warning=None)
+    v.on_import_done(result)
+    assert shown == []
 
 
 def test_set_database_theo_thu_tu_abc(qtbot) -> None:
@@ -434,6 +723,13 @@ def test_main_window_co_calibration_view(window: MainWindow) -> None:
     assert isinstance(window.calibration_view, CalibrationView)
 
 
+def test_main_window_wires_calibration_dataset_callbacks(window: MainWindow) -> None:
+    """MainWindow must construct CalibrationView with working dataset callbacks —
+    a smoke test that the wiring doesn't raise and reaches Session."""
+    assert window.calibration_view._export_dataset_cb is not None
+    assert window.calibration_view._import_dataset_cb is not None
+
+
 def test_calibration_view_co_trong_stack(window: MainWindow) -> None:
     stack = window.stack
     found = any(
@@ -468,6 +764,17 @@ def test_doc_tat_ca_qua_session(qtbot, connected_window: MainWindow) -> None:
     assert items["OFFSET"].text(COL_VALUE) != "—"
 
 
+def test_read_characteristics_doc_nhieu_ten_qua_session(qtbot, connected_window: MainWindow) -> None:
+    db = _make_db()
+    connected_window.session._a2l_db = db  # type: ignore[attr-defined]
+    connected_window.calibration_view.set_database(db)
+    connected_window.read_characteristics(["GAIN", "OFFSET"])
+    qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
+    items = connected_window.calibration_view._char_items
+    assert items["GAIN"].text(COL_VALUE) != "—"
+    assert items["OFFSET"].text(COL_VALUE) != "—"
+
+
 def test_huy_read_all_dung_dung_task_dang_chay(
     qtbot, connected_window: MainWindow
 ) -> None:
@@ -492,7 +799,7 @@ def test_huy_read_all_dung_dung_task_dang_chay(
 
     # Làm bẩn _connect_task đúng như kịch bản bug: một _call() khác đã chạy
     # xong trước read-all.
-    connected_window.read_characteristic("P0")
+    connected_window.read_characteristics(["P0"])
     qtbot.waitUntil(lambda: not connected_window.busy, timeout=5000)
 
     connected_window.read_all_characteristics()
@@ -1145,6 +1452,76 @@ def test_write_parent_clears_deep_nested_leaf_dirty_and_enables_write_btn(qtbot)
     )
 
 
+# ── multi-select: ExtendedSelection + _resolve_leaf_names ───────────────────
+
+def test_tree_ho_tro_multi_select(qtbot) -> None:
+    v = _make_view(qtbot)
+    assert v.tree.selectionMode() == QAbstractItemView.ExtendedSelection
+
+
+def test_resolve_leaf_names_don_1_scalar(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    item = v._char_items["GAIN"]
+    assert v._resolve_leaf_names([item]) == ["GAIN"]
+
+
+def test_resolve_leaf_names_struct_cha_ra_het_la_that(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+    parent = v._char_items["grp"]
+    assert sorted(v._resolve_leaf_names([parent])) == ["grp_a", "grp_b"]
+
+
+def test_resolve_leaf_names_khu_trung_cha_va_con(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+    parent = v._char_items["grp"]
+    child_a = parent.child(0)
+    names = v._resolve_leaf_names([parent, child_a])
+    assert sorted(names) == ["grp_a", "grp_b"]  # grp_a không lặp lại dù chọn cả cha lẫn con
+
+
+def test_resolve_leaf_names_val_blk_tra_ve_1_ten_cha(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    parent = v._char_items["LUT"]
+    assert v._resolve_leaf_names([parent]) == ["LUT"]
+
+
+def test_resolve_leaf_names_array_elem_con_tra_ve_ten_cha(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    child = v._char_items["LUT"].child(2)
+    assert v._resolve_leaf_names([child]) == ["LUT"]
+
+
+def test_resolve_leaf_names_gop_2_nhom_doc_lap(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp1_a"] = Characteristic(
+        "grp1_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp2_a"] = Characteristic(
+        "grp2_a", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp1", ["grp1_a"])
+    _add_struct_instance(db, "grp2", ["grp2_a"])
+    v.set_database(db)
+    names = v._resolve_leaf_names([v._char_items["grp1"], v._char_items["grp2"]])
+    assert sorted(names) == ["grp1_a", "grp2_a"]
+
+
 # ── _split_into_contiguous_runs — helper thuần, không cần Qt ────────────────
 
 def test_split_into_contiguous_runs_packed_gives_one_run() -> None:
@@ -1443,5 +1820,181 @@ def test_encode_value_ascii_support() -> None:
     # Nhập số thường (Dec/Hex) vẫn hoạt động hoàn hảo
     assert encode_value("72", "UWORD", "little", 1) == b"\x48\x00"
     assert encode_value("0x48", "UWORD", "little", 1) == b"\x48\x00"
+
+
+# ── Write Selected — đa chọn (multi-select) ─────────────────────────────────
+
+def test_write_selected_da_chon_chi_ghi_dong_dirty(qtbot) -> None:
+    """Chọn 3 dòng, chỉ 1 dòng dirty -> chỉ đúng 1 lệnh WRITE được gửi."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic(
+        "a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["b"] = Characteristic(
+        "b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["c"] = Characteristic(
+        "c", "", "VALUE", MEM_BASE + 4, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+
+    item_a, item_b, item_c = v._char_items["a"], v._char_items["b"], v._char_items["c"]
+    v._original["a"] = item_a.text(COL_VALUE)
+    v._original["b"] = item_b.text(COL_VALUE)
+    v._original["c"] = item_c.text(COL_VALUE)
+
+    item_b.setText(COL_VALUE, "42")
+    v._on_item_changed(item_b, COL_VALUE)
+    assert v._dirty == {"b"}
+
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+    item_c.setSelected(True)
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._on_write()
+
+    assert [w[0] for w in writes] == ["b"]
+
+
+def test_write_selected_struct_cha_co_con_dirty_ghi_ca_khoi(qtbot) -> None:
+    """Chọn nhiều dòng gồm 1 struct cha có con dirty -> ghi TOÀN BỘ struct
+    (đúng cơ chế contiguous-run cũ), không chỉ đúng con dirty; dòng không
+    dirty trong tập chọn bị bỏ qua.
+
+    Phải giả lập đã đọc (on_read_done) cho MỌI leaf trong struct trước khi
+    sửa — nhánh STRUCT của _write_parent ghi cả khối (kể cả leaf không
+    dirty), nếu leaf nào còn giữ placeholder "—" (chưa từng đọc) thì
+    encode_value() ném lỗi và cả khối bị bỏ qua êm (không throw ra ngoài)."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["grp_a"] = Characteristic(
+        "grp_a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["grp_b"] = Characteristic(
+        "grp_b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["solo"] = Characteristic(
+        "solo", "", "VALUE", MEM_BASE + 64, "I16", 0, 100, datatype="SWORD", array_size=1)
+    _add_struct_instance(db, "grp", ["grp_a", "grp_b"])
+    v.set_database(db)
+
+    v.on_read_done("grp_a", (10).to_bytes(2, "little", signed=True))
+    v.on_read_done("grp_b", (20).to_bytes(2, "little", signed=True))
+    v.on_read_done("solo", (30).to_bytes(2, "little", signed=True))
+
+    parent = v._char_items["grp"]
+    child_a = parent.child(0)
+    solo_item = v._char_items["solo"]
+
+    child_a.setText(COL_VALUE, "99")
+    v._on_item_changed(child_a, COL_VALUE)
+    assert v._dirty == {"grp_a"}
+
+    parent.setSelected(True)
+    solo_item.setSelected(True)
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._on_write()
+
+    # solo không dirty -> bỏ qua; "grp" (2 member liền khít) ghi 1 lệnh duy nhất.
+    assert [w[0] for w in writes] == ["grp"]
+
+
+def test_write_selected_khong_ai_dirty_khong_ghi_gi(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic(
+        "a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["b"] = Characteristic(
+        "b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+    item_a, item_b = v._char_items["a"], v._char_items["b"]
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+
+    writes: list[tuple[str, int, bytes]] = []
+    v._write_cb = lambda name, addr, data: writes.append((name, addr, data))
+    v._on_write()
+    assert writes == []
+
+
+def test_write_btn_enable_theo_multi_select(qtbot) -> None:
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic(
+        "a", "", "VALUE", MEM_BASE, "I16", 0, 100, datatype="SWORD", array_size=1)
+    db.characteristics["b"] = Characteristic(
+        "b", "", "VALUE", MEM_BASE + 2, "I16", 0, 100, datatype="SWORD", array_size=1)
+    v.set_database(db)
+    item_a, item_b = v._char_items["a"], v._char_items["b"]
+    v._original["a"] = item_a.text(COL_VALUE)
+    item_a.setText(COL_VALUE, "5")
+    v._on_item_changed(item_a, COL_VALUE)
+
+    item_a.setSelected(True)
+    item_b.setSelected(True)
+    v._update_write_btn()
+    assert v.write_btn.isEnabled()
+
+    item_a.setSelected(False)
+    v.tree.setCurrentItem(item_b)
+    v._update_write_btn()
+    # chỉ còn "b" chọn (đường 1-item cũ), "b" không dirty -> tắt nút
+    assert not v.write_btn.isEnabled()
+
+
+def test_write_all_van_dung_sau_khi_tach_helper(qtbot) -> None:
+    """Regression: _on_write_all() phải cho kết quả giống hệt trước khi tách
+    _write_roots_for() ra khỏi nó — hàng đợi vẫn xử lý tuần tự từng item,
+    chỉ bắn item kế tiếp sau khi on_write_done() báo item trước xong (giống
+    test_write_all_uses_queue đã có)."""
+    v = _make_view(qtbot)
+    db = A2LDatabase()
+    db.characteristics["a"] = Characteristic("a", "", "VALUE", MEM_BASE, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    db.characteristics["b"] = Characteristic("b", "", "VALUE", MEM_BASE + 4, "F32", 0, 10, datatype="FLOAT32_IEEE", array_size=1)
+    v.set_database(db)
+
+    item_a, item_b = v._char_items["a"], v._char_items["b"]
+    item_a.setText(COL_VALUE, "1.0")
+    item_b.setText(COL_VALUE, "2.0")
+    v._dirty.add("a")
+    v._dirty.add("b")
+
+    writes: list[str] = []
+    v._write_parent = lambda name, item: writes.append(name)
+    v._on_write_all()
+
+    assert len(writes) == 1  # chỉ item đầu được bắn ngay
+    v.on_write_done(writes[0])
+    assert sorted(writes) == ["a", "b"]
+
+
+# ── Read — đa chọn (multi-select) ───────────────────────────────────────────
+
+def test_on_read_da_chon_nhieu_dong_goi_read_cb_voi_list(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    item_gain = v._char_items["GAIN"]
+    item_offset = v._char_items["OFFSET"]
+    item_gain.setSelected(True)
+    item_offset.setSelected(True)
+    v._on_read()
+    assert sorted(v._calls["read"][0]) == ["GAIN", "OFFSET"]
+
+
+def test_on_read_1_dong_goi_read_cb_voi_list_1_phan_tu(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    item_gain = v._char_items["GAIN"]
+    v.tree.setCurrentItem(item_gain)
+    item_gain.setSelected(True)
+    v._on_read()
+    assert v._calls["read"] == [["GAIN"]]
+
+
+def test_on_read_khong_chon_gi_khong_goi_cb(qtbot) -> None:
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v._on_read()
+    assert v._calls["read"] == []
 
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import struct
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Iterable
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
@@ -12,6 +14,8 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
+    QMenu,
+    QMessageBox,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -29,7 +33,8 @@ from qfluentwidgets import (
     isDarkTheme,
 )
 
-from ..session.api import A2LDatabase, InstanceNode
+from ..session.api import A2LDatabase, DatasetImportResult, InstanceNode, SkipReason
+from .value_codec import decode_value, decode_value_precise, encode_value
 
 __all__ = ["CalibrationView", "WORKING_PAGE", "REFERENCE_PAGE"]
 
@@ -44,15 +49,6 @@ WORKING_PAGE = 1
 _ROUTE_WORKING = "working"
 _ROUTE_REFERENCE = "reference"
 _ROUTE_BY_PAGE = {WORKING_PAGE: _ROUTE_WORKING, REFERENCE_PAGE: _ROUTE_REFERENCE}
-
-# Ánh xạ datatype A2L → format character của struct
-_ENDIAN: dict[str, str] = {"little": "<", "big": ">"}
-_DTYPE_FMT: dict[str, str] = {
-    "UBYTE": "B", "SBYTE": "b",
-    "UWORD": "H", "SWORD": "h",
-    "ULONG": "I", "SLONG": "i",
-    "FLOAT32_IEEE": "f", "FLOAT64_IEEE": "d",
-}
 
 # Tên thân thiện cho kiểu dữ liệu A2L → kiểu C quen thuộc
 _FRIENDLY_DTYPE: dict[str, str] = {
@@ -71,109 +67,6 @@ COL_VALUE = 4
 COL_RANGE = 5
 COL_DESC = 6
 _HEADERS = ["Name", "Type", "Address", "Size", "Value", "Range", "Description"]
-
-
-def decode_value(data: bytes, datatype: str, byte_order: str, radix: str = "DEC") -> str:
-    """Giải mã bytes thành chuỗi đọc được.
-
-    VAL_BLK / array: "v0, v1, v2, …".  VALUE scalar: "v".
-    """
-    fmt_char = _DTYPE_FMT.get(datatype, "B")
-    endian = _ENDIAN.get(byte_order, "<")
-    item_size = struct.calcsize(fmt_char)
-    if item_size == 0 or len(data) < item_size:
-        return "???"
-    n = len(data) // item_size
-    is_float = datatype.startswith("FLOAT")
-    parts: list[str] = []
-
-    for i in range(n):
-        chunk = data[i * item_size : (i + 1) * item_size]
-        if is_float:
-            v = struct.unpack_from(endian + fmt_char, chunk)[0]
-            if radix == "HEX":
-                int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
-                raw_int = struct.unpack_from(endian + int_fmt, chunk)[0]
-                parts.append(f"0x{raw_int:0{item_size * 2}X}")
-            elif radix == "BIN":
-                int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
-                raw_int = struct.unpack_from(endian + int_fmt, chunk)[0]
-                parts.append(f"0b{raw_int:0{item_size * 8}b}")
-            elif radix == "ASCII":
-                chars = [chr(b) if 32 <= b <= 126 else "." for b in chunk]
-                parts.append("".join(chars))
-            else:
-                parts.append(f"{v:.6g}")
-        else:
-            v = struct.unpack_from(endian + fmt_char, chunk)[0]
-            if radix == "HEX":
-                mask = (1 << (item_size * 8)) - 1
-                parts.append(f"0x{v & mask:X}")
-            elif radix == "BIN":
-                mask = (1 << (item_size * 8)) - 1
-                parts.append(f"0b{v & mask:b}")
-            elif radix == "ASCII":
-                try:
-                    parts.append(chr(v) if 32 <= v <= 126 else ".")
-                except ValueError:
-                    parts.append(str(v))
-            else:
-                parts.append(str(v))
-    return ", ".join(parts)
-
-
-def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> bytes:
-    """Mã hoá chuỗi nhập từ người dùng thành bytes để ghi xuống ECU.
-
-    Hỗ trợ cả định dạng số (DEC, HEX, BIN) lẫn ký tự/chuỗi ASCII.
-
-    Raises:
-        ValueError: chuỗi không parse được hoặc số lượng phần tử không khớp.
-        struct.error: giá trị nằm ngoài khoảng kiểu dữ liệu.
-    """
-    fmt_char = _DTYPE_FMT.get(datatype)
-    if fmt_char is None:
-        raise ValueError(f"Unsupported datatype: {datatype}")
-    endian = _ENDIAN.get(byte_order, "<")
-    item_size = struct.calcsize(fmt_char)
-    raw = [p.strip() for p in text.split(",")]
-    if len(raw) == 1 and array_size > 1:
-        raw = raw * array_size
-    if len(raw) != array_size:
-        raise ValueError(f"Expected {array_size} values, received {len(raw)}")
-    is_float = datatype.startswith("FLOAT")
-    buf = bytearray()
-
-    for part in raw:
-        if is_float:
-            part_lower = part.lower()
-            if part_lower.startswith("0x") or part_lower.startswith("0b"):
-                int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
-                raw_int = int(part, 0)
-                buf += struct.pack(endian + int_fmt, raw_int)
-            else:
-                try:
-                    v = float(part)
-                    buf += struct.pack(endian + fmt_char, v)
-                except ValueError:
-                    encoded_bytes = part.encode("latin-1")
-                    if len(encoded_bytes) > item_size:
-                        raise ValueError(f"ASCII string '{part}' too long for {datatype} (max {item_size} bytes)")
-                    padded = encoded_bytes.ljust(item_size, b"\x00") if endian == "<" else encoded_bytes.rjust(item_size, b"\x00")
-                    buf += padded
-        else:
-            try:
-                v = int(part, 0)
-                buf += struct.pack(endian + fmt_char, v)
-            except ValueError:
-                # Không phải số (Dec/Hex/Bin) -> parse theo ký tự / chuỗi ASCII
-                encoded_bytes = part.encode("latin-1")
-                if len(encoded_bytes) > item_size:
-                    raise ValueError(f"ASCII string '{part}' too long for {datatype} (max {item_size} bytes)")
-                padded = encoded_bytes.ljust(item_size, b"\x00") if endian == "<" else encoded_bytes.rjust(item_size, b"\x00")
-                buf += padded
-
-    return bytes(buf)
 
 
 def _split_into_contiguous_runs(
@@ -225,11 +118,13 @@ class CalibrationView(QWidget):
     def __init__(
         self,
         read_all_cb: Callable[[], None],
-        read_cb: Callable[[str], None],                # (name)
+        read_cb: Callable[[list[str]], None],           # (names)
         write_cb: Callable[[str, int, bytes], None],   # (name, addr, data)
         get_pages_cb: Callable[[int], None],           # (segment)
         set_page_cb: Callable[[int, int], None],        # (segment, page) — set CẢ ECU lẫn XCP
         copy_page_cb: Callable[[int, int, int, int], None],
+        export_dataset_cb: Callable[[dict[str, str]], None],  # (values) -> Session.export_dataset
+        import_dataset_cb: Callable[[dict], None],             # (payload) -> Session.import_dataset
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -240,6 +135,10 @@ class CalibrationView(QWidget):
         self._get_pages_cb = get_pages_cb
         self._set_page_cb = set_page_cb
         self._copy_page_cb = copy_page_cb
+        self._export_dataset_cb = export_dataset_cb
+        self._import_dataset_cb = import_dataset_cb
+        # (path, values) awaiting on_export_ready(); None when no export in flight
+        self._pending_export: tuple[str, dict[str, str]] | None = None
 
         self._db: A2LDatabase = A2LDatabase()
         self._byte_order = "little"
@@ -312,12 +211,14 @@ class CalibrationView(QWidget):
         self.tree.setHeaderLabels(_HEADERS)
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
-        self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         # Chỉ cho sửa khi double-click cột Value — xem _start_value_edit
         self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tree.itemDoubleClicked.connect(self._start_value_edit)
         self.tree.itemSelectionChanged.connect(self._update_write_btn)
         self.tree.itemChanged.connect(self._on_item_changed)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
 
 
         hdr = self.tree.header()
@@ -485,6 +386,24 @@ class CalibrationView(QWidget):
             + (f" {fail} failed (out of range or ECU rejected)." if fail else "")
         )
 
+    def _refresh_raw_data(self, name: str, text: str, datatype: str, array_size: int) -> None:
+        """Keep `self._raw_data` in sync with a just-confirmed write, by
+        re-encoding the same text `_write_parent` already validated moments
+        earlier — without this, `_gather_dataset_values()`'s "not dirty"
+        branch would reformat stale pre-write bytes for dataset export.
+
+        `text` can still be the unpopulated "—" placeholder when the write
+        was issued directly through `MainWindow.write_characteristic()`
+        rather than via the tree UI (e.g. console/debug tooling, or tests) —
+        `encode_value` can't parse that, so skip the refresh rather than
+        raising out of a write-completion callback; `_raw_data` simply stays
+        whatever it was (stale or absent), same as before this method existed.
+        """
+        try:
+            self._raw_data[name] = encode_value(text, datatype, self._byte_order, array_size)
+        except (ValueError, struct.error):
+            pass
+
     def on_write_done(self, name: str) -> None:
         """Clear dirty indicator after successful write.
 
@@ -520,7 +439,7 @@ class CalibrationView(QWidget):
                 # `item`. Chỉ duyệt con trực tiếp bỏ sót lá sâu: dirty/_original của
                 # nó không bao giờ được dọn, và node trung gian (đã bị _on_item_changed
                 # tô cam ở COL_NAME khi con nó dirty) kẹt cam mãi dù đã ghi xong.
-                for leaf_item, c_name, _c_def in self._leaf_write_items(item):
+                for leaf_item, c_name, c_def in self._leaf_write_items(item):
                     if leaf_item.childCount() > 0:
                         leaf_vals = [
                             leaf_item.child(j).text(COL_VALUE)
@@ -529,6 +448,7 @@ class CalibrationView(QWidget):
                         self._original[c_name] = ", ".join(leaf_vals)
                     else:
                         self._original[c_name] = leaf_item.text(COL_VALUE)
+                    self._refresh_raw_data(c_name, self._original[c_name], c_def.datatype, c_def.array_size)
                     self._dirty.discard(c_name)
                     leaf_item.setForeground(COL_VALUE, self.tree.palette().text())
                     # Dọn cam ở mọi node trung gian giữa lá và `item` — vòng lặp
@@ -542,6 +462,10 @@ class CalibrationView(QWidget):
                 self._original[name] = ", ".join(child_vals)
         else:
             self._original[name] = item.text(COL_VALUE)
+
+        char_def = self._db.characteristics.get(name)
+        if char_def is not None and char_def.datatype is not None:
+            self._refresh_raw_data(name, self._original[name], char_def.datatype, char_def.array_size)
 
         self._dirty.discard(name)
 
@@ -636,31 +560,41 @@ class CalibrationView(QWidget):
         self._read_all_cb()
 
     def _on_read(self) -> None:
-        """Read only the selected parent characteristic."""
-        char_name = self._selected_char_name()
-        if not char_name:
+        """Read every selected characteristic (1 or many rows)."""
+        names = self._resolve_leaf_names(self.tree.selectedItems())
+        if not names:
             return
-            
-        self._read_cb(char_name)
+        self._read_cb(names)
 
     def _on_write(self) -> None:
         """Called when 'Write Selected' is clicked."""
+        selected = self.tree.selectedItems()
+        if len(selected) > 1:
+            names = set(self._resolve_leaf_names(selected)) & self._dirty
+            if not names:
+                return
+            self._write_queue = list(self._write_roots_for(names))
+            self._process_write_queue()
+            return
+
         char_name = self._selected_char_name()
         if not char_name:
             return
-            
+
         item = self._char_items.get(char_name)
         if item:
             self._write_parent(char_name, item)
 
-    def _on_write_all(self) -> None:
-        """Called when 'Write All' is clicked."""
-        dirty_names = list(self._dirty)
-        items_to_write = set()
-        for char_name in dirty_names:
+    def _write_roots_for(self, names: Iterable[str]) -> set[QTreeWidgetItem]:
+        """Map CHARACTERISTIC names to the tree item(s) that must actually be
+        written — a STRUCT/ARRAY member is promoted to its parent, since a
+        struct write always sends the whole contiguous run, never one member
+        alone (see `_write_parent`'s STRUCT/ARRAY branch)."""
+        items_to_write: set[QTreeWidgetItem] = set()
+        for char_name in names:
             item = self._char_items.get(char_name)
-            if not item: continue
-            
+            if not item:
+                continue
             if item.parent() is not None and (
                 item.parent().text(COL_TYPE).startswith("STRUCT")
                 or item.parent().text(COL_TYPE).startswith("ARRAY[")
@@ -668,8 +602,11 @@ class CalibrationView(QWidget):
                 items_to_write.add(item.parent())
             else:
                 items_to_write.add(item)
-                
-        self._write_queue = list(items_to_write)
+        return items_to_write
+
+    def _on_write_all(self) -> None:
+        """Called when 'Write All' is clicked."""
+        self._write_queue = list(self._write_roots_for(self._dirty))
         self._process_write_queue()
         
     def _process_write_queue(self) -> None:
@@ -704,6 +641,172 @@ class CalibrationView(QWidget):
             else:
                 result.extend(self._leaf_write_items(child))
         return result
+
+    def _resolve_leaf_names(self, items: Iterable[QTreeWidgetItem]) -> list[str]:
+        """Flatten a set of tree items (leaves, VAL_BLK array parents, or
+        STRUCT/ARRAY group nodes) into a deduplicated list of real A2L
+        CHARACTERISTIC names, in input order.
+
+        Mirrors `_selected_char_name()`'s Qt.UserRole handling (array_elem
+        tuple -> parent char name; a name already in self._db.characteristics
+        -> itself) for a single item, and falls back to `_leaf_write_items()`'s
+        existing struct/array recursion for group nodes whose data role is a
+        hierarchical (non-CHARACTERISTIC-key) name."""
+        seen: set[str] = set()
+        result: list[str] = []
+
+        def add(name: str) -> None:
+            if name not in seen:
+                seen.add(name)
+                result.append(name)
+
+        for item in items:
+            data_role = item.data(COL_NAME, Qt.UserRole)
+            if isinstance(data_role, tuple):
+                add(data_role[1] if data_role[0] == "array_elem" else data_role[0])
+                continue
+            if isinstance(data_role, str) and data_role in self._db.characteristics:
+                add(data_role)
+                continue
+            for _leaf_item, c_name, _c_def in self._leaf_write_items(item):
+                add(c_name)
+        return result
+
+    def _gather_dataset_values(self, names: Iterable[str]) -> dict[str, str]:
+        """For each name that is eligible (read or edited at least once this
+        session — present in `self._original` or `self._dirty`), produce
+        name -> value text. Dirty values are read straight from the tree (they
+        are exactly what the user typed, already full precision). Clean values
+        are reformatted from `self._raw_data` with `decode_value_precise` —
+        NOT the tree's displayed text, which for floats is `decode_value`'s
+        lossy `%.6g`."""
+        values: dict[str, str] = {}
+        for name in names:
+            if name not in self._original and name not in self._dirty:
+                continue
+            item = self._char_items.get(name)
+            char = self._db.characteristics.get(name)
+            if item is None or char is None:
+                continue
+            if name in self._dirty:
+                if item.childCount() > 0:
+                    text = ", ".join(item.child(i).text(COL_VALUE) for i in range(item.childCount()))
+                else:
+                    text = item.text(COL_VALUE)
+            else:
+                raw = self._raw_data.get(name)
+                if raw is None or char.datatype is None:
+                    continue
+                text = decode_value_precise(raw, char.datatype, self._byte_order)
+            values[name] = text
+        return values
+
+    def _context_menu_enabled_state(self) -> tuple[bool, bool, bool]:
+        """(export_all_enabled, export_selected_enabled, import_enabled) —
+        factored out of `_on_tree_context_menu` so tests can assert enablement
+        without popping up a real QMenu."""
+        return (
+            bool(self._char_items),
+            bool(self.tree.selectedItems()),
+            bool(self._char_items),
+        )
+
+    def _on_tree_context_menu(self, pos) -> None:
+        export_all_enabled, export_selected_enabled, import_enabled = self._context_menu_enabled_state()
+        menu = QMenu(self)
+        export_all_act = menu.addAction("Export All to File…")
+        export_all_act.setEnabled(export_all_enabled)
+        export_selected_act = menu.addAction("Export Selected to File…")
+        export_selected_act.setEnabled(export_selected_enabled)
+        menu.addSeparator()
+        import_act = menu.addAction("Import Dataset from File…")
+        import_act.setEnabled(import_enabled)
+
+        chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
+        if chosen is export_all_act:
+            self._on_export_all_to_file()
+        elif chosen is export_selected_act:
+            self._on_export_selected_to_file()
+        elif chosen is import_act:
+            self._on_import_dataset_from_file()
+
+    def _on_export_all_to_file(self) -> None:
+        self._export_to_file(set(self._original) | self._dirty)
+
+    def _on_export_selected_to_file(self) -> None:
+        self._export_to_file(self._resolve_leaf_names(self.tree.selectedItems()))
+
+    def _export_to_file(self, names: Iterable[str]) -> None:
+        values = self._gather_dataset_values(names)
+        if not values:
+            self.status_label.setText(
+                "Nothing to export — no CHARACTERISTIC has been read or edited yet."
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Calibration Dataset", "dataset.json", "JSON (*.json)"
+        )
+        if not path:
+            return
+        self._pending_export = (path, values)
+        self._export_dataset_cb(values)
+
+    def on_export_ready(self, payload: dict) -> None:
+        """Called by MainWindow with the dict Session.export_dataset() returned,
+        after the worker-thread call started by _export_to_file() completes."""
+        pending = self._pending_export
+        self._pending_export = None
+        if pending is None:
+            return
+        path, values = pending
+        try:
+            Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError as e:
+            self.status_label.setText(f"Failed to write dataset file: {e}")
+            return
+        self.status_label.setText(f"Exported {len(values)} parameter(s) to {Path(path).name}.")
+
+    def _on_import_dataset_from_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Calibration Dataset", "", "JSON (*.json)"
+        )
+        if not path:
+            return
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            self.status_label.setText(f"Failed to read dataset file: {e}")
+            return
+        self._import_dataset_cb(payload)
+
+    def on_import_done(self, result: DatasetImportResult) -> None:
+        """Called by MainWindow with what Session.import_dataset() returned."""
+        for name, text in result.matched.items():
+            item = self._char_items.get(name)
+            char = self._db.characteristics.get(name)
+            if item is None or char is None:
+                continue
+            if char.array_size > 1 and item.childCount() > 0:
+                parts = [p.strip() for p in text.split(",")]
+                for i in range(min(item.childCount(), len(parts))):
+                    item.child(i).setText(COL_VALUE, parts[i])
+            else:
+                item.setText(COL_VALUE, text)
+
+        total = len(result.matched) + len(result.skipped)
+        msg = f"Imported {len(result.matched)}/{total} params."
+        if result.skipped:
+            msg += f" {len(result.skipped)} skipped — see details."
+        if result.a2l_mismatch_warning:
+            msg += f" {result.a2l_mismatch_warning}"
+        self.status_label.setText(msg)
+
+        if result.skipped:
+            self._show_skip_summary(result.skipped)
+
+    def _show_skip_summary(self, skipped: list[SkipReason]) -> None:
+        lines = "\n".join(f"{s.name}: {s.reason}" for s in skipped)
+        QMessageBox.information(self, "Import Skipped Entries", lines)
 
     def _write_parent(self, char_name: str, item: QTreeWidgetItem) -> None:
         if item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY["):
@@ -1063,11 +1166,17 @@ class CalibrationView(QWidget):
         self._update_write_btn()
 
     def _update_write_btn(self) -> None:
+        selected = self.tree.selectedItems()
+        if len(selected) > 1:
+            enable = bool(set(self._resolve_leaf_names(selected)) & self._dirty)
+            self.write_btn.setEnabled(enable)
+            return
+
         char_name = self._selected_char_name()
         if not char_name:
             self.write_btn.setEnabled(False)
             return
-            
+
         item = self._char_items.get(char_name)
         if item and (
             item.text(COL_TYPE).startswith("STRUCT") or item.text(COL_TYPE).startswith("ARRAY[")

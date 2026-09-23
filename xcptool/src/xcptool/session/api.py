@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
 from ..a2l import A2LDatabase
+from ..a2l.dataset import DatasetImportResult, SkipReason
 from ..a2l.types import InstanceNode
 
 __all__ = [
@@ -65,7 +66,7 @@ __all__ = [
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
     "SlaveError", "WriteProtectedError", "OutOfRangeError", "SequenceError",
     "AccessDeniedError", "NotConnectedError", "BusyError", "UnsupportedByEcuError",
-    "A2LDatabase", "InstanceNode", "Session",
+    "A2LDatabase", "InstanceNode", "DatasetImportResult", "SkipReason", "Session",
 ]
 
 
@@ -165,6 +166,8 @@ class AppConfig:
     """Toàn bộ cấu hình ứng dụng được lưu lại giữa các phiên làm việc."""
     bus: BusConfig
     last_a2l_path: str = ""
+    last_hex_path: str = ""
+    last_byte_order: str = "little"
     scope_enabled: bool = True
     trace_row_limit: int = 20_000
     active_route: str = "calibration"
@@ -527,6 +530,71 @@ class Session(Protocol):
         trăm ms với file lớn.
 
         Raises: XcpToolError nếu file không đọc được hoặc lỗi parse nghiêm trọng
+        """
+
+    def export_dataset(self, values: dict[str, str]) -> dict:
+        """Build a calibration-dataset JSON dict (name->text values, plus
+        traceability metadata) from the currently loaded A2L. CHẶN — reads the
+        A2L file once to compute its checksum.
+
+        Raises: XcpToolError nếu chưa `load_a2l()` thành công, hoặc file A2L
+        không đọc lại được để tính checksum.
+        """
+
+    def import_dataset(self, payload: dict) -> DatasetImportResult:
+        """Validate a parsed dataset JSON payload and cross-check it against the
+        currently loaded A2L. CHẶN nhẹ — không I/O ngoài, chỉ so khớp trong bộ
+        nhớ (cộng một lần đọc A2L để so checksum, nếu còn file).
+
+        Does NOT touch `symbols` or write anything — the caller applies
+        `result.matched` to its own UI state.
+
+        Raises: XcpToolError nếu `payload` sai cấu trúc (thiếu
+        format_version/values, format_version không nhận diện được).
+        """
+
+    # ── Hex View ─────────────────────────────────────────────────────────────
+
+    def load_hex_file(self, path: str | Path) -> None:
+        """Parse and hold `path` in session state, replacing any previously
+        loaded hex/s19 file. Pure file operation — no ECU connection needed.
+
+        Raises: XcpToolError nếu extension không nhận ra, hoặc file không
+        đọc được/nội dung không hợp lệ.
+        """
+
+    def hex_regions(
+        self, addresses: list[tuple[int, int, str]],
+    ) -> dict[str, bytes | None]:
+        """For each (address, size, name) in `addresses`, the raw bytes at
+        that range in the currently loaded hex/s19 file, keyed by name —
+        None for a name if no hex file is loaded, or its range isn't fully
+        covered. Never raises per-entry."""
+
+    def generate_hex_from_dataset(
+        self, patches: list[tuple[int, bytes, str]], output_path: str | Path,
+    ) -> None:
+        """Patch the currently loaded hex/s19 file with `patches` (already
+        address/byte-resolved and encoded by the caller) and save to
+        `output_path`.
+
+        Raises: XcpToolError nếu chưa có hex file nào được nạp, hoặc một
+        hay nhiều patch nằm ngoài vùng dữ liệu đã có trong file (liệt kê
+        đủ mọi name+address vi phạm). Không ghi gì nếu lỗi.
+        """
+
+    def hex_raw_rows(self) -> list[tuple[int, bytes]]:
+        """Every original data record of the currently loaded hex/s19
+        file, in file order — see a2l.hexfile.read_records(). Empty list
+        if no file is loaded."""
+
+    def hex_raw_rows_of(self, path: str | Path) -> list[tuple[int, bytes]]:
+        """Every original data record of the file at `path` — same as
+        `hex_raw_rows()` but for an arbitrary file, not necessarily the
+        currently loaded one (used to re-read a just-generated output
+        file).
+
+        Raises: XcpToolError nếu file không đọc được/nội dung không hợp lệ.
         """
 
     # ── DAQ (M4) ─────────────────────────────────────────────────────────────

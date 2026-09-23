@@ -15,7 +15,9 @@ from xcptool.session.api import BusConfig
 from xcptool.transport.config import (
     DEFAULT_BUS_CONFIG,
     config_path,
+    load_app_config,
     load_bus_config,
+    save_app_config,
     save_bus_config,
 )
 
@@ -143,3 +145,24 @@ def test_config_env_var_expands_user(monkeypatch) -> None:
 def test_empty_config_env_var_falls_back_to_default(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("XCPTOOL_CONFIG", "")
     assert config_path() == tmp_path / "config.toml"
+
+
+# ── AppConfig.last_hex_path / last_byte_order (Hex View) ───────────────────────
+
+def test_app_config_round_trips_hex_path_and_byte_order() -> None:
+    # replace(), not in-place mutation: load_app_config() returns the shared
+    # DEFAULT_APP_CONFIG object by reference when no config.toml exists yet
+    # (transport/config.py:117-119) — mutating it directly would leak into
+    # every other test in this process, not just this one.
+    cfg = replace(load_app_config(), last_hex_path="C:/proj/golden.hex", last_byte_order="big")
+    save_app_config(cfg)
+
+    reloaded = load_app_config()
+    assert reloaded.last_hex_path == "C:/proj/golden.hex"
+    assert reloaded.last_byte_order == "big"
+
+
+def test_app_config_defaults_hex_path_empty_and_byte_order_little() -> None:
+    cfg = load_app_config()
+    assert cfg.last_hex_path == ""
+    assert cfg.last_byte_order == "little"

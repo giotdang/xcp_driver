@@ -2059,3 +2059,110 @@ git commit -m "docs(xcptool): mark ASAP2 struct-typedef feature as shipped"
 ```
 
 **→ Toàn bộ tính năng xong khi Task 14 commit xanh.** `_group_by_prefix` không còn tồn tại ở đâu trong codebase (`grep -rn "_group_by_prefix" src/` phải ra rỗng).
+
+---
+
+## 11. Kế hoạch tiếp theo — Multi-select & Calibration Dataset (spec 2026-09-19)
+
+**Trạng thái: mục (1), (2) và (3) đã triển khai xong.** 3 tính năng liên
+quan, làm theo đúng thứ tự phụ thuộc dưới đây (branch `feature`).
+
+1. **Multi-select trong CalibrationView (Read/Write Selected theo nhiều dòng)**
+   — spec: [`docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md`](docs/superpowers/specs/2026-09-19-calibration-multiselect-design.md).
+   Tính năng nền tảng, không phụ thuộc gì — làm trước tiên. Đổi tree sang
+   `ExtendedSelection` (Ctrl/Shift chọn nhiều dòng), thêm helper
+   `_resolve_leaf_names()` dùng chung, mở rộng "Read" và "Write Selected"
+   ăn theo tập đang chọn thay vì chỉ 1 dòng.
+2. **Export / Import Calibration Dataset** — spec:
+   [`docs/superpowers/specs/2026-09-19-calibration-dataset-export-import-design.md`](docs/superpowers/specs/2026-09-19-calibration-dataset-export-import-design.md),
+   plan: [`docs/superpowers/plans/2026-09-21-calibration-dataset-export-import-plan.md`](docs/superpowers/plans/2026-09-21-calibration-dataset-export-import-plan.md).
+   Phụ thuộc mục (1) — "Export Selected to File" cần multi-select. Chuột
+   phải trên tree: Export All / Export Selected / Import Dataset (file
+   JSON), module mới `a2l/dataset.py`.
+
+   **Triển khai thật (khác spec ở một điểm, bắt buộc bởi kiến trúc):**
+   `calibration_view.py` không gọi `a2l.dataset.build_dataset`/`apply_dataset`
+   trực tiếp như spec mô tả — `tests/test_boundaries.py` cấm `ui/` import
+   `xcptool.a2l`. Hai hàm đó được gọi qua `Session.export_dataset()`/
+   `import_dataset()` mới (giống hệt cách `load_a2l()` đã làm) — xem plan ở
+   trên cho lý do đầy đủ. `apply_dataset()` cũng nhận thêm `a2l_path`
+   (không có trong signature gốc của spec) vì việc so checksum với A2L đang
+   nạp cần đọc lại file đó — `A2LDatabase` không tự lưu checksum của chính
+   nó. Test: 565 test pass (`pytest tests/ -x -q`), `--selftest --session
+   fake` xanh 15/15 bước qua event loop thật.
+3. **Generate hex/s19 file** (calib đã hiệu chỉnh → merge vào file hex/s19
+   gốc nạp ECU) — spec:
+   [`docs/superpowers/specs/2026-09-21-hexfile-generate-design.md`](docs/superpowers/specs/2026-09-21-hexfile-generate-design.md),
+   plan: [`docs/superpowers/plans/2026-09-21-hexview-generate-hex-plan.md`](docs/superpowers/plans/2026-09-21-hexview-generate-hex-plan.md).
+
+   **Triển khai thật (khác dự kiến ban đầu ở dòng trên, chốt lại lúc
+   brainstorm):** không tái dùng dataset engine của mục (2) làm nguồn giá
+   trị trực tiếp trong CalibrationView như dự kiến — thay vào đó là một
+   **view mới hoàn toàn, "Hex View"**, ngang hàng Calibration/Measurement
+   trên nav rail. Luồng: menu Session → "Load Hex/S19…" nạp file gốc vào
+   session state (`Session.load_hex_file()`), hiển thị 2 bảng
+   Origin/Mod song song (1 dòng/leaf calibration, không phải hex-dump toàn
+   file); nút "Generate hex from dataset" đọc 1 file dataset JSON đã
+   export từ mục (2), validate qua `Session.import_dataset()` (dùng lại y
+   nguyên), UI tự encode bằng `encode_value()` (mới tách ra
+   `ui/value_codec.py` dùng chung Calibration/Hex View) rồi patch qua
+   `Session.generate_hex_from_dataset()`. Module mới `a2l/hexfile.py`
+   (bọc `bincopy`) thuần address/bytes, không biết gì về A2L — giữ đúng
+   nguyên tắc "UI tự encode, backend chỉ patch thô" đã dùng cho mục (2).
+   Địa chỉ không khớp file gốc → dừng toàn bộ, liệt kê đủ lỗi (không
+   silent-skip như mismatch A2L của mục 2).
+
+   Bắt được 1 bug thật lúc code: `bincopy.BinFile.as_binary(min, max)` độn
+   `0xFF` tới `max` khi có segment thật nằm sau khoảng hỏi — kể cả khi
+   toàn bộ khoảng hỏi nằm *trước* segment thấp nhất — nên coverage-check
+   không được suy từ độ dài kết quả trả về, phải soi trực tiếp
+   `bf.segments`. Cũng phát hiện `QFileDialog`/`QMessageBox` treo vô thời
+   hạn dưới `QT_QPA_PLATFORM=offscreen` nếu test không mock — không timeout
+   sạch, cả suite trông như "chạy chậm" chứ không fail rõ ràng. Test: 618
+   test pass lúc merge (`pytest tests/ -q` — con số "621" từng ghi ở đây
+   trước đó là sai, chưa verify lại sau khi viết), `--selftest --session
+   fake` xanh 15/15 bước qua event loop thật (không thêm bước riêng cho
+   Hex View vào selftest — đúng tiền lệ mục (2) cũng không thêm, pytest là
+   nơi verify theo tính năng).
+
+   **Bug phát hiện sau khi merge, lúc tự tay thử với A2L ví dụ
+   (`examples/xcp_daq_example.a2l` + `dataset.json` đã export sẵn):**
+   `leaf_enum.enumerate_leaves()` từng tách mảng VAL_BLK thành 1 leaf/phần
+   tử (`table[0]`, `table[1]`...) giống cách CalibrationView dựng tree —
+   nhưng dataset JSON (mục 2) lưu cả mảng dưới 1 key duy nhất, text nối
+   dấu phẩy. Kết quả: patch cho 1 tham số kiểu mảng (VD `adcCalPoints`)
+   bị "biến mất" êm re trong `on_dataset_validated()` vì tra theo tên
+   không khớp bất kỳ leaf nào. Sửa: `LeafInfo` thêm field `array_size`,
+   `enumerate_leaves()` phát 1 leaf/CHARACTERISTIC (kể cả mảng), không
+   tách phần tử nữa; `on_dataset_validated()` truyền
+   `array_size=leaf.array_size` xuống `encode_value()` thay vì hằng số 1.
+   619 test pass sau khi sửa.
+
+   **Bổ sung sau đó (2026-09-22) — tab "Raw" trong Hex View:** spec
+   [`docs/superpowers/specs/2026-09-22-hexview-raw-tab-design.md`](docs/superpowers/specs/2026-09-22-hexview-raw-tab-design.md),
+   plan: [`docs/superpowers/plans/2026-09-22-hexview-raw-tab-plan.md`](docs/superpowers/plans/2026-09-22-hexview-raw-tab-plan.md).
+   Hex View có thêm `QTabWidget`: tab "Calibration" (như cũ) và tab
+   "Raw" mới — hiện toàn bộ record gốc của file hex/s19 (địa chỉ +
+   byte, đúng như ghi trong file, không gộp/không chia lại), không cần
+   nạp A2L. Module mới `a2l/hexfile.py::read_records()` đọc từng dòng
+   gốc qua `bincopy.unpack_ihex()`/`unpack_srec()` — **không** dùng
+   `BinFile.segments`/`chunks()` vì cái đó gộp mất ranh giới dòng gốc
+   (kiểm chứng lúc brainstorm: 2 record 20-byte liền nhau bị gộp rồi
+   chia lại thành 16+16+8). `patch_and_save()` cũng sửa để giữ nguyên
+   kích thước dòng phổ biến nhất của file gốc khi ghi file output
+   (thay vì mặc định ~32 byte/dòng của bincopy), nhờ vậy bảng Raw
+   Origin/Mod so hàng đúng theo địa chỉ. Bảng Raw dùng
+   `QAbstractTableModel`/`QTableView` (lazy) thay vì `QTableWidget`
+   (eager) vì số dòng của 1 file flash thật có thể lên tới hàng chục
+   nghìn — `QTableWidget` dựng hết ngay sẽ đơ UI.
+
+   Lúc viết plan, mọi fixture Intel HEX/S-record gõ tay đều được verify
+   lại qua `bincopy` trước khi đưa vào — bắt được 2 checksum sai (cùng
+   loại lỗi đã gặp lúc làm mục 3 phần trước, lần này bắt được trước khi
+   lọt vào code thật). Test: 642 test pass (`pytest tests/ -q`), thử
+   tay bằng cách gọi thẳng `Session` với `examples/xcp_daq_example.hex`
+   + `xcptool/dataset.json` thật — Raw Origin ra đúng 5 dòng ngay sau
+   khi nạp hex (chưa nạp A2L), generate xong Raw Mod vẫn 5 dòng (đúng
+   như kỳ vọng — record size được giữ nguyên), và đúng 3 dòng được
+   đánh dấu thay đổi (khớp chính xác với 5 giá trị dataset thật đổi,
+   rơi vào 3 dòng 32-byte khác nhau).

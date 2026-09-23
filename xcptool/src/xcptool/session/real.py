@@ -16,7 +16,10 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from ..a2l import A2LDatabase
+from ..a2l import hexfile
 from ..a2l import load as _a2l_load
+from ..a2l.dataset import DatasetImportResult, apply_dataset, build_dataset
+from ..a2l.hexfile import HexImage
 from ..master.core import XcpMaster
 from ..master.daq import (
     DaqListConfig,
@@ -107,6 +110,9 @@ class RealSession:
         self._transport: Transport | None = None
         self._last_state = ConnState.DISCONNECTED
         self._a2l_db: A2LDatabase = A2LDatabase()
+        self._a2l_path: Path | None = None
+        self._hex_image: HexImage | None = None
+        self._hex_path: Path | None = None
 
         # DAQ state — protected bởi _daq_lock khi cập nhật _daq_ring
         self._daq_pid_table: dict[int, PidEntry] | None = None
@@ -268,6 +274,51 @@ class RealSession:
     @_guarded("nạp A2L")
     def load_a2l(self, path: str | Path) -> None:
         self._a2l_db = _a2l_load(path)
+        self._a2l_path = Path(path)
+
+    @_guarded("export dataset")
+    def export_dataset(self, values: dict[str, str]) -> dict:
+        if self._a2l_path is None:
+            raise XcpToolError("Chưa nạp file A2L — không thể export dataset")
+        return build_dataset(values, self._a2l_db, self._a2l_path)
+
+    @_guarded("import dataset")
+    def import_dataset(self, payload: dict) -> DatasetImportResult:
+        return apply_dataset(payload, self._a2l_db, self._a2l_path)
+
+    # ── Hex View ─────────────────────────────────────────────────────────────
+
+    @_guarded("nạp hex/s19")
+    def load_hex_file(self, path: str | Path) -> None:
+        self._hex_image = hexfile.load(Path(path))
+        self._hex_path = Path(path)
+
+    @_guarded("đọc vùng hex/s19")
+    def hex_regions(self, addresses: list[tuple[int, int, str]]) -> dict[str, bytes | None]:
+        if self._hex_image is None:
+            return {name: None for _addr, _size, name in addresses}
+        return {
+            name: hexfile.read_region(self._hex_image, addr, size)
+            for addr, size, name in addresses
+        }
+
+    @_guarded("generate hex/s19")
+    def generate_hex_from_dataset(
+        self, patches: list[tuple[int, bytes, str]], output_path: str | Path,
+    ) -> None:
+        if self._hex_path is None:
+            raise XcpToolError("Chưa nạp file hex/s19 — không thể generate")
+        hexfile.patch_and_save(self._hex_path, patches, Path(output_path))
+
+    @_guarded("đọc toàn bộ hex/s19")
+    def hex_raw_rows(self) -> list[tuple[int, bytes]]:
+        if self._hex_path is None:
+            return []
+        return hexfile.read_records(self._hex_path)
+
+    @_guarded("đọc toàn bộ hex/s19")
+    def hex_raw_rows_of(self, path: str | Path) -> list[tuple[int, bytes]]:
+        return hexfile.read_records(Path(path))
 
     # ── DAQ ──────────────────────────────────────────────────────────────────
 

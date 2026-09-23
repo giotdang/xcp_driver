@@ -43,6 +43,8 @@ DEFAULT_BUS_CONFIG = BusConfig(
 DEFAULT_APP_CONFIG = AppConfig(
     bus=DEFAULT_BUS_CONFIG,
     last_a2l_path="",
+    last_hex_path="",
+    last_byte_order="little",
     scope_enabled=True,
     trace_row_limit=20_000,
     active_route="calibration",
@@ -128,6 +130,9 @@ def load_app_config(default: AppConfig | None = None) -> AppConfig:
 
     sess_sec = raw.get("session", {})
     last_a2l = str(sess_sec.get("last_a2l_path", "")) if isinstance(sess_sec, dict) else ""
+    last_hex = str(sess_sec.get("last_hex_path", "")) if isinstance(sess_sec, dict) else ""
+    last_bo_raw = sess_sec.get("last_byte_order", "little") if isinstance(sess_sec, dict) else "little"
+    last_bo = last_bo_raw if last_bo_raw in ("little", "big") else "little"
 
     ui_sec = raw.get("ui", {})
     scope_on = True
@@ -151,6 +156,8 @@ def load_app_config(default: AppConfig | None = None) -> AppConfig:
     return AppConfig(
         bus=bus_cfg,
         last_a2l_path=last_a2l,
+        last_hex_path=last_hex,
+        last_byte_order=last_bo,
         scope_enabled=scope_on,
         trace_row_limit=row_lim,
         active_route=active_route,
@@ -203,6 +210,8 @@ def dumps_app_config(cfg: AppConfig) -> str:
         + dumps_bus_config(cfg.bus)
         + "\n[session]\n"
         f'last_a2l_path = "{esc(cfg.last_a2l_path)}"\n'
+        f'last_hex_path = "{esc(cfg.last_hex_path)}"\n'
+        f'last_byte_order = "{esc(cfg.last_byte_order)}"\n'
         + "\n[ui]\n"
         f"scope_enabled = {str(cfg.scope_enabled).lower()}\n"
         f"trace_row_limit = {cfg.trace_row_limit}\n"
