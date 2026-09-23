@@ -301,3 +301,49 @@ def test_on_raw_mod_ready_populates_and_highlights_only_changed_rows(qtbot) -> N
     model = view.raw_mod_model
     assert model.data(model.index(0, 0), Qt.BackgroundRole) is not None  # 0x100 changed
     assert model.data(model.index(1, 0), Qt.BackgroundRole) is None      # 0x200 unchanged
+
+
+def test_scrolling_origin_table_syncs_mod_table_vertical_scrollbar(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    db = A2LDatabase()
+    for i in range(100):
+        db.characteristics[f"c{i}"] = Characteristic(
+            name=f"c{i}", description="", char_type="VALUE", address=0x1000 + i,
+            record_layout="", lower_limit=0.0, upper_limit=10.0, datatype="UBYTE",
+        )
+    view.set_database(db)
+    view.on_regions_ready({f"c{i}": bytes([i % 256]) for i in range(100)})
+    view.on_generate_done("C:/proj/out.hex")  # populates mod_table with matching rows
+    view.resize(400, 200)
+    view.show()
+
+    origin_bar = view.origin_table.verticalScrollBar()
+    mod_bar = view.mod_table.verticalScrollBar()
+    assert origin_bar.maximum() > 0  # sanity: content actually overflows the viewport
+
+    origin_bar.setValue(origin_bar.maximum())
+    assert mod_bar.value() == origin_bar.maximum()
+
+    mod_bar.setValue(0)
+    assert origin_bar.value() == 0
+
+
+def test_scrolling_raw_origin_syncs_raw_mod_vertical_scrollbar(qtbot) -> None:
+    view, _, _ = _make_view(qtbot)
+    rows = [(0x1000 + i, bytes([i % 256])) for i in range(100)]
+    view.on_raw_origin_ready(rows)
+    view.on_raw_mod_ready(rows)
+    view.resize(400, 200)
+    view.show()
+    from PySide6.QtWidgets import QTabWidget
+    view.findChild(QTabWidget).setCurrentIndex(1)  # Raw tab must be visible to get real scrollbar geometry
+
+    origin_bar = view.raw_origin_view.verticalScrollBar()
+    mod_bar = view.raw_mod_view.verticalScrollBar()
+    assert origin_bar.maximum() > 0  # sanity: content actually overflows the viewport
+
+    origin_bar.setValue(origin_bar.maximum())
+    assert mod_bar.value() == origin_bar.maximum()
+
+    mod_bar.setValue(0)
+    assert origin_bar.value() == 0

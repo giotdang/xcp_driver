@@ -12,6 +12,7 @@ from typing import Any, Callable
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -47,6 +48,32 @@ def _make_table() -> QTableWidget:
     table.setEditTriggers(QTableWidget.NoEditTriggers)
     table.setSelectionBehavior(QTableWidget.SelectRows)
     return table
+
+
+def _sync_scrollbars(view_a: QAbstractItemView, view_b: QAbstractItemView) -> None:
+    """Mirror vertical scroll so Origin/Mod stay row-aligned for diffing."""
+    bar_a = view_a.verticalScrollBar()
+    bar_b = view_b.verticalScrollBar()
+    syncing = False
+
+    def _to_b(value: int) -> None:
+        nonlocal syncing
+        if syncing:
+            return
+        syncing = True
+        bar_b.setValue(value)
+        syncing = False
+
+    def _to_a(value: int) -> None:
+        nonlocal syncing
+        if syncing:
+            return
+        syncing = True
+        bar_a.setValue(value)
+        syncing = False
+
+    bar_a.valueChanged.connect(_to_b)
+    bar_b.valueChanged.connect(_to_a)
 
 
 class HexView(QWidget):
@@ -98,6 +125,9 @@ class HexView(QWidget):
         self.raw_mod_view.setModel(self.raw_mod_model)
         raw_layout.addWidget(self.raw_origin_view)
         raw_layout.addWidget(self.raw_mod_view)
+
+        _sync_scrollbars(self.origin_table, self.mod_table)
+        _sync_scrollbars(self.raw_origin_view, self.raw_mod_view)
 
         tab_widget = QTabWidget()
         tab_widget.addTab(cal_page, "Calibration")
