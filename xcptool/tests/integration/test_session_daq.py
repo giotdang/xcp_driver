@@ -96,6 +96,43 @@ def test_real_drain_daq_returns_sample_points(channel: str) -> None:
     session.close()
 
 
+def test_real_drain_daq_returns_sample_points_on_static_ecu(channel: str) -> None:
+    """Như test_real_drain_daq_returns_sample_points, nhưng qua ECU static
+    (predefined=False — list có sẵn nhưng nội dung vẫn ghi được), đi qua
+    ĐÚNG session.start_daq() (không gọi thẳng configure_daq() như
+    tests/integration/test_daq.py) — đóng nốt đường chưa test: UI/session
+    gọi RealSession.start_daq() trên ECU static có chạy hết được tới
+    SamplePoint hay không, không chỉ riêng lớp master."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1)
+    session, bus = _make_real(channel, cfg)
+
+    with FakeSlave(cfg) as slave:
+        session.connect(bus)
+        assert session.caps is not None and session.caps.daq is not None
+        assert session.caps.daq.dynamic_daq is False
+
+        addr = cfg.mem_base
+        expected = b"\xFF\x00"   # 255 as uint16 LE
+        slave.poke(addr, expected)
+
+        sig = DaqSignal("temp", addr, 0, 2, "UINT16")
+        session.start_daq([DaqList(signals=[sig], event=0, timestamp=False)])
+
+        deadline = time.perf_counter() + 1.0
+        samples: list[SamplePoint] = []
+        while time.perf_counter() < deadline and not samples:
+            time.sleep(0.02)
+            samples = session.drain_daq(100)
+
+        assert samples, "Không nhận được sample nào trong 1 giây"
+        temp = [s for s in samples if s.name == "temp"]
+        assert temp, f"Không tìm thấy sample 'temp' trong {[s.name for s in samples]}"
+        assert temp[0].value_raw == expected
+        assert slave.write_daq_to_predefined == set()
+
+    session.close()
+
+
 def test_real_stop_daq_stops_samples(channel: str) -> None:
     """Sau stop_daq(), drain_daq() không còn trả sample mới."""
     cfg = SlaveConfig(channel=channel)
