@@ -169,6 +169,57 @@ class XcpProtocolInfo:
     protocol_version: str = "1.0"
 
 
+@dataclass(frozen=True)
+class XcpDaqInfo:
+    """/begin DAQ ... /end DAQ trong IF_DATA XCP cấp MODULE — song song với
+    DaqCaps runtime (session/api.py, đọc từ GET_DAQ_PROCESSOR_INFO lúc
+    CONNECT), nhưng đọc được từ A2L TRƯỚC khi connect. Xem
+    examples/xcp_daq_example.a2l dòng 88-98.
+    """
+    dynamic_daq: bool          # DAQ_CONFIG_TYPE: True=DYNAMIC, False=STATIC
+    max_daq: int
+    max_event_channel: int
+    min_daq: int
+
+
+@dataclass(frozen=True)
+class EventChannel:
+    """Một /begin EVENT ... /end EVENT lồng trong DAQ — xem
+    examples/xcp_daq_example.a2l dòng 100-121. `time_unit` là mã thô theo
+    A2L (0..9, xem ASAM CCP/XCP time unit table), chưa quy đổi ra ns.
+    """
+    name: str
+    short_name: str
+    number: int
+    max_daq_list: int
+    time_cycle: int
+    time_unit: int
+    priority: int
+
+
+@dataclass(frozen=True)
+class StaticDaqList:
+    """Một /begin DAQ_LIST ... /end DAQ_LIST trong A2L — mô tả một list
+    tĩnh có sẵn trên ECU (chỉ xuất hiện khi DAQ_CONFIG_TYPE=STATIC,
+    MIN_DAQ>0).
+
+    GIỚI HẠN QUAN TRỌNG: field ở đây chỉ cho biết CẤU TRÚC list (số ODT,
+    số entry/ODT, event có bị fix cứng không) — theo hiểu biết của tôi,
+    khung IF_DATA XCP chuẩn KHÔNG có cách biểu diễn signal nào nằm ở ODT
+    entry nào cho một list `predefined=True`; thông tin đó (nếu ECU của
+    bạn cần) phải lấy từ tài liệu ECU/nhà cung cấp, không tự suy ra được
+    từ đây — dùng để tự dựng `master.daq.PredefinedDaqList.odts` thủ công.
+    `examples/xcp_daq_example.a2l` dùng DYNAMIC/MIN_DAQ=0 nên không có ví
+    dụ /begin DAQ_LIST thật trong repo để đối chiếu field order — xác nhận
+    lại với A2L ECU static thật hoặc spec ASAM MCD-1 XCP Part 2 khi có.
+    """
+    number: int
+    max_odt: int | None = None
+    max_odt_entries: int | None = None
+    predefined: bool = False
+    fixed_event: int | None = None
+
+
 @dataclass
 class A2LDatabase:
     measurements: dict[str, Measurement] = field(default_factory=dict)
@@ -180,3 +231,6 @@ class A2LDatabase:
     instances: dict[str, Instance] = field(default_factory=dict)
     instance_trees: dict[str, InstanceNode] = field(default_factory=dict)
     protocol_info: XcpProtocolInfo | None = None
+    daq_info: XcpDaqInfo | None = None
+    events: dict[int, EventChannel] = field(default_factory=dict)
+    static_daq_lists: dict[int, StaticDaqList] = field(default_factory=dict)

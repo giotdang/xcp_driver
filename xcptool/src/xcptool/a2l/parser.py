@@ -43,6 +43,22 @@ Token layout (after /begin KEYWORD was consumed, so b.name = "KEYWORD"):
   RECORD_LAYOUT:
     [0] name/identifier
     keyword FNC_VALUES <position> <datatype> <index_mode> <addr_type>
+
+  IF_DATA XCP / DAQ  (cấp MODULE — xem examples/xcp_daq_example.a2l:88-122):
+    [0] DAQ_CONFIG_TYPE (STATIC | DYNAMIC)
+    [1] MAX_DAQ  [2] MAX_EVENT_CHANNEL  [3] MIN_DAQ
+    (phần còn lại — OPTIMISATION_TYPE… — không trích ở đây)
+    child /begin EVENT → mỗi /begin EVENT lồng bên trong:
+      [0] name  [1] short_name  [2] EVENT_CHANNEL_NUMBER  [3] DAQ|STIM|DAQ_STIM
+      [4] MAX_DAQ_LIST  [5] TIME_CYCLE  [6] TIME_UNIT  [7] PRIORITY
+    child /begin DAQ_LIST (chỉ khi STATIC, MIN_DAQ>0 — KHÔNG có ví dụ thật
+    trong repo, xem hedge trong StaticDaqList/types.py):
+      [0] DAQ_LIST_NUMBER, keyword MAX_ODT/MAX_ODT_ENTRIES/EVENT_FIXED,
+      child /begin PREDEFINED (marker, không tham số)
+
+  MEASUREMENT / IF_DATA XCP / DAQ_EVENT (event của riêng 1 signal — xem
+  examples/xcp_daq_example.a2l:150-156):
+    /begin DAQ_EVENT /begin FIXED_EVENT_LIST EVENT <n> /end FIXED_EVENT_LIST /end DAQ_EVENT
 """
 from __future__ import annotations
 
@@ -51,9 +67,9 @@ import re
 from dataclasses import dataclass, field
 
 from .types import (
-    A2LDatabase, Characteristic, CharacteristicTypeDef, Instance, Measurement,
-    MeasurementTypeDef, RecordLayout, StructComponent, StructTypeDef,
-    XcpProtocolInfo,
+    A2LDatabase, Characteristic, CharacteristicTypeDef, EventChannel, Instance,
+    Measurement, MeasurementTypeDef, RecordLayout, StaticDaqList, StructComponent,
+    StructTypeDef, XcpDaqInfo, XcpProtocolInfo,
 )
 
 _log = logging.getLogger(__name__)
@@ -193,6 +209,27 @@ def _extract_matrix_dim(t: list[str]) -> list[int]:
     return []
 
 
+def _extract_measurement_event_channel(b: _Block) -> int | None:
+    """DAQ_EVENT/FIXED_EVENT_LIST/EVENT <n> lồng trong IF_DATA XCP của một
+    MEASUREMENT — xem examples/xcp_daq_example.a2l:150-156. Chỉ lấy event
+    ĐẦU TIÊN nếu FIXED_EVENT_LIST khai nhiều dòng EVENT — Measurement/
+    DaqListConfig hiện chỉ mô hình 1 event/signal (multi-event measurement
+    ngoài phạm vi hiện tại)."""
+    for child in b.children:
+        if child.name != "IF_DATA" or not child.tokens or child.tokens[0] != "XCP":
+            continue
+        for daq_event in child.children:
+            if daq_event.name != "DAQ_EVENT":
+                continue
+            for fel in daq_event.children:
+                if fel.name != "FIXED_EVENT_LIST":
+                    continue
+                ev = fel.get("EVENT", 1)
+                if ev:
+                    return _to_int(ev[0])
+    return None
+
+
 def _extract_measurement(b: _Block) -> Measurement | None:
     t = b.tokens
     if len(t) < 8:
@@ -220,6 +257,7 @@ def _extract_measurement(b: _Block) -> Measurement | None:
         upper_limit=upper_limit,
         compu_method=compu_method,
         matrix_dim=matrix_dim,
+        event_channel=_extract_measurement_event_channel(b),
     )
 
 
@@ -331,16 +369,24 @@ def _extract_xcp_protocol_info(b: _Block) -> XcpProtocolInfo | None:
 
     for child in b.children:
         if child.name == "PROTOCOL_LAYER":
-            # PROTOCOL_LAYER token layout:
-            # [0] version (0x0100/0x0103)
-            # [1] T1 [2] T2 [3] T3 [4] T4 [5] T5
-            # [6] MAX_CTO [7] MAX_DTO
-            # [8] BYTE_ORDER (BYTE_ORDER_MSB_LAST / BYTE_ORDER_MSB_FIRST)
+            # PROTOCOL_LAYER token layout: [0] version, rồi T1..Tn (SỐ LƯỢNG
+            # THAY ĐỔI theo ASAP2_VERSION — test_can_fd_payload.py dùng A2L
+            # ASAP2_VERSION 1.60 với 5 giá trị T1-T5, còn
+            # examples/xcp_daq_example.a2l khai ASAP2_VERSION 1.71 với 7
+            # giá trị T1-T7), rồi [MAX_CTO] [MAX_DTO]
+            # [BYTE_ORDER_MSB_LAST|BYTE_ORDER_MSB_FIRST] [ADDRESS_GRANULARITY]…
+            # Số T không cố định nên neo theo vị trí BYTE_ORDER_* (luôn có,
+            # luôn ngay sau MAX_DTO) thay vì index cứng.
             tokens = child.tokens
-            if len(tokens) >= 8:
+            byte_order_idx = next(
+                (i for i, tok in enumerate(tokens)
+                 if tok in ("BYTE_ORDER_MSB_LAST", "BYTE_ORDER_MSB_FIRST")),
+                None,
+            )
+            if byte_order_idx is not None and byte_order_idx >= 2:
                 try:
-                    info.max_cto = _to_int(tokens[6])
-                    info.max_dto = _to_int(tokens[7])
+                    info.max_cto = _to_int(tokens[byte_order_idx - 2])
+                    info.max_dto = _to_int(tokens[byte_order_idx - 1])
                 except (ValueError, IndexError):
                     pass
             for tok in tokens:
@@ -366,6 +412,91 @@ def _extract_xcp_protocol_info(b: _Block) -> XcpProtocolInfo | None:
                     info.max_dlc_required = True
 
     return info
+
+
+def _extract_event_channel(b: _Block) -> EventChannel | None:
+    """Một /begin EVENT ... /end EVENT lồng trong DAQ/EVENT — xem
+    examples/xcp_daq_example.a2l:101-110. t[3] (DAQ|STIM|DAQ_STIM) bỏ qua —
+    STIM ngoài phạm vi (CLAUDE.md: Disabled Features)."""
+    t = b.tokens
+    if len(t) < 8:
+        return None
+    return EventChannel(
+        name=t[0].strip('"'),
+        short_name=t[1].strip('"'),
+        number=_to_int(t[2]),
+        max_daq_list=_to_int(t[4]),
+        time_cycle=_to_int(t[5]),
+        time_unit=_to_int(t[6]),
+        priority=_to_int(t[7]),
+    )
+
+
+def _extract_static_daq_list(b: _Block) -> StaticDaqList | None:
+    """Một /begin DAQ_LIST ... /end DAQ_LIST — xem hedge đầy đủ ở
+    StaticDaqList (types.py): không có ví dụ thật trong repo để đối chiếu
+    field order, field nào thiếu thì bỏ qua (None) thay vì đoán bừa."""
+    t = b.tokens
+    if not t:
+        return None
+
+    max_odt_tok = b.get("MAX_ODT", 1)
+    max_odt_entries_tok = b.get("MAX_ODT_ENTRIES", 1)
+    fixed_event_tok = b.get("EVENT_FIXED", 1)
+    predefined = any(c.name == "PREDEFINED" for c in b.children)
+
+    return StaticDaqList(
+        number=_to_int(t[0]),
+        max_odt=_to_int(max_odt_tok[0]) if max_odt_tok else None,
+        max_odt_entries=_to_int(max_odt_entries_tok[0]) if max_odt_entries_tok else None,
+        predefined=predefined,
+        fixed_event=_to_int(fixed_event_tok[0]) if fixed_event_tok else None,
+    )
+
+
+def _extract_xcp_daq(
+    b: _Block,
+) -> tuple[XcpDaqInfo | None, dict[int, EventChannel], dict[int, StaticDaqList]]:
+    """Trích /begin DAQ ... /end DAQ (cấp MODULE, sibling của PROTOCOL_LAYER
+    trong cùng IF_DATA XCP) — DAQ_CONFIG_TYPE/MAX_DAQ/MAX_EVENT_CHANNEL/
+    MIN_DAQ, các /begin EVENT lồng bên trong, và /begin DAQ_LIST nếu có.
+    Xem examples/xcp_daq_example.a2l:88-122."""
+    for child in b.children:
+        if child.name != "DAQ":
+            continue
+        t = child.tokens
+        if len(t) < 4:
+            return None, {}, {}
+
+        daq_info = XcpDaqInfo(
+            dynamic_daq=(t[0] == "DYNAMIC"),
+            max_daq=_to_int(t[1]),
+            max_event_channel=_to_int(t[2]),
+            min_daq=_to_int(t[3]),
+        )
+
+        events: dict[int, EventChannel] = {}
+        for event_wrapper in child.children:
+            if event_wrapper.name != "EVENT":
+                continue
+            for ev_block in event_wrapper.children:
+                if ev_block.name != "EVENT":
+                    continue
+                ev = _extract_event_channel(ev_block)
+                if ev is not None:
+                    events[ev.number] = ev
+
+        static_lists: dict[int, StaticDaqList] = {}
+        for daq_list_block in child.children:
+            if daq_list_block.name != "DAQ_LIST":
+                continue
+            sl = _extract_static_daq_list(daq_list_block)
+            if sl is not None:
+                static_lists[sl.number] = sl
+
+        return daq_info, events, static_lists
+
+    return None, {}, {}
 
 
 # ---------------------------------------------------------------------------
@@ -442,13 +573,29 @@ def parse(text: str) -> A2LDatabase:
             except Exception as exc:
                 _log.warning("Skipping INSTANCE %r: %s", bname, exc)
 
-        elif block.name == "IF_DATA" and block.tokens and block.tokens[0] == "XCP":
+        elif (block.name == "IF_DATA" and block.tokens and block.tokens[0] == "XCP"
+              and any(c.name in ("PROTOCOL_LAYER", "DAQ", "XCP_ON_CAN", "XCP_ON_CAN_FD")
+                      for c in block.children)):
+            # Điều kiện any(...) phân biệt IF_DATA XCP cấp MODULE (có các
+            # child này) với IF_DATA XCP lồng trong MEASUREMENT (chỉ có
+            # DAQ_EVENT, xem _extract_measurement_event_channel) — thiếu
+            # điều kiện này thì measurement nào cũng ghi đè db.protocol_info
+            # bằng giá trị mặc định trống, vì _extract_xcp_protocol_info
+            # không tìm thấy PROTOCOL_LAYER trong IF_DATA của measurement.
             try:
                 proto = _extract_xcp_protocol_info(block)
                 if proto:
                     db.protocol_info = proto
             except Exception as exc:
-                _log.warning("Skipping IF_DATA XCP: %s", exc)
+                _log.warning("Skipping IF_DATA XCP (protocol): %s", exc)
+            try:
+                daq_info, events, static_lists = _extract_xcp_daq(block)
+                if daq_info is not None:
+                    db.daq_info = daq_info
+                    db.events = events
+                    db.static_daq_lists = static_lists
+            except Exception as exc:
+                _log.warning("Skipping IF_DATA XCP (DAQ): %s", exc)
 
         for child in block.children:
             _visit(child)
