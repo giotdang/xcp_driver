@@ -104,6 +104,52 @@ def test_start_emits_daq_start_requested(qtbot, view: MeasurementView) -> None:
     assert any(s.name == "speed" for s in sigs)
 
 
+def test_start_groups_signals_by_event_channel(qtbot, view: MeasurementView) -> None:
+    """Signal khai event_channel khác nhau trong A2L phải tách thành DaqList
+    riêng — nhét chung một list event=0 khiến ECU trigger sai raster cho
+    signal thuộc event khác (vd. coolantTempC khai event 1 trong
+    examples/xcp_daq_example.a2l, trước fix luôn bị gộp vào event 0)."""
+    db = A2LDatabase()
+    db.measurements["fast"] = Measurement(
+        name="fast", description="", datatype="UWORD",
+        address=MEM_BASE, lower_limit=0.0, upper_limit=1.0,
+        event_channel=0,
+    )
+    db.measurements["slow"] = Measurement(
+        name="slow", description="", datatype="UWORD",
+        address=MEM_BASE + 4, lower_limit=0.0, upper_limit=1.0,
+        event_channel=1,
+    )
+    view.set_database(db)
+    for i in range(view.tree.topLevelItemCount()):
+        view.tree.topLevelItem(i).setCheckState(COL_NAME, Qt.Checked)
+
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert len(emitted) == 1
+    by_event = {dl.event: {s.name for s in dl.signals} for dl in emitted[0]}
+    assert by_event == {0: {"fast"}, 1: {"slow"}}
+
+
+def test_start_defaults_missing_event_channel_to_zero(qtbot, view: MeasurementView) -> None:
+    """Measurement không khai DAQ_EVENT (event_channel=None — A2L cũ, hoặc
+    chưa có thông tin event) vẫn phải hoạt động — mặc định event 0."""
+    view.set_database(_make_db())   # _make_db() không set event_channel -> None
+    for i in range(view.tree.topLevelItemCount()):
+        view.tree.topLevelItem(i).setCheckState(COL_NAME, Qt.Checked)
+
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert len(emitted) == 1
+    assert len(emitted[0]) == 1
+    assert emitted[0][0].event == 0
+    assert {s.name for s in emitted[0][0].signals} == {"speed", "temp"}
+
+
 def test_stop_emits_daq_stop_requested(qtbot, view: MeasurementView) -> None:
     # Giả lập DAQ đang chạy
     view.on_daq_started()

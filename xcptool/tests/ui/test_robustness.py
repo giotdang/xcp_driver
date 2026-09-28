@@ -23,6 +23,7 @@ from xcptool.session.api import (
     NotConnectedError,
     OutOfRangeError,
     SlaveError,
+    StaticDaqCapacityError,
     UnsupportedByEcuError,
     WriteProtectedError,
     XcpTimeoutError,
@@ -46,6 +47,7 @@ ALL_ERRORS = [
     NotConnectedError("chưa connect"),
     BusyError("đang bận"),
     UnsupportedByEcuError("DAQ"),
+    StaticDaqCapacityError("không đủ list tĩnh rảnh"),
 ]
 
 

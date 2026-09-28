@@ -607,7 +607,13 @@ class MeasurementView(QWidget):
 
 
     def _build_daq_lists(self) -> list[DaqList]:
-        """Dựng danh sách DaqList từ signals được tick.
+        """Dựng danh sách DaqList từ signals được tick, GOM THEO EVENT_CHANNEL
+        khai trong A2L (DAQ_EVENT/FIXED_EVENT_LIST — xem
+        examples/xcp_daq_example.a2l). Một DaqList chỉ có MỘT event; ECU
+        trigger cả list theo event đó nên signal thuộc event khác nhau phải
+        tách list khác nhau, nhét chung sẽ sample sai raster. Measurement
+        không khai DAQ_EVENT (event_channel=None — A2L cũ, hoặc resolve từ
+        INSTANCE/TYPEDEF_MEASUREMENT chưa mang field này) mặc định event 0.
 
         Array signal (MATRIX_DIM) tự động tách thành N DaqSignal riêng:
           torqueSamples[4] (FLOAT32_IEEE, 4B) →
@@ -620,16 +626,18 @@ class MeasurementView(QWidget):
         checked = self._checked_names()
         if not checked:
             return []
-        signals: list[DaqSignal] = []
+        by_event: dict[int, list[DaqSignal]] = {}
         for name in checked:
             meas = self._db.measurements.get(name)
             if meas is None:
                 continue
+            event = meas.event_channel if meas.event_channel is not None else 0
+            bucket = by_event.setdefault(event, [])
             n = meas.array_size       # 1 nếu scalar, >1 nếu array
             elem_size = meas.byte_size // n   # kích thước một phần tử (bytes)
             if n == 1:
                 # Scalar — không thay đổi gì
-                signals.append(DaqSignal(
+                bucket.append(DaqSignal(
                     name=meas.name,
                     address=meas.address,
                     ext=0,
@@ -639,16 +647,15 @@ class MeasurementView(QWidget):
             else:
                 # Array — tách thành N phần tử riêng, tên = "name[i]"
                 for i in range(n):
-                    signals.append(DaqSignal(
+                    bucket.append(DaqSignal(
                         name=f"{meas.name}[{i}]",
                         address=meas.address + i * elem_size,
                         ext=0,
                         size=elem_size,
                         datatype=meas.datatype,
                     ))
-        if not signals:
-            return []
-        return [DaqList(signals=signals, event=0, timestamp=True)]
+        return [DaqList(signals=sigs, event=event, timestamp=True)
+                for event, sigs in sorted(by_event.items()) if sigs]
 
     def _setup_curves(self, lists: list[Any]) -> None:
         """Xoá curves cũ và khởi tạo curve mới cho mỗi signal được chọn."""
