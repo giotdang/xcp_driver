@@ -76,6 +76,14 @@ class SlaveConfig:
     granularity_odt_entry_daq: int = 1
     max_odt_entry_size_daq: int = 7
 
+    # Static DAQ (D4d) — chỉ dùng khi daq_dynamic=False. `min_daq` list đầu
+    # tiên được cấp sẵn lúc khởi động (không qua ALLOC_*), mỗi list có
+    # static_max_odt ODT. Nội dung ODT vẫn ghi được qua SET_DAQ_PTR/WRITE_DAQ
+    # — chưa mô phỏng list nội dung cố định hẳn (GET_DAQ_LIST_INFO luôn báo
+    # predefined=False).
+    static_max_odt: int = 2
+    static_max_odt_entries: int = 7
+
     mem_base: int = 0x8000_0000
     mem_size: int = 1024
     # ECU và XCP boot ở Reference page (Flash) — đúng hành vi firmware thật
@@ -135,6 +143,8 @@ class FakeSlave:
         self._daq_write_pos: tuple[int, int, int] = (0, 0, 0)  # (daq, odt, entry)
         self._daq_next_pid: int = 0
         self.daq_running: bool = False  # public — test kiểm tra trực tiếp
+        if not self.cfg.daq_dynamic and self.cfg.min_daq > 0:
+            self._reset_static_daq_lists()
 
         # DAQ send thread — gửi DTO frame 100 Hz khi daq_running=True
         self._daq_thread: threading.Thread | None = None
@@ -529,7 +539,19 @@ class FakeSlave:
         except IndexError:
             return []
 
+    def _reset_static_daq_lists(self) -> None:
+        """Dựng lại `min_daq` list cố định — gọi lúc khởi động (ECU static
+        không có ALLOC_* để tự dựng, nên phải có sẵn từ đầu)."""
+        n = self.cfg.min_daq
+        self._daq_lists = [[[] for _ in range(self.cfg.static_max_odt)] for _ in range(n)]
+        self._daq_modes = [{"event": 0, "mode": 0, "prescaler": 1, "prio": 0}
+                           for _ in range(n)]
+        self._daq_first_pids = [0] * n
+
     def _cmd_free_daq(self, data: bytes) -> None:
+        if not self.cfg.daq_dynamic:
+            self._err(ErrCode.CMD_UNKNOWN)
+            return
         self._daq_stop.set()   # ngừng thread nếu đang chạy
         self._daq_lists = []
         self._daq_modes = []
@@ -540,6 +562,9 @@ class FakeSlave:
         self._reply(b"\xff")
 
     def _cmd_alloc_daq(self, data: bytes) -> None:
+        if not self.cfg.daq_dynamic:
+            self._err(ErrCode.CMD_UNKNOWN)
+            return
         if len(data) < 4:
             self._err(ErrCode.CMD_SYNTAX)
             return
@@ -551,6 +576,9 @@ class FakeSlave:
         self._reply(b"\xff")
 
     def _cmd_alloc_odt(self, data: bytes) -> None:
+        if not self.cfg.daq_dynamic:
+            self._err(ErrCode.CMD_UNKNOWN)
+            return
         if len(data) < 5:
             self._err(ErrCode.CMD_SYNTAX)
             return
@@ -563,6 +591,9 @@ class FakeSlave:
         self._reply(b"\xff")
 
     def _cmd_alloc_odt_entry(self, data: bytes) -> None:
+        if not self.cfg.daq_dynamic:
+            self._err(ErrCode.CMD_UNKNOWN)
+            return
         if len(data) < 6:
             self._err(ErrCode.CMD_SYNTAX)
             return
@@ -572,6 +603,51 @@ class FakeSlave:
             self._err(ErrCode.OUT_OF_RANGE)
             return
         self._reply(b"\xff")
+
+    def _cmd_clear_daq_list(self, data: bytes) -> None:
+        if len(data) < 4:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        daq = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        if daq >= len(self._daq_lists):
+            self._err(ErrCode.OUT_OF_RANGE)
+            return
+        self._daq_lists[daq] = [[] for _ in range(len(self._daq_lists[daq]))]
+        self._reply(b"\xff")
+
+    def _cmd_daq_list_info(self, data: bytes) -> None:
+        if not (self.cfg.supports_daq and self.cfg.supports_daq_info):
+            self._err(ErrCode.CMD_UNKNOWN)
+            return
+        if len(data) < 4:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        daq = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        if daq >= len(self._daq_lists):
+            self._err(ErrCode.OUT_OF_RANGE)
+            return
+        # bit2 = DAQ-capable. PREDEFINED/FIXED_EVENT (bit0/bit1) chưa mô
+        # phỏng — mọi ODT entry trong fake đều ghi được qua WRITE_DAQ, event
+        # luôn tự chọn được qua SET_DAQ_LIST_MODE.
+        properties = 0x04
+        self._reply(bytes([0xFF, properties, len(self._daq_lists[daq]),
+                            self.cfg.static_max_odt_entries])
+                    + self._u16(0))
+
+    def _cmd_daq_event_info(self, data: bytes) -> None:
+        if not (self.cfg.supports_daq and self.cfg.supports_daq_info):
+            self._err(ErrCode.CMD_UNKNOWN)
+            return
+        if len(data) < 4:
+            self._err(ErrCode.CMD_SYNTAX)
+            return
+        event = int.from_bytes(data[2:4], self.cfg.byte_order)  # type: ignore[arg-type]
+        if event >= self.cfg.max_event_channel:
+            self._err(ErrCode.OUT_OF_RANGE)
+            return
+        # properties bit2 = DAQ hỗ trợ. MAX_DAQ_LIST=0xFF = không giới hạn
+        # trong fake. Không mô phỏng tên/cycle/priority thật — trả 0.
+        self._reply(bytes([0xFF, 0x04, 0xFF, 0x00, 0x00, 0x00, 0x00]))
 
     def _cmd_set_daq_ptr(self, data: bytes) -> None:
         if len(data) < 6:
@@ -682,11 +758,15 @@ _HANDLERS = {
     int(Cmd.COPY_CAL_PAGE): FakeSlave._cmd_copy_cal_page,
     int(Cmd.GET_DAQ_PROCESSOR_INFO): FakeSlave._cmd_daq_processor_info,
     int(Cmd.GET_DAQ_RESOLUTION_INFO): FakeSlave._cmd_daq_resolution_info,
-    # DAQ allocation (D4b)
+    int(Cmd.GET_DAQ_LIST_INFO): FakeSlave._cmd_daq_list_info,
+    int(Cmd.GET_DAQ_EVENT_INFO): FakeSlave._cmd_daq_event_info,
+    # DAQ allocation (D4b) — chỉ ECU dynamic mới chấp nhận
     int(Cmd.FREE_DAQ): FakeSlave._cmd_free_daq,
     int(Cmd.ALLOC_DAQ): FakeSlave._cmd_alloc_daq,
     int(Cmd.ALLOC_ODT): FakeSlave._cmd_alloc_odt,
     int(Cmd.ALLOC_ODT_ENTRY): FakeSlave._cmd_alloc_odt_entry,
+    # Static DAQ (D4d)
+    int(Cmd.CLEAR_DAQ_LIST): FakeSlave._cmd_clear_daq_list,
     int(Cmd.SET_DAQ_PTR): FakeSlave._cmd_set_daq_ptr,
     int(Cmd.WRITE_DAQ): FakeSlave._cmd_write_daq,
     int(Cmd.SET_DAQ_LIST_MODE): FakeSlave._cmd_set_daq_list_mode,

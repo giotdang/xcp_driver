@@ -12,6 +12,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ..session.api import (
+    DaqCaps,
+    NotConnectedError,
+    SlaveError,
+    StaticDaqCapacityError,
+    UnsupportedByEcuError,
+)
+from .constants import ErrCode
+
 if TYPE_CHECKING:
     from .core import XcpMaster
 
@@ -80,53 +89,154 @@ def configure_daq(
 ) -> dict[int, PidEntry]:
     """Chạy toàn bộ trình tự cấu hình DAQ, trả về PID table cho decoder.
 
-    Trình tự: FREE_DAQ → ALLOC_* → WRITE_DAQ × n → SET_DAQ_LIST_MODE →
-    START_STOP_DAQ_LIST(select) × n → START_STOP_SYNCH(1).
+    Dynamic (`caps.daq.dynamic_daq=True`, hoặc `caps.daq is None` — không rõ,
+    vẫn thử dynamic trước vì không có cách nào khác để biết cấu trúc list):
+        FREE_DAQ → ALLOC_* → WRITE_DAQ × n → SET_DAQ_LIST_MODE →
+        START_STOP_DAQ_LIST(select) × n → START_STOP_SYNCH(1).
+
+    Static (`caps.daq.dynamic_daq=False`): ECU không cho ALLOC_*, list phải
+    có sẵn — CLEAR_DAQ_LIST thay FREE_DAQ, list vật lý được chọn theo dung
+    lượng còn trống (GET_DAQ_LIST_INFO) nên có thể không trùng thứ tự configs.
 
     Raises:
-        UnsupportedByEcuError: ECU không có DAQ.
+        UnsupportedByEcuError: ECU không có DAQ; hoặc (`caps.daq is None`)
+            ECU từ chối cả FREE_DAQ/ALLOC_* lẫn không cho biết DAQ_CONFIG_TYPE.
+        StaticDaqCapacityError: ECU static nhưng không đủ list rảnh.
         NotConnectedError: chưa CONNECT.
         SlaveError: ECU từ chối một bước trong chuỗi (sai thứ tự, tràn bộ nhớ...).
     """
     caps = master.caps
     if caps is None:
-        from ..session.api import NotConnectedError
         raise NotConnectedError("Chưa CONNECT tới ECU")
 
     max_dto = caps.max_dto
-    ts_size = (caps.daq.timestamp_size if caps.daq else 4)  # byte, thường 4 trên ECU tham chiếu
+    daq_caps = caps.daq
+    ts_size = (daq_caps.timestamp_size if daq_caps else 4)  # byte, thường 4 trên ECU tham chiếu
 
     # Đóng gói signals vào ODTs theo ngân sách từng ODT
     packed: list[list[list[DaqSignal]]] = [
         pack_odts(cfg.signals, cfg.timestamp, max_dto) for cfg in configs
     ]
 
-    # ── FREE_DAQ ─────────────────────────────────────────────────────────────
-    master.free_daq()
+    if daq_caps is not None and not daq_caps.dynamic_daq:
+        daq_indices = _reserve_static_lists(master, packed, daq_caps)
+    else:
+        daq_indices = _reserve_dynamic_lists(master, configs, packed, daq_caps)
 
-    # ── ALLOC_DAQ ────────────────────────────────────────────────────────────
-    master.alloc_daq(len(configs))
+    return _write_and_start(master, configs, packed, daq_indices, ts_size)
 
-    # ── ALLOC_ODT (mỗi list một lần) ─────────────────────────────────────────
-    for daq_idx, odts in enumerate(packed):
-        master.alloc_odt(daq_idx, len(odts))
 
-    # ── ALLOC_ODT_ENTRY (mỗi ODT một lần) ────────────────────────────────────
-    for daq_idx, odts in enumerate(packed):
-        for odt_idx, odt in enumerate(odts):
-            master.alloc_odt_entry(daq_idx, odt_idx, len(odt))
+def _reserve_dynamic_lists(
+    master: "XcpMaster",
+    configs: list[DaqListConfig],
+    packed: list[list[list[DaqSignal]]],
+    daq_caps: DaqCaps | None,
+) -> list[int]:
+    """FREE_DAQ → ALLOC_DAQ → ALLOC_ODT → ALLOC_ODT_ENTRY.
 
-    # ── SET_DAQ_PTR + WRITE_DAQ (mỗi entry một lần) ──────────────────────────
-    for daq_idx, odts in enumerate(packed):
+    `daq_caps is None` (ECU không trả GET_DAQ_PROCESSOR_INFO): vẫn thử —
+    không có cách nào khác để biết ECU tổ chức DAQ list ra sao. Nếu ECU từ
+    chối bằng ERR_CMD_UNKNOWN, báo lỗi rõ ràng thay vì để lộ mã lỗi thô:
+    người dùng cần biết đây là ECU (có thể) static nhưng thiếu luôn
+    GET_DAQ_PROCESSOR_INFO nên không thể tự động dò ra cấu trúc list.
+    """
+    try:
+        # ── FREE_DAQ ─────────────────────────────────────────────────────────
+        master.free_daq()
+
+        # ── ALLOC_DAQ ────────────────────────────────────────────────────────
+        master.alloc_daq(len(configs))
+
+        # ── ALLOC_ODT (mỗi list một lần) ────────────────────────────────────
+        for daq_idx, odts in enumerate(packed):
+            master.alloc_odt(daq_idx, len(odts))
+
+        # ── ALLOC_ODT_ENTRY (mỗi ODT một lần) ───────────────────────────────
+        for daq_idx, odts in enumerate(packed):
+            for odt_idx, odt in enumerate(odts):
+                master.alloc_odt_entry(daq_idx, odt_idx, len(odt))
+    except SlaveError as e:
+        if daq_caps is None and e.code == ErrCode.CMD_UNKNOWN:
+            raise UnsupportedByEcuError(
+                "Dynamic DAQ — ECU từ chối FREE_DAQ/ALLOC_* (ERR_CMD_UNKNOWN) và "
+                "cũng không trả lời GET_DAQ_PROCESSOR_INFO nên không thể tự suy ra "
+                "Static DAQ list. Cần A2L có /begin DAQ_LIST hoặc xác nhận thủ công "
+                "với nhà cung cấp ECU."
+            ) from e
+        raise
+
+    return list(range(len(configs)))
+
+
+def _reserve_static_lists(
+    master: "XcpMaster",
+    packed: list[list[list[DaqSignal]]],
+    daq_caps: DaqCaps,
+) -> list[int]:
+    """Gán mỗi config một DAQ list có sẵn đủ ODT — ECU static không ALLOC_*
+    được nên phải tái dùng list đã tồn tại (0..max_daq-1).
+
+    Duyệt list theo thứ tự, chọn list "rảnh" (chưa gán cho config nào khác
+    trong cùng lần gọi này) đầu tiên có `max_odt >= len(odts)`, rồi
+    CLEAR_DAQ_LIST để xoá nội dung cũ trước khi ghi. Không theo dõi được
+    list đang bị chiếm bởi phiên DAQ khác trên cùng ECU (ngoài phạm vi
+    thông tin GET_DAQ_LIST_INFO cung cấp).
+
+    Raises:
+        StaticDaqCapacityError: không đủ list rảnh cho toàn bộ configs.
+    """
+    max_daq = daq_caps.max_daq
+    used: set[int] = set()
+    daq_indices: list[int] = []
+
+    for odts in packed:
+        need = len(odts)
+        found: int | None = None
+        for daq in range(max_daq):
+            if daq in used:
+                continue
+            if master.get_daq_list_info(daq).max_odt >= need:
+                found = daq
+                break
+        if found is None:
+            raise StaticDaqCapacityError(
+                f"Không tìm được DAQ list tĩnh nào còn rảnh đủ {need} ODT "
+                f"(tổng {max_daq} list trên ECU)."
+            )
+        used.add(found)
+        daq_indices.append(found)
+        master.clear_daq_list(found)
+
+    return daq_indices
+
+
+def _write_and_start(
+    master: "XcpMaster",
+    configs: list[DaqListConfig],
+    packed: list[list[list[DaqSignal]]],
+    daq_indices: list[int],
+    ts_size: int,
+) -> dict[int, PidEntry]:
+    """SET_DAQ_PTR + WRITE_DAQ → SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select)
+    × n → START_STOP_SYNCH(1). Dùng chung cho cả hai nhánh dynamic/static.
+
+    `daq_indices[i]` là list vật lý trên ECU dùng cho `configs[i]` — với
+    dynamic luôn trùng `i` (mới cấp phát theo thứ tự); với static có thể
+    không liền kề `i` (chọn theo dung lượng còn trống).
+    """
+    # ── SET_DAQ_PTR + WRITE_DAQ (mỗi entry một lần) ─────────────────────────
+    for i, odts in enumerate(packed):
+        daq_idx = daq_indices[i]
         for odt_idx, odt in enumerate(odts):
             master.set_daq_ptr(daq_idx, odt_idx, 0)
             for sig in odt:
                 master.write_daq(0xFF, sig.size, sig.ext, sig.address)
 
-    # ── SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select) ──────────────────────
+    # ── SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select) ─────────────────────
     pid_table: dict[int, PidEntry] = {}
 
-    for daq_idx, (cfg, odts) in enumerate(zip(configs, packed)):
+    for i, (cfg, odts) in enumerate(zip(configs, packed)):
+        daq_idx = daq_indices[i]
         daq_mode = 0x10 if cfg.timestamp else 0x00   # bit4 = timestamp enable
         master.set_daq_list_mode(daq_idx, cfg.event, daq_mode, cfg.prescaler, cfg.priority)
         first_pid = master.start_stop_daq_list(mode=2, daq=daq_idx)
