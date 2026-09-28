@@ -84,6 +84,11 @@ class SlaveConfig:
     static_max_odt: int = 2
     static_max_odt_entries: int = 7
 
+    # Chỉ số list (trong 0..min_daq-1) báo predefined=True qua
+    # GET_DAQ_LIST_INFO — nội dung ODT coi như đã "firmware wire sẵn", test
+    # tự nạp qua set_predefined_daq_content() thay vì WRITE_DAQ.
+    static_predefined_lists: frozenset[int] = frozenset()
+
     mem_base: int = 0x8000_0000
     mem_size: int = 1024
     # ECU và XCP boot ở Reference page (Flash) — đúng hành vi firmware thật
@@ -143,6 +148,9 @@ class FakeSlave:
         self._daq_write_pos: tuple[int, int, int] = (0, 0, 0)  # (daq, odt, entry)
         self._daq_next_pid: int = 0
         self.daq_running: bool = False  # public — test kiểm tra trực tiếp
+        # public — test assert list nào từng bị WRITE_DAQ dù đang predefined
+        # (không nên xảy ra: configure_daq_predefined() không bao giờ ghi)
+        self.write_daq_to_predefined: set[int] = set()
         if not self.cfg.daq_dynamic and self.cfg.min_daq > 0:
             self._reset_static_daq_lists()
 
@@ -548,6 +556,16 @@ class FakeSlave:
                            for _ in range(n)]
         self._daq_first_pids = [0] * n
 
+    def set_predefined_daq_content(
+        self, daq: int, odt: int, entries: list[tuple[int, int, int, int]]
+    ) -> None:
+        """Test helper — mô phỏng ODT nội dung cố định do "firmware" đã wire
+        sẵn cho một list trong `static_predefined_lists`, không qua WRITE_DAQ.
+
+        `entries`: cùng định dạng (bit_off, size, ext, addr) như `daq_entries()`.
+        """
+        self._daq_lists[daq][odt] = list(entries)
+
     def _cmd_free_daq(self, data: bytes) -> None:
         if not self.cfg.daq_dynamic:
             self._err(ErrCode.CMD_UNKNOWN)
@@ -626,10 +644,11 @@ class FakeSlave:
         if daq >= len(self._daq_lists):
             self._err(ErrCode.OUT_OF_RANGE)
             return
-        # bit2 = DAQ-capable. PREDEFINED/FIXED_EVENT (bit0/bit1) chưa mô
-        # phỏng — mọi ODT entry trong fake đều ghi được qua WRITE_DAQ, event
-        # luôn tự chọn được qua SET_DAQ_LIST_MODE.
-        properties = 0x04
+        # bit0 PREDEFINED theo static_predefined_lists. bit2 = DAQ-capable.
+        # FIXED_EVENT (bit1) chưa mô phỏng — event luôn tự chọn được qua
+        # SET_DAQ_LIST_MODE, kể cả với list predefined.
+        predefined = daq in self.cfg.static_predefined_lists
+        properties = (0x01 if predefined else 0x00) | 0x04
         self._reply(bytes([0xFF, properties, len(self._daq_lists[daq]),
                             self.cfg.static_max_odt_entries])
                     + self._u16(0))
@@ -668,6 +687,11 @@ class FakeSlave:
         if daq >= len(self._daq_lists) or odt >= len(self._daq_lists[daq]):
             self._err(ErrCode.OUT_OF_RANGE)
             return
+        if daq in self.cfg.static_predefined_lists:
+            # Không hard-reject (chưa rõ ECU thật trả mã lỗi gì cho case này)
+            # — chỉ ghi nhận để test assert master không bao giờ thử ghi vào
+            # list predefined.
+            self.write_daq_to_predefined.add(daq)
         entries = self._daq_lists[daq][odt]
         # Điền hoặc thay thế tại vị trí entry, tự mở rộng nếu cần.
         while len(entries) <= entry:

@@ -14,9 +14,9 @@ import pytest
 from xcptool.devtools.fakeslave import FakeSlave, SlaveConfig
 from xcptool.master.constants import Cmd
 from xcptool.master.daq import (
-    DaqListConfig, DaqSignal,
+    DaqListConfig, DaqSignal, OdtSignalLayout, PredefinedDaqList,
     TimestampAccumulator,
-    configure_daq, decode_dto, stop_daq,
+    configure_daq, configure_daq_predefined, decode_dto, stop_daq,
 )
 from xcptool.session.api import BusConfig, StaticDaqCapacityError, UnsupportedByEcuError
 from xcptool.session.real import RealSession
@@ -393,5 +393,124 @@ def test_configure_daq_unknown_caps_on_static_ecu_raises_clear_error(channel: st
             configure_daq(master, [DaqListConfig(signals=[_sig("z", 1)], event=0)])
 
         assert "GET_DAQ_PROCESSOR_INFO" in str(exc_info.value)
+
+    session.close()
+
+
+# ── D4d — Static DAQ với list nội dung cố định (predefined=True) ────────────
+
+def test_configure_daq_skips_predefined_list_when_searching(channel: str) -> None:
+    """configure_daq() (nhánh static thường, tự WRITE_DAQ) bỏ qua list
+    predefined=True khi tìm chỗ ghi tự do — list 0 predefined, list 1 không,
+    kết quả phải rơi vào list 1."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=2, max_daq=2,
+                       static_predefined_lists=frozenset({0}))
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg) as slave:
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        configs = [DaqListConfig(signals=[_sig("rpm", 2)], event=0, timestamp=False)]
+        pid_table = configure_daq(master, configs)
+
+        assert pid_table[0].daq_list == 1   # list 0 predefined bị bỏ qua
+        assert slave.write_daq_to_predefined == set()
+
+    session.close()
+
+
+def test_configure_daq_static_capacity_error_when_only_predefined_available(
+    channel: str,
+) -> None:
+    """Chỉ có 1 list tĩnh và nó predefined=True → StaticDaqCapacityError rõ
+    ràng, không âm thầm WRITE_DAQ vào nội dung cố định."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1,
+                       static_predefined_lists=frozenset({0}))
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg) as slave:
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        configs = [DaqListConfig(signals=[_sig("rpm", 2)], event=0, timestamp=False)]
+        with pytest.raises(StaticDaqCapacityError):
+            configure_daq(master, configs)
+
+        assert slave.write_daq_to_predefined == set()
+
+    session.close()
+
+
+def test_configure_daq_predefined_starts_fixed_list_without_writing(channel: str) -> None:
+    """configure_daq_predefined() khởi động list nội dung cố định mà không
+    hề gọi WRITE_DAQ — decode ra đúng giá trị "firmware" đã wire sẵn."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1,
+                       static_predefined_lists=frozenset({0}))
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg) as slave:
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        addr = cfg.mem_base
+        expected = b"\x39\x05"   # 0x0539 = 1337 little-endian
+        slave.poke(addr, expected)
+        # "Firmware" đã wire sẵn: ODT 0 của list 0 chứa 1 entry 2 byte tại addr
+        slave.set_predefined_daq_content(0, 0, [(0xFF, 2, 0, addr)])
+
+        sig = DaqSignal("val", addr, 0, 2, "UINT16")
+        layout = OdtSignalLayout(signal=sig, frame_offset=1)   # byte 0=PID, không timestamp
+        pl = PredefinedDaqList(daq=0, odts=[[layout]], event=0, timestamp=False)
+        pid_table = configure_daq_predefined(master, [pl])
+
+        assert slave.write_daq_to_predefined == set()
+        assert slave.daq_running is True
+
+        sniffer = can.Bus(interface="virtual", channel=channel, receive_own_messages=False)
+        try:
+            deadline = time.perf_counter() + 1.0
+            daq_frame: bytes | None = None
+            while time.perf_counter() < deadline:
+                msg = sniffer.recv(0.05)
+                if (msg is not None
+                        and msg.arbitration_id == cfg.dto_id
+                        and (msg.data[0] & 0x7F) == 0):
+                    daq_frame = bytes(msg.data)
+                    break
+            assert daq_frame is not None, "Không nhận được frame DAQ"
+
+            ts_accum = TimestampAccumulator(byte_order=cfg.byte_order)
+            samples = decode_dto(daq_frame, pid_table, ts_accum)
+
+            val_samples = [s for s in samples if s.name == "val"]
+            assert val_samples, f"Không có sample 'val' trong {samples}"
+            assert val_samples[0].value_raw == expected
+        finally:
+            sniffer.shutdown()
+
+    session.close()
+
+
+def test_configure_daq_predefined_rejects_non_predefined_list(channel: str) -> None:
+    """configure_daq_predefined() từ chối list không thực sự predefined —
+    tránh nhầm sang list mà đáng lẽ phải tự WRITE_DAQ qua configure_daq()."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1)
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg):
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        sig = DaqSignal("x", cfg.mem_base, 0, 2, "UINT16")
+        layout = OdtSignalLayout(signal=sig, frame_offset=1)
+        pl = PredefinedDaqList(daq=0, odts=[[layout]], event=0, timestamp=False)
+
+        with pytest.raises(ValueError):
+            configure_daq_predefined(master, [pl])
 
     session.close()

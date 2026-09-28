@@ -28,6 +28,7 @@ __all__ = [
     "DaqSignal", "pack_odts",
     "DaqListConfig", "OdtSignalLayout", "PidEntry",
     "configure_daq", "stop_daq",
+    "PredefinedDaqList", "configure_daq_predefined",
     "SamplePoint", "TimestampAccumulator", "decode_dto",
 ]
 
@@ -192,22 +193,106 @@ def _reserve_static_lists(
     for odts in packed:
         need = len(odts)
         found: int | None = None
+        skipped_predefined = 0
         for daq in range(max_daq):
             if daq in used:
                 continue
-            if master.get_daq_list_info(daq).max_odt >= need:
+            info = master.get_daq_list_info(daq)
+            if info.predefined:
+                # Nội dung ODT do ECU tự định nghĩa sẵn — không có cách nào
+                # biết signal nào đã ở đó, nên KHÔNG được WRITE_DAQ vào đây.
+                # Dùng configure_daq_predefined() với layout đã biết trước
+                # (từ A2L /begin DAQ_LIST hoặc tài liệu ECU) thay vào đó.
+                skipped_predefined += 1
+                continue
+            if info.max_odt >= need:
                 found = daq
                 break
         if found is None:
+            hint = (f" ({skipped_predefined} list bị bỏ qua vì predefined=True — "
+                     "nội dung cố định, cần configure_daq_predefined() thay vào đó)"
+                     if skipped_predefined else "")
             raise StaticDaqCapacityError(
-                f"Không tìm được DAQ list tĩnh nào còn rảnh đủ {need} ODT "
-                f"(tổng {max_daq} list trên ECU)."
+                f"Không tìm được DAQ list tĩnh nào còn rảnh, ghi được, và đủ "
+                f"{need} ODT (tổng {max_daq} list trên ECU){hint}."
             )
         used.add(found)
         daq_indices.append(found)
         master.clear_daq_list(found)
 
     return daq_indices
+
+
+@dataclass
+class PredefinedDaqList:
+    """Một DAQ list tĩnh có NỘI DUNG CỐ ĐỊNH (predefined=True qua
+    GET_DAQ_LIST_INFO) — ECU tự định nghĩa sẵn signal nào ở ODT nào, master
+    không được và không thể tự suy ra. `odts` phải do caller cung cấp từ A2L
+    `/begin DAQ_LIST` hoặc tài liệu ECU, với `frame_offset` đã tính sẵn
+    (byte 0 = PID, cộng thêm timestamp nếu có — xem `OdtSignalLayout`).
+    """
+    daq: int                              # list vật lý trên ECU
+    odts: list[list[OdtSignalLayout]]     # layout cố định — KHÔNG suy ra được, phải cung cấp
+    event: int | None = None              # bắt buộc nếu ECU không fix cứng event (xem fixed_event)
+    timestamp: bool = True
+    prescaler: int = 1
+    priority: int = 0
+
+
+def configure_daq_predefined(
+    master: "XcpMaster",
+    lists: list[PredefinedDaqList],
+) -> dict[int, PidEntry]:
+    """Khởi động các DAQ list có nội dung cố định — không ALLOC_*, không
+    CLEAR_DAQ_LIST, không SET_DAQ_PTR/WRITE_DAQ, vì ODT đã có sẵn nội dung
+    do ECU tự định nghĩa. Chỉ SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select)
+    × n → START_STOP_SYNCH(1).
+
+    Khác `configure_daq()` nhánh static thường (predefined=False), nơi
+    master vẫn tự gán signal vào ODT còn trống qua WRITE_DAQ — ở đây master
+    hoàn toàn không có cách nào tự dò nội dung một list predefined, nên
+    layout phải do caller cung cấp sẵn.
+
+    Raises:
+        ValueError: list không thực sự predefined theo GET_DAQ_LIST_INFO,
+            hoặc event không cố định (`fixed_event=False`) mà `pl.event` để
+            trống.
+        NotConnectedError, SlaveError: như các hàm DAQ khác (qua _require_daq
+            trong từng lệnh master gọi).
+    """
+    pid_table: dict[int, PidEntry] = {}
+
+    for pl in lists:
+        info = master.get_daq_list_info(pl.daq)
+        if not info.predefined:
+            raise ValueError(
+                f"DAQ list {pl.daq}: GET_DAQ_LIST_INFO báo predefined=False — "
+                "dùng configure_daq() thay vì configure_daq_predefined()."
+            )
+        if info.fixed_event:
+            event = info.fixed_event_channel
+        elif pl.event is not None:
+            event = pl.event
+        else:
+            raise ValueError(
+                f"DAQ list {pl.daq}: event không cố định (fixed_event=False) "
+                "nhưng PredefinedDaqList.event=None — phải chỉ định event."
+            )
+
+        daq_mode = 0x10 if pl.timestamp else 0x00
+        master.set_daq_list_mode(pl.daq, event, daq_mode, pl.prescaler, pl.priority)
+        first_pid = master.start_stop_daq_list(mode=2, daq=pl.daq)
+
+        for odt_idx, layouts in enumerate(pl.odts):
+            pid_table[first_pid + odt_idx] = PidEntry(
+                daq_list=pl.daq,
+                odt_index=odt_idx,
+                has_timestamp=(odt_idx == 0 and pl.timestamp),
+                signals=layouts,
+            )
+
+    master.start_stop_synch(mode=1)
+    return pid_table
 
 
 def _write_and_start(
