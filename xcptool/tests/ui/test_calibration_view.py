@@ -668,6 +668,25 @@ def test_ghi_goi_write_cb(qtbot) -> None:
     assert v._calls["write"] == [("GAIN", MEM_BASE, bytes([42]))]  # type: ignore
 
 
+def test_ghi_theo_ascii_radix_khong_bi_hieu_thanh_decimal(qtbot) -> None:
+    """Bug thực tế: đổi radix sang ASCII rồi gõ "3" -> write_cb phải nhận
+    byte ASCII 0x33, không phải decimal 3. Chứng minh self._radix được
+    truyền tới encode_value() qua _write_parent(), không chỉ ở value_codec."""
+    v = _make_view(qtbot)
+    v.set_database(_make_db())
+    v.on_read_done("GAIN", bytes([10]))
+    v.radix_combo.setCurrentText("ASCII")
+    v._dirty.add("GAIN")
+    item = v._char_items["GAIN"]
+    v._suspend_signals = True
+    item.setText(COL_VALUE, "3")
+    v._suspend_signals = False
+    v.tree.setCurrentItem(item)
+    v._update_write_btn()
+    v._on_write()
+    assert v._calls["write"] == [("GAIN", MEM_BASE, bytes([0x33]))]  # type: ignore
+
+
 def test_ghi_gia_tri_sai_khong_goi_write_cb(qtbot) -> None:
     v = _make_view(qtbot)
     v.set_database(_make_db())
@@ -1820,6 +1839,37 @@ def test_encode_value_ascii_support() -> None:
     # Nhập số thường (Dec/Hex) vẫn hoạt động hoàn hảo
     assert encode_value("72", "UWORD", "little", 1) == b"\x48\x00"
     assert encode_value("0x48", "UWORD", "little", 1) == b"\x48\x00"
+
+
+def test_encode_value_radix_ascii_treats_digit_strings_as_characters() -> None:
+    """Bug: radix=ASCII, user gõ "3" -> phải ra byte ASCII 0x33 (ký tự '3'),
+    không phải decimal 3. Trước fix, encode_value() không có tham số radix
+    nên luôn thử int(part, 0) trước — "3" parse được thành decimal 3."""
+    assert encode_value("3", "UBYTE", "little", 1, radix="ASCII") == bytes([0x33])
+    assert encode_value("12", "UWORD", "little", 1, radix="ASCII") == b"\x31\x32"
+    assert encode_value("H", "UWORD", "little", 1, radix="ASCII") == b"\x48\x00"
+
+
+def test_encode_value_radix_hex_bin_chap_nhan_chuoi_so_tran() -> None:
+    """radix=HEX/BIN: chấp nhận chuỗi số trần, không bắt buộc "0x"/"0b" —
+    khớp với cách decode_value hiển thị (không tự thêm prefix khi user gõ lại)."""
+    assert encode_value("33", "UBYTE", "little", 1, radix="HEX") == bytes([0x33])
+    assert encode_value("0x33", "UBYTE", "little", 1, radix="HEX") == bytes([0x33])
+    assert encode_value("110011", "UBYTE", "little", 1, radix="BIN") == bytes([0b110011])
+
+
+def test_encode_value_radix_hex_giu_bit_pattern_cho_kieu_co_dau() -> None:
+    """SBYTE, radix=HEX, nhập "FF" -> byte 0xFF nguyên vẹn (= -1 khi đọc lại
+    có dấu), giống hệt bit pattern mà decode_value(..., "HEX") hiển thị."""
+    assert encode_value("FF", "SBYTE", "little", 1, radix="HEX") == b"\xFF"
+
+
+def test_encode_value_ascii_radix_round_trip_voi_decode_value() -> None:
+    """Hiển thị rồi ghi lại dưới cùng 1 radix phải cho lại đúng byte gốc."""
+    data = bytes([0x33])
+    text = decode_value(data, "UBYTE", "little", "ASCII")
+    assert text == "3"
+    assert encode_value(text, "UBYTE", "little", 1, radix="ASCII") == data
 
 
 # ── Write Selected — đa chọn (multi-select) ─────────────────────────────────

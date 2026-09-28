@@ -400,7 +400,7 @@ class CalibrationView(QWidget):
         whatever it was (stale or absent), same as before this method existed.
         """
         try:
-            self._raw_data[name] = encode_value(text, datatype, self._byte_order, array_size)
+            self._raw_data[name] = encode_value(text, datatype, self._byte_order, array_size, self._radix)
         except (ValueError, struct.error):
             pass
 
@@ -816,9 +816,9 @@ class CalibrationView(QWidget):
                 for child, c_name, c_def in leaves:
                     if c_def.array_size > 1 and child.childCount() > 0:
                         children_values = [child.child(j).text(COL_VALUE) for j in range(child.childCount())]
-                        val_bytes = encode_value(",".join(children_values), c_def.datatype, self._byte_order, c_def.array_size)
+                        val_bytes = encode_value(",".join(children_values), c_def.datatype, self._byte_order, c_def.array_size, self._radix)
                     else:
-                        val_bytes = encode_value(child.text(COL_VALUE).strip(), c_def.datatype, self._byte_order, c_def.array_size)
+                        val_bytes = encode_value(child.text(COL_VALUE).strip(), c_def.datatype, self._byte_order, c_def.array_size, self._radix)
                     entries.append((c_def.address, val_bytes, c_name))
 
                 runs = _split_into_contiguous_runs(entries, char_name)
@@ -854,9 +854,9 @@ class CalibrationView(QWidget):
         try:
             if char_def.array_size > 1 and item.childCount() > 0:
                 children_values = [item.child(i).text(COL_VALUE) for i in range(item.childCount())]
-                raw_bytes = encode_value(",".join(children_values), char_def.datatype, self._byte_order, char_def.array_size)
+                raw_bytes = encode_value(",".join(children_values), char_def.datatype, self._byte_order, char_def.array_size, self._radix)
             else:
-                raw_bytes = encode_value(item.text(COL_VALUE).strip(), char_def.datatype, self._byte_order, char_def.array_size)
+                raw_bytes = encode_value(item.text(COL_VALUE).strip(), char_def.datatype, self._byte_order, char_def.array_size, self._radix)
             
             self._write_cb(char_name, char_def.address, raw_bytes)
             

@@ -18,6 +18,7 @@ _DTYPE_FMT: dict[str, str] = {
     "ULONG": "I", "SLONG": "i",
     "FLOAT32_IEEE": "f", "FLOAT64_IEEE": "d",
 }
+_UNSIGNED_INT_FMT: dict[str, str] = {"B": "B", "b": "B", "H": "H", "h": "H", "I": "I", "i": "I"}
 
 
 def decode_value(data: bytes, datatype: str, byte_order: str, radix: str = "DEC") -> str:
@@ -90,10 +91,16 @@ def decode_value_precise(data: bytes, datatype: str, byte_order: str) -> str:
     return ", ".join(parts)
 
 
-def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> bytes:
+def encode_value(text: str, datatype: str, byte_order: str, array_size: int, radix: str = "DEC") -> bytes:
     """Mã hoá chuỗi nhập từ người dùng thành bytes để ghi xuống ECU.
 
-    Hỗ trợ cả định dạng số (DEC, HEX, BIN) lẫn ký tự/chuỗi ASCII.
+    `radix` phải khớp với radix đang hiển thị (xem `decode_value`) để việc
+    sửa giá trị trên UI round-trip đúng: ASCII luôn coi input là ký tự thô
+    (kể cả khi trông giống số); HEX/BIN chấp nhận chuỗi số trần lẫn có
+    prefix "0x"/"0b", đại diện đúng bit pattern (không phân biệt có dấu hay
+    không, giống cách decode_value mask hiển thị); DEC (mặc định) giữ hành
+    vi cũ — thử số trước (Dec/Hex/Bin qua `int(part, 0)`), không được thì
+    coi là ký tự/chuỗi ASCII.
 
     Raises:
         ValueError: chuỗi không parse được hoặc số lượng phần tử không khớp.
@@ -110,35 +117,36 @@ def encode_value(text: str, datatype: str, byte_order: str, array_size: int) -> 
     if len(raw) != array_size:
         raise ValueError(f"Expected {array_size} values, received {len(raw)}")
     is_float = datatype.startswith("FLOAT")
+    bits_fmt = ("I" if datatype == "FLOAT32_IEEE" else "Q") if is_float else _UNSIGNED_INT_FMT[fmt_char]
     buf = bytearray()
 
+    def _ascii_bytes(part: str) -> bytes:
+        encoded = part.encode("latin-1")
+        if len(encoded) > item_size:
+            raise ValueError(f"ASCII string '{part}' too long for {datatype} (max {item_size} bytes)")
+        return encoded.ljust(item_size, b"\x00") if endian == "<" else encoded.rjust(item_size, b"\x00")
+
     for part in raw:
-        if is_float:
+        if radix == "ASCII":
+            buf += _ascii_bytes(part)
+        elif radix == "HEX":
+            buf += struct.pack(endian + bits_fmt, int(part, 16))
+        elif radix == "BIN":
+            buf += struct.pack(endian + bits_fmt, int(part, 2))
+        elif is_float:
             part_lower = part.lower()
             if part_lower.startswith("0x") or part_lower.startswith("0b"):
-                int_fmt = "I" if datatype == "FLOAT32_IEEE" else "Q"
-                raw_int = int(part, 0)
-                buf += struct.pack(endian + int_fmt, raw_int)
+                buf += struct.pack(endian + bits_fmt, int(part, 0))
             else:
                 try:
-                    v = float(part)
-                    buf += struct.pack(endian + fmt_char, v)
+                    buf += struct.pack(endian + fmt_char, float(part))
                 except ValueError:
-                    encoded_bytes = part.encode("latin-1")
-                    if len(encoded_bytes) > item_size:
-                        raise ValueError(f"ASCII string '{part}' too long for {datatype} (max {item_size} bytes)")
-                    padded = encoded_bytes.ljust(item_size, b"\x00") if endian == "<" else encoded_bytes.rjust(item_size, b"\x00")
-                    buf += padded
+                    buf += _ascii_bytes(part)
         else:
             try:
-                v = int(part, 0)
-                buf += struct.pack(endian + fmt_char, v)
+                buf += struct.pack(endian + fmt_char, int(part, 0))
             except ValueError:
                 # Không phải số (Dec/Hex/Bin) -> parse theo ký tự / chuỗi ASCII
-                encoded_bytes = part.encode("latin-1")
-                if len(encoded_bytes) > item_size:
-                    raise ValueError(f"ASCII string '{part}' too long for {datatype} (max {item_size} bytes)")
-                padded = encoded_bytes.ljust(item_size, b"\x00") if endian == "<" else encoded_bytes.rjust(item_size, b"\x00")
-                buf += padded
+                buf += _ascii_bytes(part)
 
     return bytes(buf)
