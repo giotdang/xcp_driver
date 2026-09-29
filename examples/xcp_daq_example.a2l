@@ -149,7 +149,7 @@ ASAP2_VERSION 1 71
       ECU_ADDRESS 0x90000000         /* PLACEHOLDER = measData + offsetof(..,daqHeartbeat)=0x0 */
       /begin IF_DATA XCP
         /begin DAQ_EVENT
-          FIXED_EVENT_LIST
+          /begin FIXED_EVENT_LIST
             EVENT 0x00                /* bound to "10 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT
@@ -168,7 +168,7 @@ ASAP2_VERSION 1 71
       FORMAT "%4.0"
       /begin IF_DATA XCP
         /begin DAQ_EVENT
-          FIXED_EVENT_LIST
+          /begin FIXED_EVENT_LIST
             EVENT 0x00                /* bound to "10 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT
@@ -187,7 +187,7 @@ ASAP2_VERSION 1 71
       FORMAT "%5.1"
       /begin IF_DATA XCP
         /begin DAQ_EVENT
-          FIXED_EVENT_LIST
+          /begin FIXED_EVENT_LIST
             EVENT 0x00                /* bound to "10 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT
@@ -206,7 +206,7 @@ ASAP2_VERSION 1 71
       FORMAT "%5.1"
       /begin IF_DATA XCP
         /begin DAQ_EVENT
-          FIXED_EVENT_LIST
+          /begin FIXED_EVENT_LIST
             EVENT 0x01                /* bound to "100 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT
@@ -233,7 +233,7 @@ ASAP2_VERSION 1 71
       FORMAT "%6.2"
       /begin IF_DATA XCP
         /begin DAQ_EVENT
-          FIXED_EVENT_LIST
+          /begin FIXED_EVENT_LIST
             EVENT 0x00                /* bound to "10 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT
@@ -252,7 +252,7 @@ ASAP2_VERSION 1 71
       FORMAT "%6.2"
       /begin IF_DATA XCP
         /begin DAQ_EVENT
-          FIXED_EVENT_LIST
+          /begin FIXED_EVENT_LIST
             EVENT 0x00                /* bound to "10 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT
@@ -271,7 +271,7 @@ ASAP2_VERSION 1 71
       FORMAT "%6.2"
       /begin IF_DATA XCP
         /begin DAQ_EVENT
-          FIXED_EVENT_LIST
+          /begin FIXED_EVENT_LIST
             EVENT 0x00                /* bound to "10 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT
@@ -301,7 +301,7 @@ ASAP2_VERSION 1 71
       MATRIX_DIM 4
       /begin IF_DATA XCP
         /begin DAQ_EVENT
-          FIXED_EVENT_LIST
+          /begin FIXED_EVENT_LIST
             EVENT 0x00                /* bound to "10 ms raster" */
           /end FIXED_EVENT_LIST
         /end DAQ_EVENT

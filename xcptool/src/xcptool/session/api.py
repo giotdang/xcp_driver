@@ -199,6 +199,28 @@ class DaqCaps:
 
 
 @dataclass(frozen=True)
+class DaqListInfo:
+    """Năng lực một DAQ list cụ thể, đọc từ GET_DAQ_LIST_INFO.
+
+    Dùng khi `DaqCaps.dynamic_daq=False`: ECU không cho ALLOC_*, nên master
+    phải hỏi từng list có sẵn xem còn đủ ODT hay không trước khi dùng.
+    """
+    predefined: bool          # True = nội dung ODT cố định, WRITE_DAQ vô nghĩa
+    fixed_event: bool         # True = event channel cố định, SET_DAQ_LIST_MODE không đổi được
+    max_odt: int
+    max_odt_entries: int      # số entry tối đa mỗi ODT trong list này
+    fixed_event_channel: int  # chỉ có nghĩa khi fixed_event=True
+
+
+@dataclass(frozen=True)
+class DaqEventInfo:
+    """Thông tin một event channel, đọc từ GET_DAQ_EVENT_INFO."""
+    max_daq_list: int         # số DAQ list tối đa có thể gắn vào event này
+    daq_supported: bool
+    stim_supported: bool
+
+
+@dataclass(frozen=True)
 class SlaveCaps:
     """ECU tự khai nó là gì. Toàn bộ lấy từ response CONNECT và các GET_*_INFO.
 
@@ -386,6 +408,16 @@ class UnsupportedByEcuError(XcpToolError):
     def __init__(self, feature: str) -> None:
         self.feature = feature
         super().__init__(f"ECU không hỗ trợ: {feature}")
+
+
+# ── DAQ ──────────────────────────────────────────────────────────────────────
+
+class StaticDaqCapacityError(XcpToolError):
+    """ECU static DAQ không có list nào đủ ODT rảnh cho cấu hình yêu cầu.
+
+    Khác `UnsupportedByEcuError`: ECU CÓ static DAQ, chỉ là không đủ chỗ
+    cho tổ hợp signal/list đang yêu cầu — thử giảm số list hoặc số signal.
+    """
 
 
 # ══════════════════════════════════════════════════════════════════════════════

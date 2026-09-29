@@ -20,6 +20,7 @@ from ..session.api import (
     MalformedResponseError,
     NotConnectedError,
     SlaveError,
+    StaticDaqCapacityError,
     UnsupportedByEcuError,
     WriteProtectedError,
     XcpTimeoutError,
@@ -87,6 +88,14 @@ def describe(exc: BaseException) -> tuple[str, str]:
         )
     if isinstance(exc, UnsupportedByEcuError):
         return ("Feature not supported by ECU", exc.user_message)
+    if isinstance(exc, StaticDaqCapacityError):
+        return (
+            "No DAQ list available",
+            f"{exc.user_message}\n\n"
+            "This ECU uses static DAQ lists (fixed at build time) — try "
+            "selecting fewer signals or events, or check with the ECU "
+            "vendor how its DAQ lists are laid out.",
+        )
     if isinstance(exc, XcpToolError):
         return ("Error", exc.user_message)
     return (

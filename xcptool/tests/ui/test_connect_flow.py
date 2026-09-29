@@ -12,7 +12,9 @@ import time
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget
 
-from xcptool.session.api import BusConfig, ConnState, DeviceInfo, DriverMissingError
+from xcptool.session.api import (
+    BusConfig, ConnState, DaqCaps, DeviceInfo, DriverMissingError, SlaveCaps,
+)
 from xcptool.session.fake import FakeBehavior, FakeSession
 from xcptool.ui.device_dialog import DeviceDialog
 from xcptool.ui.main_window import MainWindow
@@ -179,6 +181,48 @@ def test_caps_khong_hardcode_ma_lay_tu_ecu(qtbot, cfg: BusConfig) -> None:
     assert "MAX_CTO 12" in text and "MAX_DTO 32" in text
     assert "DAQ" not in text, "ECU tắt DAQ thì status bar không được khoe DAQ"
     window.close()
+
+
+def _caps(daq: DaqCaps | None) -> SlaveCaps:
+    return SlaveCaps(
+        max_cto=8, max_dto=8, byte_order="little", address_granularity=1,
+        protocol_version=(1, 0), transport_version=(1, 0),
+        supports_cal_pag=True, supports_daq=True, supports_stim=False,
+        supports_pgm=False, needs_seed_and_key=False,
+        slave_block_mode=False, optional_cmds=False,
+        daq=daq,
+    )
+
+
+def _daq_caps(*, dynamic_daq: bool, min_daq: int) -> DaqCaps:
+    return DaqCaps(
+        max_daq=2, max_event_channel=2, min_daq=min_daq, dynamic_daq=dynamic_daq,
+        timestamp_supported=True, timestamp_size=4, timestamp_unit_ns=10,
+        timestamp_ticks=0, pid_off_supported=False,
+        granularity_odt_entry_daq=1, max_odt_entry_size_daq=7,
+    )
+
+
+def test_caps_summary_shows_dynamic_daq() -> None:
+    caps = _caps(_daq_caps(dynamic_daq=True, min_daq=0))
+    assert "DAQ: dynamic" in MainWindow._caps_summary(caps)
+
+
+def test_caps_summary_shows_static_daq_with_list_count() -> None:
+    caps = _caps(_daq_caps(dynamic_daq=False, min_daq=2))
+    text = MainWindow._caps_summary(caps)
+    assert "DAQ: static" in text
+    assert "2 list" in text
+
+
+def test_caps_summary_shows_unknown_daq_config_when_caps_daq_missing() -> None:
+    """ECU khai supports_daq=True ở CONNECT nhưng không trả
+    GET_DAQ_PROCESSOR_INFO (caps.daq=None) — không được im lặng bỏ qua,
+    phải báo rõ chưa biết static/dynamic (xem master/daq.py:
+    configure_daq() vẫn thử dynamic trước trong case này, có thể bất ngờ
+    fail nếu ECU thật ra là static)."""
+    caps = _caps(None)
+    assert "unknown config" in MainWindow._caps_summary(caps)
 
 
 def test_loi_thieu_driver_hien_hint_chu_khong_phai_traceback(

@@ -21,6 +21,8 @@ from ..session.api import (
     BusyError,
     ConnState,
     DaqCaps,
+    DaqEventInfo,
+    DaqListInfo,
     MalformedResponseError,
     NotConnectedError,
     PageMode,
@@ -715,6 +717,60 @@ class XcpMaster:
         self._locked_transact(
             bytes([Cmd.START_STOP_SYNCH, mode & 0xFF]),
             raise_on_error=True, timeout=None, retry=False)
+
+    def clear_daq_list(self, daq: int) -> None:
+        """CLEAR_DAQ_LIST — xoá nội dung ODT của list `daq` có sẵn, không dealloc.
+
+        Dùng được trên cả static lẫn dynamic; là bước "reset" thay cho
+        FREE_DAQ khi ECU không hỗ trợ cấu hình DAQ động.
+        """
+        caps = self._require_daq()
+        self._locked_transact(
+            bytes([Cmd.CLEAR_DAQ_LIST, 0x00]) + daq.to_bytes(2, caps.byte_order),
+            raise_on_error=True, timeout=None, retry=False)
+
+    def get_daq_list_info(self, daq: int) -> DaqListInfo:
+        """GET_DAQ_LIST_INFO — năng lực một DAQ list cụ thể.
+
+        Dùng để tìm list có sẵn đủ chỗ trên ECU static (không ALLOC_* được).
+        Byte layout theo hiểu biết về ASAM XCP — nếu ECU thật trả khác
+        fakeslave, đối chiếu lại spec gốc trước khi tin kết quả decode.
+        """
+        caps = self._require_daq()
+        resp = self._locked_transact(
+            bytes([Cmd.GET_DAQ_LIST_INFO, 0x00]) + daq.to_bytes(2, caps.byte_order),
+            raise_on_error=True, timeout=None, retry=False)
+        if len(resp) < 6:
+            raise MalformedResponseError(
+                f"Response GET_DAQ_LIST_INFO cần ≥6 byte, ECU trả {len(resp)}: {hexs(resp)}")
+        properties = resp[1]
+        return DaqListInfo(
+            predefined=bool(properties & 0x01),
+            fixed_event=bool(properties & 0x02),
+            max_odt=resp[2],
+            max_odt_entries=resp[3],
+            fixed_event_channel=int.from_bytes(resp[4:6], caps.byte_order),  # type: ignore[arg-type]
+        )
+
+    def get_daq_event_info(self, event: int) -> DaqEventInfo:
+        """GET_DAQ_EVENT_INFO — năng lực một event channel cụ thể.
+
+        Byte layout theo hiểu biết về ASAM XCP — nếu ECU thật trả khác
+        fakeslave, đối chiếu lại spec gốc trước khi tin kết quả decode.
+        """
+        caps = self._require_daq()
+        resp = self._locked_transact(
+            bytes([Cmd.GET_DAQ_EVENT_INFO, 0x00]) + event.to_bytes(2, caps.byte_order),
+            raise_on_error=True, timeout=None, retry=False)
+        if len(resp) < 3:
+            raise MalformedResponseError(
+                f"Response GET_DAQ_EVENT_INFO cần ≥3 byte, ECU trả {len(resp)}: {hexs(resp)}")
+        properties = resp[1]
+        return DaqEventInfo(
+            max_daq_list=resp[2],
+            daq_supported=bool(properties & 0x04),
+            stim_supported=bool(properties & 0x08),
+        )
 
     # ── lệnh thô ─────────────────────────────────────────────────────────────
 

@@ -267,3 +267,136 @@ def test_instance_parses_type_ref_address_and_array() -> None:
     arr_inst = db.instances["tempSensors"]
     assert arr_inst.matrix_dim == [3]
     assert arr_inst.array_size == 3
+
+
+# ---------------------------------------------------------------------------
+# IF_DATA XCP / DAQ — DAQ_CONFIG_TYPE, EVENT, Measurement.event_channel
+# ---------------------------------------------------------------------------
+
+def test_daq_info_parses_config_type_and_counts(db: A2LDatabase) -> None:
+    assert db.daq_info is not None
+    assert db.daq_info.dynamic_daq is True   # examples/xcp_daq_example.a2l dùng DYNAMIC
+    assert db.daq_info.max_daq == 2
+    assert db.daq_info.max_event_channel == 2
+    assert db.daq_info.min_daq == 0
+
+
+def test_event_channels_parsed(db: A2LDatabase) -> None:
+    assert set(db.events) == {0, 1}
+    ev0 = db.events[0]
+    assert ev0.name == "10 ms raster"
+    assert ev0.short_name == "10ms"
+    assert ev0.time_cycle == 10
+    assert ev0.time_unit == 6
+    assert ev0.max_daq_list == 1
+    ev1 = db.events[1]
+    assert ev1.name == "100 ms raster"
+    assert ev1.time_cycle == 100
+
+
+def test_measurement_event_channel_wired_from_daq_event(db: A2LDatabase) -> None:
+    """DAQ_EVENT/FIXED_EVENT_LIST/EVENT trong IF_DATA của từng MEASUREMENT
+    phải gán đúng Measurement.event_channel — trước đây field này luôn None,
+    parser chưa từng gán (xem CLAUDE.md history / Phase 2)."""
+    assert db.measurements["engineRpm"].event_channel == 0        # "10 ms raster"
+    assert db.measurements["vehicleSpeedKph"].event_channel == 0
+    assert db.measurements["coolantTempC"].event_channel == 1     # "100 ms raster"
+    assert db.measurements["torqueSamples"].event_channel == 0
+
+
+def test_module_level_if_data_not_clobbered_by_measurement_daq_event() -> None:
+    """Regression: _visit() từng nhận nhầm BẤT KỲ IF_DATA XCP nào (kể cả lồng
+    trong MEASUREMENT, chỉ chứa DAQ_EVENT) là IF_DATA XCP cấp MODULE, gọi
+    _extract_xcp_protocol_info() trên nó -> luôn trả XcpProtocolInfo() mặc
+    định (không có PROTOCOL_LAYER) -> ghi đè db.protocol_info sau mỗi
+    measurement. MAX_CTO=16/MAX_DTO=32 (khác hẳn default 8/8) để bug này
+    không thể tình cờ "đúng" như examples/xcp_daq_example.a2l."""
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin PROJECT test "Project"
+      /begin MODULE test "Module"
+        /begin IF_DATA XCP
+          /begin PROTOCOL_LAYER
+            0x0100
+            1000 2000 0 0 0
+            16 32
+            BYTE_ORDER_MSB_LAST
+          /end PROTOCOL_LAYER
+        /end IF_DATA
+        /begin MEASUREMENT sig1
+          "signal 1" UWORD NO_COMPU_METHOD 0 0 0 100
+          ECU_ADDRESS 0x90000000
+          /begin IF_DATA XCP
+            /begin DAQ_EVENT
+              /begin FIXED_EVENT_LIST
+                EVENT 0x00
+              /end FIXED_EVENT_LIST
+            /end DAQ_EVENT
+          /end IF_DATA
+        /end MEASUREMENT
+      /end MODULE
+    /end PROJECT
+    """
+    db = parse(text)
+    assert db.protocol_info is not None
+    assert db.protocol_info.max_cto == 16
+    assert db.protocol_info.max_dto == 32
+    assert db.measurements["sig1"].event_channel == 0
+
+
+def test_static_daq_list_parsed_from_daq_list_block() -> None:
+    """/begin DAQ_LIST — KHÔNG có ví dụ thật trong repo để đối chiếu field
+    order (xem hedge đầy đủ ở StaticDaqList/types.py); test bằng snippet tự
+    tạo theo suy đoán tốt nhất về khung IF_DATA XCP, xác nhận logic trích
+    xuất tự nhất quán — không xác nhận được liệu ECU thật có đúng syntax
+    này hay không."""
+    from xcptool.a2l.parser import parse
+    text = """
+    /begin PROJECT test "Project"
+      /begin MODULE test "Module"
+        /begin IF_DATA XCP
+          /begin DAQ
+            STATIC
+            0x02
+            0x01
+            0x02
+            OPTIMISATION_TYPE_DEFAULT
+            ADDRESS_EXTENSION_FREE
+            IDENTIFICATION_FIELD_TYPE_ABSOLUTE
+            GRANULARITY_ODT_ENTRY_SIZE_DAQ_BYTE
+            0x07
+            OVERLOAD_INDICATION_PID
+            /begin DAQ_LIST
+              0x00
+              MAX_ODT 0x02
+              MAX_ODT_ENTRIES 0x07
+              EVENT_FIXED 0x00
+              /begin PREDEFINED
+              /end PREDEFINED
+            /end DAQ_LIST
+            /begin DAQ_LIST
+              0x01
+              MAX_ODT 0x01
+              MAX_ODT_ENTRIES 0x07
+            /end DAQ_LIST
+          /end DAQ
+        /end IF_DATA
+      /end MODULE
+    /end PROJECT
+    """
+    db = parse(text)
+    assert db.daq_info is not None
+    assert db.daq_info.dynamic_daq is False
+    assert db.daq_info.max_daq == 2
+    assert db.daq_info.min_daq == 2
+
+    assert set(db.static_daq_lists) == {0, 1}
+    l0 = db.static_daq_lists[0]
+    assert l0.max_odt == 2
+    assert l0.max_odt_entries == 7
+    assert l0.predefined is True
+    assert l0.fixed_event == 0
+
+    l1 = db.static_daq_lists[1]
+    assert l1.predefined is False
+    assert l1.fixed_event is None

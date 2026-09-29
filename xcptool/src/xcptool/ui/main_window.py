@@ -956,10 +956,20 @@ class MainWindow(QMainWindow):
         ) if on) or "no resources"
         seed = "  ·  needs seed&key" if caps.needs_seed_and_key else ""
         ident = f"  ·  {caps.id_string}" if caps.id_string else ""
+        daq = ""
+        if caps.daq is not None:
+            kind = "dynamic" if caps.daq.dynamic_daq else f"static ({caps.daq.min_daq} list)"
+            daq = f"  ·  DAQ: {kind}"
+        elif caps.supports_daq:
+            # ECU khai resource DAQ ở CONNECT nhưng không trả lời
+            # GET_DAQ_PROCESSOR_INFO — configure_daq() vẫn thử nhánh dynamic
+            # trước (xem master/daq.py), chỉ là không biết trước sẽ thành công
+            # hay không cho tới khi thật sự bấm Start Acquisition.
+            daq = "  ·  DAQ: unknown config (no GET_DAQ_PROCESSOR_INFO)"
         return (
             f"MAX_CTO {caps.max_cto}  ·  MAX_DTO {caps.max_dto}  ·  "
             f"{caps.byte_order}-endian  ·  XCP "
-            f"{caps.protocol_version[0]}.{caps.protocol_version[1]}  ·  {res}{seed}{ident}"
+            f"{caps.protocol_version[0]}.{caps.protocol_version[1]}  ·  {res}{seed}{ident}{daq}"
         )
 
     # ── excepthook + thoát ───────────────────────────────────────────────────

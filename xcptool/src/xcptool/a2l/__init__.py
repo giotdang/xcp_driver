@@ -10,8 +10,11 @@ from .types import (
     Characteristic,
     DataType,
     DATATYPE_SIZES,
+    EventChannel,
     Measurement,
     RecordLayout,
+    StaticDaqList,
+    XcpDaqInfo,
 )
 
 __all__ = [
@@ -20,6 +23,9 @@ __all__ = [
     "Characteristic",
     "DataType",
     "DATATYPE_SIZES",
+    "EventChannel",
     "Measurement",
     "RecordLayout",
+    "StaticDaqList",
+    "XcpDaqInfo",
 ]

@@ -14,11 +14,11 @@ import pytest
 from xcptool.devtools.fakeslave import FakeSlave, SlaveConfig
 from xcptool.master.constants import Cmd
 from xcptool.master.daq import (
-    DaqListConfig, DaqSignal,
+    DaqListConfig, DaqSignal, OdtSignalLayout, PredefinedDaqList,
     TimestampAccumulator,
-    configure_daq, decode_dto, stop_daq,
+    configure_daq, configure_daq_predefined, decode_dto, stop_daq,
 )
-from xcptool.session.api import BusConfig, UnsupportedByEcuError
+from xcptool.session.api import BusConfig, StaticDaqCapacityError, UnsupportedByEcuError
 from xcptool.session.real import RealSession
 
 
@@ -317,5 +317,200 @@ def test_multiple_daq_lists_get_sequential_pids(channel: str) -> None:
 
         assert pid_list0 == {0, 1}
         assert pid_list1 == {2}
+
+    session.close()
+
+
+# ── D4d — Static DAQ (dynamic_daq=False) ────────────────────────────────────
+
+def test_configure_daq_static_ecu_uses_existing_list(channel: str) -> None:
+    """ECU static (dynamic_daq=False) không bao giờ gửi FREE_DAQ/ALLOC_* —
+    dùng CLEAR_DAQ_LIST + GET_DAQ_LIST_INFO trên list có sẵn thay vào đó."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1)
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg) as slave:
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+        assert master.caps.daq is not None
+        assert master.caps.daq.dynamic_daq is False
+
+        configs = [DaqListConfig(signals=[_sig("rpm", 2)], event=0, timestamp=False)]
+        pid_table = configure_daq(master, configs)
+
+        assert len(pid_table) == 1
+        assert pid_table[0].daq_list == 0
+        assert slave.daq_running is True
+
+        cmds = set(slave.commands_seen)
+        assert int(Cmd.FREE_DAQ) not in cmds
+        assert int(Cmd.ALLOC_DAQ) not in cmds
+        assert int(Cmd.ALLOC_ODT) not in cmds
+        assert int(Cmd.ALLOC_ODT_ENTRY) not in cmds
+        assert int(Cmd.CLEAR_DAQ_LIST) in cmds
+        assert int(Cmd.GET_DAQ_LIST_INFO) in cmds
+        assert int(Cmd.WRITE_DAQ) in cmds
+
+    session.close()
+
+
+def test_configure_daq_static_raises_when_no_list_free(channel: str) -> None:
+    """Chỉ 1 list tĩnh nhưng cần 2 (2 DaqListConfig riêng) → StaticDaqCapacityError
+    rõ ràng, không phải mã lỗi ECU thô hay treo giữa chừng."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1)
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg):
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        configs = [
+            DaqListConfig(signals=[_sig("a", 2)], event=0, timestamp=False),
+            DaqListConfig(signals=[_sig("b", 2)], event=0, timestamp=False),
+        ]
+        with pytest.raises(StaticDaqCapacityError):
+            configure_daq(master, configs)
+
+    session.close()
+
+
+def test_configure_daq_unknown_caps_on_static_ecu_raises_clear_error(channel: str) -> None:
+    """caps.daq is None (ECU không trả GET_DAQ_PROCESSOR_INFO) trên một ECU thật
+    ra là static (từ chối FREE_DAQ bằng UNKNOWN_CMD) → UnsupportedByEcuError với
+    thông điệp giải thích rõ, không phải SlaveError thô của FREE_DAQ lộ ra ngoài."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, supports_daq_info=False)
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg):
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+        assert master.caps.daq is None   # xác nhận đúng tình huống test nhắm tới
+
+        with pytest.raises(UnsupportedByEcuError) as exc_info:
+            configure_daq(master, [DaqListConfig(signals=[_sig("z", 1)], event=0)])
+
+        assert "GET_DAQ_PROCESSOR_INFO" in str(exc_info.value)
+
+    session.close()
+
+
+# ── D4d — Static DAQ với list nội dung cố định (predefined=True) ────────────
+
+def test_configure_daq_skips_predefined_list_when_searching(channel: str) -> None:
+    """configure_daq() (nhánh static thường, tự WRITE_DAQ) bỏ qua list
+    predefined=True khi tìm chỗ ghi tự do — list 0 predefined, list 1 không,
+    kết quả phải rơi vào list 1."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=2, max_daq=2,
+                       static_predefined_lists=frozenset({0}))
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg) as slave:
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        configs = [DaqListConfig(signals=[_sig("rpm", 2)], event=0, timestamp=False)]
+        pid_table = configure_daq(master, configs)
+
+        assert pid_table[0].daq_list == 1   # list 0 predefined bị bỏ qua
+        assert slave.write_daq_to_predefined == set()
+
+    session.close()
+
+
+def test_configure_daq_static_capacity_error_when_only_predefined_available(
+    channel: str,
+) -> None:
+    """Chỉ có 1 list tĩnh và nó predefined=True → StaticDaqCapacityError rõ
+    ràng, không âm thầm WRITE_DAQ vào nội dung cố định."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1,
+                       static_predefined_lists=frozenset({0}))
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg) as slave:
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        configs = [DaqListConfig(signals=[_sig("rpm", 2)], event=0, timestamp=False)]
+        with pytest.raises(StaticDaqCapacityError):
+            configure_daq(master, configs)
+
+        assert slave.write_daq_to_predefined == set()
+
+    session.close()
+
+
+def test_configure_daq_predefined_starts_fixed_list_without_writing(channel: str) -> None:
+    """configure_daq_predefined() khởi động list nội dung cố định mà không
+    hề gọi WRITE_DAQ — decode ra đúng giá trị "firmware" đã wire sẵn."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1,
+                       static_predefined_lists=frozenset({0}))
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg) as slave:
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        addr = cfg.mem_base
+        expected = b"\x39\x05"   # 0x0539 = 1337 little-endian
+        slave.poke(addr, expected)
+        # "Firmware" đã wire sẵn: ODT 0 của list 0 chứa 1 entry 2 byte tại addr
+        slave.set_predefined_daq_content(0, 0, [(0xFF, 2, 0, addr)])
+
+        sig = DaqSignal("val", addr, 0, 2, "UINT16")
+        layout = OdtSignalLayout(signal=sig, frame_offset=1)   # byte 0=PID, không timestamp
+        pl = PredefinedDaqList(daq=0, odts=[[layout]], event=0, timestamp=False)
+        pid_table = configure_daq_predefined(master, [pl])
+
+        assert slave.write_daq_to_predefined == set()
+        assert slave.daq_running is True
+
+        sniffer = can.Bus(interface="virtual", channel=channel, receive_own_messages=False)
+        try:
+            deadline = time.perf_counter() + 1.0
+            daq_frame: bytes | None = None
+            while time.perf_counter() < deadline:
+                msg = sniffer.recv(0.05)
+                if (msg is not None
+                        and msg.arbitration_id == cfg.dto_id
+                        and (msg.data[0] & 0x7F) == 0):
+                    daq_frame = bytes(msg.data)
+                    break
+            assert daq_frame is not None, "Không nhận được frame DAQ"
+
+            ts_accum = TimestampAccumulator(byte_order=cfg.byte_order)
+            samples = decode_dto(daq_frame, pid_table, ts_accum)
+
+            val_samples = [s for s in samples if s.name == "val"]
+            assert val_samples, f"Không có sample 'val' trong {samples}"
+            assert val_samples[0].value_raw == expected
+        finally:
+            sniffer.shutdown()
+
+    session.close()
+
+
+def test_configure_daq_predefined_rejects_non_predefined_list(channel: str) -> None:
+    """configure_daq_predefined() từ chối list không thực sự predefined —
+    tránh nhầm sang list mà đáng lẽ phải tự WRITE_DAQ qua configure_daq()."""
+    cfg = SlaveConfig(channel=channel, daq_dynamic=False, min_daq=1, max_daq=1)
+    bus = BusConfig(backend="virtual", channel=channel,
+                    cro_id=cfg.cro_id, dto_id=cfg.dto_id, t1_timeout_s=0.5)
+    session = RealSession()
+    with FakeSlave(cfg):
+        session.connect(bus)
+        master = session._master  # type: ignore[attr-defined]
+
+        sig = DaqSignal("x", cfg.mem_base, 0, 2, "UINT16")
+        layout = OdtSignalLayout(signal=sig, frame_offset=1)
+        pl = PredefinedDaqList(daq=0, odts=[[layout]], event=0, timestamp=False)
+
+        with pytest.raises(ValueError):
+            configure_daq_predefined(master, [pl])
 
     session.close()
