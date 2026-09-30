@@ -266,6 +266,10 @@ class RealSession:
     def set_page(self, segment: int, page: int, mode: PageMode) -> None:
         self._require_master().set_page(segment, page, mode)
 
+    @_guarded("đổi trang calibration")
+    def switch_page(self, segment: int, page: int) -> None:
+        self._require_master().switch_page(segment, page)
+
     @_guarded("sao chép trang calibration")
     def copy_page(
         self, src_segment: int, src_page: int, dst_segment: int, dst_page: int

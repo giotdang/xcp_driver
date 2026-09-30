@@ -260,3 +260,17 @@ def test_flood_dung_han_khi_close(cfg: BusConfig) -> None:
     time.sleep(0.1)
     s.close()
     assert all(not t.name.startswith("fake-flood") for t in threading.enumerate())
+
+
+def test_switch_page_dat_ca_hai_trang_bang_mot_lenh(cfg: BusConfig) -> None:
+    s = FakeSession()
+    s.connect(cfg)
+    s.drain_trace()
+    s.switch_page(0, WORKING_PAGE)
+    assert s.get_page(0, PageMode.ECU) == WORKING_PAGE
+    assert s.get_page(0, PageMode.XCP) == WORKING_PAGE
+    set_cmds = [e for e in s.drain_trace()
+                if e.direction == "tx" and e.data[:1] == b"\xeb"]
+    assert len(set_cmds) == 1, "switch_page phải gửi đúng một SET_CAL_PAGE"
+    assert set_cmds[0].data[1] == 0x03       # mode ECU | XCP
+    s.close()

@@ -27,6 +27,7 @@ from ..session.api import (
     NotConnectedError,
     PageMode,
     SlaveCaps,
+    SlaveError,
     TraceEntry,
     TransportError,
     UnsupportedByEcuError,
@@ -34,7 +35,7 @@ from ..session.api import (
     XcpToolError,
 )
 from .codec import classify, describe_rx, describe_tx, hexs, pack_u32
-from .constants import TIMESTAMP_UNIT_NS, Cmd, Pid
+from .constants import TIMESTAMP_UNIT_NS, Cmd, ErrCode, Pid
 from .errors import make_slave_error
 from .trace import DEFAULT_CAPACITY, TraceBuffer
 
@@ -72,6 +73,12 @@ class _Sentinel:
         self.error = error
 
 
+# Mã lỗi ECU dùng để từ chối mode gộp ECU|XCP của SET_CAL_PAGE.
+_COMBINED_PAGE_REJECTED = frozenset({
+    int(ErrCode.MODE_NOT_VALID), int(ErrCode.OUT_OF_RANGE), int(ErrCode.CMD_SYNTAX),
+})
+
+
 class XcpMaster:
     """Một phiên XCP trên một link. Không reentrant — xem contract."""
 
@@ -95,6 +102,10 @@ class XcpMaster:
         self._cmd_lock = threading.Lock()
         self._pending_cmd: int | None = None
         self._consecutive_synch_fails = 0
+
+        # SET_CAL_PAGE mode gộp ECU|XCP: None = chưa biết, True = ECU nhận,
+        # False = ECU từ chối (đã chuyển sang hai lệnh rời thành công).
+        self._combined_page_switch: bool | None = None
 
         # DAQ callback — được gọi từ RX thread khi nhận DAO frame (byte0 < 0xFC).
         # Phải là hàm nhanh, không chặn; set_daq_callback() để đăng ký/huỷ.
@@ -627,6 +638,40 @@ class XcpMaster:
         self._locked_transact(
             bytes([Cmd.SET_CAL_PAGE, mode.value, segment & 0xFF, page & 0xFF]),
             raise_on_error=True, timeout=None, retry=True)
+
+    def switch_page(self, segment: int, page: int) -> None:
+        """Đưa cả trang ECU lẫn trang XCP về `page`.
+
+        Part 2 v1.0 cho phép đặt cả hai cờ trong một SET_CAL_PAGE, nên thử mode
+        gộp (ECU|XCP) trước: ECU áp dụng cả hai cùng lúc, không để lại trạng thái
+        nửa vời nếu lệnh thứ hai của cặp rời bị lỗi. Không phải ECU nào cũng nhận:
+        bị từ chối bằng ERR_MODE_NOT_VALID / ERR_OUT_OF_RANGE / ERR_CMD_SYNTAX thì
+        chuyển sang hai lệnh rời, XCP trước rồi ECU (an toàn cho trang có
+        ECU_ACCESS_WITH_XCP_ONLY: ECU chỉ được dùng trang đó khi XCP cũng ở đó).
+
+        Quyết định "ECU không nhận mode gộp" chỉ được ghi nhớ khi chuỗi hai lệnh
+        rời chạy thành công, nên lỗi thật (trang/segment sai) không làm hỏng nó.
+        Lỗi khác (ví dụ ERR_PAGE_NOT_VALID) được ném nguyên, không fallback.
+        """
+        self._require_cal_pag()
+        if self._combined_page_switch is not False:
+            try:
+                self._locked_transact(
+                    bytes([Cmd.SET_CAL_PAGE,
+                           PageMode.ECU.value | PageMode.XCP.value,
+                           segment & 0xFF, page & 0xFF]),
+                    raise_on_error=True, timeout=None, retry=True)
+            except SlaveError as exc:
+                if exc.code not in _COMBINED_PAGE_REJECTED:
+                    raise
+                self.set_page(segment, page, PageMode.XCP)
+                self.set_page(segment, page, PageMode.ECU)
+                self._combined_page_switch = False
+                return
+            self._combined_page_switch = True
+            return
+        self.set_page(segment, page, PageMode.XCP)
+        self.set_page(segment, page, PageMode.ECU)
 
     def copy_page(
         self, src_segment: int, src_page: int, dst_segment: int, dst_page: int

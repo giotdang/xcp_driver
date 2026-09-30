@@ -55,6 +55,7 @@ class SlaveConfig:
     transport_version: int = 1
 
     supports_cal_pag: bool = True
+    combined_page_switch: bool = True     # False: từ chối SET_CAL_PAGE mode ECU|XCP (ERR_MODE_NOT_VALID)
     supports_daq: bool = True
     supports_stim: bool = False
     supports_pgm: bool = False
@@ -146,6 +147,8 @@ class FakeSlave:
         # sẽ hiện ra thành "rò bộ nhớ" trong báo cáo soak — nhưng là rò của đồ
         # test, không phải của sản phẩm. Đủ sâu cho mọi khẳng định trong test.
         self.commands_seen: deque[int] = deque(maxlen=10_000)
+        # public — mọi SET_CAL_PAGE nhận được dưới dạng (mode, segment, page), kể cả lệnh bị từ chối
+        self.set_cal_page_log: deque[tuple[int, int, int]] = deque(maxlen=1_000)
 
         # DAQ state — được reset bởi FREE_DAQ
         # _daq_lists[daq][odt] = list of (bit_offset, size, ext, addr)
@@ -536,7 +539,11 @@ class FakeSlave:
         if not self.cfg.supports_cal_pag or len(data) < 4:
             self._err(ErrCode.CMD_UNKNOWN)
             return
-        mode, _segment, page = data[1], data[2], data[3]
+        mode, segment, page = data[1], data[2], data[3]
+        self.set_cal_page_log.append((mode, segment, page))
+        if mode & 0x03 == 0x03 and not self.cfg.combined_page_switch:
+            self._err(ErrCode.MODE_NOT_VALID)
+            return
         if page not in (WORKING_PAGE, REFERENCE_PAGE):
             self._err(ErrCode.PAGE_NOT_VALID)
             return

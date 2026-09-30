@@ -555,6 +555,11 @@ class Session(Protocol):
     def set_page(self, segment: int, page: int, mode: PageMode) -> None:
         """Đổi trang cho `mode`. Raises: UnsupportedByEcuError, SlaveError"""
 
+    def switch_page(self, segment: int, page: int) -> None:
+        """Đưa cả trang ECU lẫn trang XCP về `page` bằng MỘT lệnh SET_CAL_PAGE (mode
+        ECU|XCP). ECU từ chối mode gộp thì tự chuyển sang hai lệnh rời (XCP trước,
+        ECU sau). Raises: UnsupportedByEcuError, SlaveError"""
+
     def copy_page(
         self, src_segment: int, src_page: int, dst_segment: int, dst_page: int
     ) -> None:

@@ -2048,3 +2048,16 @@ def test_on_read_khong_chon_gi_khong_goi_cb(qtbot) -> None:
     assert v._calls["read"] == []
 
 
+
+
+def test_cal_set_page_chi_gui_mot_lenh_set_cal_page(qtbot, connected_window: MainWindow) -> None:
+    """Đổi trang trong calibration view: một SET_CAL_PAGE mode ECU|XCP, không phải hai lệnh rời."""
+    w = connected_window
+    v = w.calibration_view
+    w.session.drain_trace()
+    w.cal_set_page(0, WORKING_PAGE)
+    qtbot.waitUntil(lambda: v.page_toggle.currentRouteKey() == _ROUTE_WORKING, timeout=5000)
+    set_cmds = [e for e in w.session.drain_trace()
+                if e.direction == "tx" and e.data[:1] == b"\xeb"]
+    assert len(set_cmds) == 1
+    assert set_cmds[0].data[1] == 0x03

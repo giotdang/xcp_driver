@@ -426,6 +426,20 @@ class FakeSession:
                 self._xcp_page = page
             self._emit(cfg.dto_id, "rx", bytes([0xFF]), "res", "SET_CAL_PAGE ok")
 
+    def switch_page(self, segment: int, page: int) -> None:
+        with self._command("SET_CAL_PAGE"):
+            self._need_cal_pag()
+            self._check_segment(segment)
+            self._check_page(page)
+            cfg = self._cfg
+            assert cfg is not None
+            both = PageMode.ECU.value | PageMode.XCP.value
+            self._emit(cfg.cro_id, "tx", bytes([0xEB, both, segment, page]), "cmd",
+                       f"SET_CAL_PAGE seg={segment} page={page} mode=ECU|XCP")
+            self._ecu_page = page
+            self._xcp_page = page
+            self._emit(cfg.dto_id, "rx", bytes([0xFF]), "res", "SET_CAL_PAGE ok")
+
     def copy_page(
         self, src_segment: int, src_page: int, dst_segment: int, dst_page: int
     ) -> None:

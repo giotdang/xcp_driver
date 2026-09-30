@@ -807,13 +807,9 @@ class MainWindow(QMainWindow):
             return
         seg = self.calibration_view.segment_spin.value()
 
-        def _both() -> None:
-            self.session.set_page(seg, CAL_WORKING_PAGE, PageMode.ECU)
-            self.session.set_page(seg, CAL_WORKING_PAGE, PageMode.XCP)
-
         self._call(
             "Switching to Working…",
-            _both,
+            self.session.switch_page, seg, CAL_WORKING_PAGE,
             on_ok=lambda _: self._after_cal_switch_working(seg, name, addr, data),
         )
 
@@ -846,14 +842,10 @@ class MainWindow(QMainWindow):
         if not self._guard():
             return
 
-        def _both() -> None:
-            self.session.set_page(segment, page, PageMode.ECU)
-            self.session.set_page(segment, page, PageMode.XCP)
-
         name = "Working" if page == CAL_WORKING_PAGE else "Reference"
         self._call(
             f"Switching to {name}…",
-            _both,
+            self.session.switch_page, segment, page,
             on_ok=lambda _: self.cal_get_pages(segment),
         )
 
