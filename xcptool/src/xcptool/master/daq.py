@@ -10,11 +10,12 @@ Nguyên tắc: không import can, không import PySide6, không import ui/transp
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from ..session.api import (
     DaqCaps,
     NotConnectedError,
+    SlaveCaps,
     SlaveError,
     StaticDaqCapacityError,
     UnsupportedByEcuError,
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DaqSignal", "pack_odts",
+    "DtoFormat", "DtoKey", "make_key", "effective_timestamp",
     "DaqListConfig", "OdtSignalLayout", "PidEntry",
     "configure_daq", "stop_daq",
     "PredefinedDaqList", "configure_daq_predefined",
@@ -45,6 +47,104 @@ class DaqSignal:
     ext: int        # address extension, 0 cho hầu hết ECU CAN
     size: int       # bytes — từ DATATYPE_SIZES[datatype] * array_size
     datatype: str   # DataType literal, dùng trong D4c để decode giá trị
+
+
+_HEADER_LEN = (1, 2, 3, 4)   # theo id_type 0..3
+
+
+@dataclass(frozen=True)
+class DtoFormat:
+    """Layout gói DTO mà ECU dùng — suy ra một lần từ caps, không hardcode.
+
+    id_type:   kiểu identification field (DAQ_KEY_BYTE bit 7-6):
+               0 = absolute ODT number            → header `PID`
+               1 = relative ODT + DAQ list (BYTE) → header `ODT, DAQ`
+               2 = relative ODT + DAQ list (WORD) → header `ODT, DAQ_lo, DAQ_hi`
+               3 = như 2 kèm byte FILL            → header `ODT, FILL, DAQ_lo, DAQ_hi`
+    byte_order: thứ tự byte của slave (WORD số DAQ list, timestamp).
+    ts_size:   0 (không có timestamp) | 1 | 2 | 4 byte.
+    unit_ns, ticks: bộ đếm tăng `ticks` mỗi `unit_ns` ns (0 = không hợp lệ).
+    overload:  cách ECU báo overrun: "pid_msb" (MSB của PID) | "event" | "none".
+    ts_always: TIMESTAMP_FIXED — mọi DTO đều mang timestamp, master không tắt được.
+
+    `DtoFormat()` mặc định tái tạo đúng hành vi cũ của xcptool (header 1 byte,
+    timestamp 4 byte/10 ns, overrun ở MSB của PID) — dùng khi ECU không trả lời
+    GET_DAQ_PROCESSOR_INFO/GET_DAQ_RESOLUTION_INFO.
+    """
+    id_type: int = 0
+    byte_order: Literal["little", "big"] = "little"
+    ts_size: int = 4
+    unit_ns: int = 10
+    ticks: int = 1
+    overload: Literal["none", "pid_msb", "event"] = "pid_msb"
+    ts_always: bool = False
+
+    def __post_init__(self) -> None:
+        if self.id_type not in (0, 1, 2, 3):
+            raise ValueError(f"id_type phải là 0..3, nhận {self.id_type}")
+        if self.ts_size not in (0, 1, 2, 4):
+            raise ValueError(f"ts_size phải là 0, 1, 2 hoặc 4, nhận {self.ts_size}")
+
+    @property
+    def header_len(self) -> int:
+        return _HEADER_LEN[self.id_type]
+
+    def data_start(self, has_timestamp: bool) -> int:
+        """Offset (từ đầu frame) của byte dữ liệu đầu tiên."""
+        return self.header_len + (self.ts_size if has_timestamp else 0)
+
+    @classmethod
+    def from_caps(cls, daq_caps: DaqCaps | None,
+                  byte_order: Literal["little", "big"] = "little") -> DtoFormat:
+        if daq_caps is None:
+            return cls(byte_order=byte_order)
+        return cls(
+            id_type=daq_caps.id_field_type,
+            byte_order=byte_order,
+            ts_size=daq_caps.timestamp_size,
+            unit_ns=daq_caps.timestamp_unit_ns,
+            ticks=daq_caps.timestamp_ticks,
+            overload=daq_caps.overload,
+            ts_always=daq_caps.timestamp_fixed,
+        )
+
+    @classmethod
+    def from_slave_caps(cls, caps: SlaveCaps | None) -> DtoFormat:
+        """Hàm DUY NHẤT dựng DtoFormat từ caps — `configure_daq` và
+        `RealSession` đều dùng nên hai bên không thể lệch nhau."""
+        if caps is None:
+            return cls()
+        return cls.from_caps(caps.daq, caps.byte_order)
+
+
+DtoKey = int | tuple[int, int]
+"""Khoá bảng tra DTO: `PID` (kiểu 0) hoặc `(số DAQ list, số ODT tương đối)` (kiểu 1–3)."""
+
+
+def make_key(fmt: DtoFormat, daq: int, odt: int, first_pid: int) -> DtoKey:
+    """Khoá bảng tra cho ODT `odt` của DAQ list vật lý `daq`.
+
+    Kiểu 0: PID tuyệt đối = `first_pid + odt`. Kiểu 1–3: DTO mang sẵn số DAQ
+    list và ODT tương đối, `first_pid` không dùng.
+    """
+    if fmt.id_type == 0:
+        return first_pid + odt
+    return (daq, odt)
+
+
+def effective_timestamp(requested: bool, fmt: DtoFormat) -> bool:
+    """Timestamp thực sự có trong DTO của một DAQ list.
+
+    - TIMESTAMP_FIXED: luôn có (master không tắt được), bất kể `requested`.
+    - ECU không hỗ trợ timestamp (`ts_size == 0`): không có — hạ xuống tắt
+      im lặng, kết quả giống `timestamp=False` (`timestamp_ns = 0`).
+    - Còn lại: theo `requested`.
+    """
+    if fmt.ts_always:
+        return True
+    if fmt.ts_size == 0:
+        return False
+    return requested
 
 
 @dataclass
@@ -369,29 +469,55 @@ class SamplePoint:
 
 
 class TimestampAccumulator:
-    """Bộ tích lũy timestamp 32-bit ECU → nanosecond tuyệt đối.
-
-    ECU dùng counter 32-bit, unit 10ns/tick. Rollover xảy ra sau ~42,9 giây.
-    Khi `raw < _last`, cộng thêm 2^32 vào epoch để giữ timestamp monotone.
+    """Bộ tích lũy timestamp ECU → nanosecond tuyệt đối, bù rollover.
 
     byte_order: thứ tự byte trong frame DTO — lấy từ SlaveCaps.byte_order.
+    width_bits: độ rộng bộ đếm của ECU (8 × ts_size).
+    unit_ns, ticks: bộ đếm tăng `ticks` mỗi `unit_ns` ns (theo spec ASAM), nên
+        ns = tick_tích_lũy × unit_ns ÷ ticks. Giá trị 0 nghĩa là không hợp lệ →
+        `to_ns` trả 0.
+
+    Rollover chỉ được ghi nhận khi giá trị tụt quá NỬA chu kỳ
+    (`last − raw > 2^(width_bits−1)`). Bước lùi nhỏ hơn là hai frame đến lệch
+    thứ tự (hay gặp khi nhiều DAQ list dùng chung bộ tích lũy): epoch không đổi.
+
+    Giới hạn: nếu hai lần nhận timestamp cách nhau quá một chu kỳ đầy đủ thì
+    không phân biệt được; timestamp 1 byte quay vòng rất nhanh nên ít hữu dụng.
     """
 
-    def __init__(self, byte_order: str = "little") -> None:
+    def __init__(self, byte_order: str = "little", width_bits: int = 32,
+                 unit_ns: int = 10, ticks: int = 1) -> None:
         self.byte_order = byte_order
+        self.width_bits = width_bits
+        self.unit_ns = unit_ns
+        self.ticks = ticks
         self._last: int | None = None
-        self._epoch: int = 0   # số lần tràn × 2^32
+        self._epoch: int = 0   # số lần tràn × 2^width_bits
+
+    @classmethod
+    def from_format(cls, fmt: DtoFormat) -> TimestampAccumulator:
+        return cls(
+            byte_order=fmt.byte_order,
+            width_bits=8 * fmt.ts_size if fmt.ts_size else 32,
+            unit_ns=fmt.unit_ns,
+            ticks=fmt.ticks,
+        )
 
     def update(self, raw: int) -> int:
-        """Nhận giá trị 32-bit thô, trả về tick tích lũy (không tràn)."""
-        if self._last is not None and raw < self._last:
-            self._epoch += 0x1_0000_0000
+        """Nhận giá trị thô của bộ đếm, trả về tick tích lũy (không tràn)."""
+        wrap = 1 << self.width_bits
+        if (self._last is not None and raw < self._last
+                and (self._last - raw) > wrap // 2):
+            self._epoch += wrap
         self._last = raw
         return self._epoch + raw
 
     def to_ns(self, raw: int) -> int:
-        """Trả về timestamp tuyệt đối tính bằng nanosecond (unit 10ns/tick)."""
-        return self.update(raw) * 10
+        """Trả về timestamp tuyệt đối tính bằng nanosecond."""
+        total = self.update(raw)
+        if self.unit_ns == 0 or self.ticks == 0:
+            return 0
+        return total * self.unit_ns // self.ticks
 
 
 def decode_dto(
