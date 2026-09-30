@@ -22,12 +22,15 @@ from dataclasses import dataclass
 
 import can
 
-from ..master.constants import Cmd, ErrCode
+from ..master.constants import TIMESTAMP_UNIT_NS, Cmd, ErrCode
 from ..transport.base import round_to_can_fd_dlc
 
 __all__ = ["SlaveConfig", "FakeSlave"]
 
 log = logging.getLogger("xcptool.devtools.fakeslave")
+
+# DAQ_PROPERTIES bit 7-6: cách ECU báo overrun
+_OVERLOAD_BITS = {"none": 0x00, "pid_msb": 0x40, "event": 0x80}
 
 REFERENCE_PAGE = 0
 WORKING_PAGE = 1
@@ -73,6 +76,10 @@ class SlaveConfig:
     timestamp_size: int = 4
     timestamp_unit_code: int = 0x1        # 0x1 = 10 ns
     timestamp_ticks: int = 1
+    timestamp_supported: bool = True      # bit TIMESTAMP_SUPPORTED trong DAQ_PROPERTIES
+    timestamp_fixed: bool = False         # bit TIMESTAMP_FIXED: DTO luôn có timestamp
+    id_field_type: int = 0                # 0 absolute | 1 rel+DAQ BYTE | 2 rel+DAQ WORD | 3 WORD aligned
+    overload: str = "pid_msb"             # "none" | "pid_msb" | "event"
     granularity_odt_entry_daq: int = 1
     max_odt_entry_size_daq: int = 7
 
@@ -241,6 +248,29 @@ class FakeSlave:
             except Exception:  # noqa: BLE001
                 return
 
+    def _timestamp_ticks(self, elapsed_ns: float) -> int:
+        """Giá trị bộ đếm timestamp của ECU giả: tăng `timestamp_ticks` mỗi
+        `unit` (theo `timestamp_unit_code`), cắt theo `timestamp_size` byte."""
+        unit_ns = TIMESTAMP_UNIT_NS.get(self.cfg.timestamp_unit_code, 0)
+        size = self.cfg.timestamp_size
+        if unit_ns == 0 or self.cfg.timestamp_ticks == 0 or size == 0:
+            return 0
+        ticks = int(elapsed_ns * self.cfg.timestamp_ticks / unit_ns)
+        return ticks & ((1 << (8 * size)) - 1)
+
+    def _dto_header(self, daq: int, odt_idx: int, first_pid: int) -> bytes:
+        """Header identification field của DTO theo `id_field_type`."""
+        kind = self.cfg.id_field_type
+        if kind == 0:
+            return bytes([(first_pid + odt_idx) & 0xFF])
+        odt = bytes([odt_idx & 0xFF])
+        if kind == 1:
+            return odt + bytes([daq & 0xFF])
+        word = daq.to_bytes(2, self.cfg.byte_order)  # type: ignore[arg-type]
+        if kind == 2:
+            return odt + word
+        return odt + b"\x00" + word                  # kiểu 3: byte FILL
+
     def _daq_send_loop(self) -> None:
         """Gửi DTO frame 100 Hz cho mỗi DAQ list đang chạy."""
         period = 0.01   # 10ms = 100 Hz
@@ -252,8 +282,7 @@ class FakeSlave:
                 continue
             next_at += period
             elapsed_ns = (now - self._daq_t0) * 1e9
-            ts_ticks = int(elapsed_ns / 10) & 0xFFFF_FFFF  # 10ns/tick, 32-bit
-            self._send_daq_frames(ts_ticks)
+            self._send_daq_frames(self._timestamp_ticks(elapsed_ns))
 
     def _send_daq_frames(self, ts_ticks: int) -> None:
         """Đọc bộ nhớ ECU giả, đóng gói frame DTO và gửi lên bus."""
@@ -262,17 +291,18 @@ class FakeSlave:
         except Exception:  # noqa: BLE001
             return
         bo = self.cfg.byte_order
-        for odts, mode_info, first_pid in snap:
-            has_ts = bool(mode_info.get("mode", 0) & 0x10)
+        ts_size = self.cfg.timestamp_size if self.cfg.timestamp_supported else 0
+        for daq, (odts, mode_info, first_pid) in enumerate(snap):
+            has_ts = ts_size > 0 and (self.cfg.timestamp_fixed
+                                      or bool(mode_info.get("mode", 0) & 0x10))
             try:
                 odt_list = list(enumerate(odts))
             except Exception:  # noqa: BLE001
                 continue
             for odt_idx, entries in odt_list:
-                pid = (first_pid + odt_idx) & 0xFF
-                frame = bytearray([pid])
+                frame = bytearray(self._dto_header(daq, odt_idx, first_pid))
                 if odt_idx == 0 and has_ts:
-                    frame += ts_ticks.to_bytes(4, bo)  # type: ignore[arg-type]
+                    frame += ts_ticks.to_bytes(ts_size, bo)  # type: ignore[arg-type]
                 for _bit_off, sz, _ext, addr in entries:
                     off = addr - self.cfg.mem_base
                     if 0 <= off and off + sz <= self.cfg.mem_size:
@@ -534,12 +564,14 @@ class FakeSlave:
             self._err(ErrCode.CMD_UNKNOWN)
             return
         properties = ((0x01 if self.cfg.daq_dynamic else 0)
-                      | 0x10                      # TIMESTAMP_SUPPORTED (Task 5 làm cấu hình được)
-                      | (0x20 if self.cfg.pid_off_supported else 0))
+                      | (0x10 if self.cfg.timestamp_supported else 0)
+                      | (0x20 if self.cfg.pid_off_supported else 0)
+                      | _OVERLOAD_BITS[self.cfg.overload])
+        key_byte = (self.cfg.id_field_type & 0x03) << 6
         self._reply(bytes([0xFF, properties])
                     + self._u16(self.cfg.max_daq)
                     + self._u16(self.cfg.max_event_channel)
-                    + bytes([self.cfg.min_daq, 0x00]))
+                    + bytes([self.cfg.min_daq, key_byte]))
 
     def daq_entries(self, daq: int, odt: int) -> list[tuple[int, int, int, int]]:
         """Trả về list entries (bit_off, sz, ext, addr) đã ghi qua WRITE_DAQ — cho test."""
@@ -712,6 +744,11 @@ class FakeSlave:
         if daq >= len(self._daq_lists):
             self._err(ErrCode.OUT_OF_RANGE)
             return
+        if (self.cfg.timestamp_fixed and self.cfg.timestamp_supported
+                and not (mode & 0x10)):
+            # Spec: TIMESTAMP_FIXED thì master không được tắt timestamp.
+            self._err(ErrCode.CMD_SYNTAX)
+            return
         self._daq_modes[daq] = {"event": event, "mode": mode,
                                  "prescaler": prescaler, "prio": prio}
         self._reply(b"\xff")
@@ -759,8 +796,9 @@ class FakeSlave:
         if not (self.cfg.supports_daq and self.cfg.supports_daq_info):
             self._err(ErrCode.CMD_UNKNOWN)
             return
-        ts_mode = (self.cfg.timestamp_size & 0x07) | ((self.cfg.timestamp_unit_code
-                                                       & 0x0F) << 4)
+        ts_mode = ((self.cfg.timestamp_size & 0x07)
+                   | (0x08 if self.cfg.timestamp_fixed else 0)
+                   | ((self.cfg.timestamp_unit_code & 0x0F) << 4))
         self._reply(bytes([0xFF,
                            self.cfg.granularity_odt_entry_daq,
                            self.cfg.max_odt_entry_size_daq,
