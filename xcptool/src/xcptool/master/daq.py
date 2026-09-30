@@ -3,6 +3,9 @@
 D4a: DaqSignal + pack_odts()
 D4b: DaqListConfig, OdtSignalLayout, PidEntry, configure_daq, stop_daq
 D4c: SamplePoint, TimestampAccumulator, decode_dto
+D4f: DtoFormat — layout DTO (kiểu identification field, timestamp, overrun) suy ra
+     từ caps của ECU; pack_odts/configure_daq/decode_dto/TimestampAccumulator
+     đều nhận DtoFormat thay vì giả định header 1 byte + timestamp 4 byte/10 ns.
 
 Nguyên tắc: không import can, không import PySide6, không import ui/transport.
 """
@@ -167,7 +170,8 @@ class DaqListConfig:
 class OdtSignalLayout:
     """Vị trí một tín hiệu trong frame DTO.
 
-    frame_offset: byte offset tính từ đầu frame (byte 0 = PID).
+    frame_offset: byte offset tính từ đầu frame (byte 0 = byte đầu của header DTO;
+    dữ liệu bắt đầu ở `DtoFormat.data_start(has_timestamp)`).
     """
     signal: DaqSignal
     frame_offset: int
@@ -333,8 +337,11 @@ class PredefinedDaqList:
     """Một DAQ list tĩnh có NỘI DUNG CỐ ĐỊNH (predefined=True qua
     GET_DAQ_LIST_INFO) — ECU tự định nghĩa sẵn signal nào ở ODT nào, master
     không được và không thể tự suy ra. `odts` phải do caller cung cấp từ A2L
-    `/begin DAQ_LIST` hoặc tài liệu ECU, với `frame_offset` đã tính sẵn
-    (byte 0 = PID, cộng thêm timestamp nếu có — xem `OdtSignalLayout`).
+    `/begin DAQ_LIST` hoặc tài liệu ECU, với `frame_offset` đã tính sẵn:
+    tuyệt đối từ đầu frame, phải ≥ `DtoFormat.data_start(has_timestamp)` —
+    header dài 1–4 byte tuỳ kiểu identification field của ECU, cộng timestamp
+    nếu có ở ODT 0 (`configure_daq_predefined` báo `ValueError` nếu offset
+    chồng lên).
     """
     daq: int                              # list vật lý trên ECU
     odts: list[list[OdtSignalLayout]]     # layout cố định — KHÔNG suy ra được, phải cung cấp

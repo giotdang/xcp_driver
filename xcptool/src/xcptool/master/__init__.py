@@ -5,9 +5,9 @@ from __future__ import annotations
 from .constants import Cmd, ErrCode, Pid
 from .core import Link, XcpMaster
 from .daq import (
-    DaqListConfig, DaqSignal, OdtSignalLayout, PidEntry,
+    DaqListConfig, DaqSignal, DtoFormat, OdtSignalLayout, PidEntry,
     SamplePoint, TimestampAccumulator,
-    configure_daq, decode_dto, pack_odts, stop_daq,
+    configure_daq, decode_dto, effective_timestamp, make_key, pack_odts, stop_daq,
 )
 from .errors import ERR_TABLE, error_name, make_slave_error
 from .trace import DEFAULT_CAPACITY, TraceBuffer
@@ -16,6 +16,7 @@ __all__ = [
     "Cmd", "ErrCode", "Pid",
     "Link", "XcpMaster",
     "DaqSignal", "pack_odts",
+    "DtoFormat", "make_key", "effective_timestamp",
     "DaqListConfig", "OdtSignalLayout", "PidEntry",
     "SamplePoint", "TimestampAccumulator",
     "configure_daq", "decode_dto", "stop_daq",

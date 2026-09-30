@@ -286,14 +286,14 @@ sequenceDiagram
     MW->>TR: submit(session.start_daq, daq_lists)
     
     TR->>RS: start_daq(daq_lists)
-    RS->>DAQ: pack_odts(daq_lists, max_dto=8, timestamp=True)
-    Note over DAQ: ODT 0: budget 3B (do trừ 1B PID + 4B TS)\nODT 1+: budget 7B (First-Fit-Decreasing)
+    RS->>DAQ: DtoFormat.from_slave_caps(caps) → pack_odts(daq_lists, max_dto, timestamp, fmt)
+    Note over DAQ: Ngân sách ODT tính từ DtoFormat: header 1–4B (kiểu identification field từ DAQ_KEY_BYTE) và timestamp 0/1/2/4B\nVí dụ CAN 8B, header 1B, TS 4B: ODT 0 = 3B, ODT 1+ = 7B (First-Fit-Decreasing)
     
     RS->>DAQ: configure_daq(transport, packed_lists)
     DAQ->>XM: Chuỗi lệnh: FREE_DAQ -> ALLOC_DAQ -> ALLOC_ODT -> ALLOC_ODT_ENTRY\n-> SET_DAQ_PTR -> WRITE_DAQ -> SET_DAQ_LIST_MODE -> START_STOP_DAQ_LIST(select)
     XM->>ECU: Gửi tuần tự chuỗi cấu hình DAQ
     ECU-->>XM: Xác nhận và trả về first_pid cho từng list
-    DAQ->>DAQ: Dựng bảng tra cứu phẳng O(1): pid -> (signals, offsets, datatypes)
+    DAQ->>DAQ: Dựng bảng tra cứu phẳng O(1): khoá = PID (kiểu header 0) hoặc (DAQ list, ODT) (kiểu 1-3) -> (signals, offsets, datatypes)
     DAQ->>XM: START_STOP_SYNCH (0xDC, start)
     XM->>ECU: START_STOP_SYNCH
     ECU-->>XM: RES (0xFF)
@@ -302,10 +302,10 @@ sequenceDiagram
     
     par Luồng nhận DTO nền (100Hz)
         loop Khi ECU bắn DTO frame
-            ECU->>RX: DTO Frame (PID + TS + Payload)
+            ECU->>RX: DTO Frame (Header + TS + Payload)
             RX->>RS: _on_daq_frame(frame)
             RS->>DAQ: decode_dto(frame, pid_table, ts_accum)
-            DAQ->>DAQ: Trừ cờ overrun, giải mã timestamp qua TimestampAccumulator\n(tự cộng 2^32 khi tràn chu kỳ 42.9s)
+            DAQ->>DAQ: Tách header theo DtoFormat, trừ cờ overrun (nếu ECU báo ở MSB của PID), giải mã timestamp qua TimestampAccumulator\n(tự cộng 2^độ_rộng khi tràn chu kỳ)
             DAQ-->>RS: List[SamplePoint]
             RS->>RS: Đẩy vào DaqRingBuffer (10,000 samples)
         end
