@@ -534,6 +534,7 @@ class FakeSlave:
             self._err(ErrCode.CMD_UNKNOWN)
             return
         properties = ((0x01 if self.cfg.daq_dynamic else 0)
+                      | 0x10                      # TIMESTAMP_SUPPORTED (Task 5 làm cấu hình được)
                       | (0x20 if self.cfg.pid_off_supported else 0))
         self._reply(bytes([0xFF, properties])
                     + self._u16(self.cfg.max_daq)

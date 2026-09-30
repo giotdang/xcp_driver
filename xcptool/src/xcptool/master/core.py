@@ -417,22 +417,32 @@ class XcpMaster:
 
         order = self._caps.byte_order if self._caps else "little"
         properties = proc[1]
+        key_byte = proc[7]
         ts_mode = res[5]
-        ts_size = ts_mode & 0x07
+        raw_ts_size = ts_mode & 0x07
         ts_unit_code = (ts_mode >> 4) & 0x0F
+
+        # Spec: bit TIMESTAMP_SUPPORTED (bit 4 của DAQ_PROPERTIES) = 0 thì
+        # TIMESTAMP_MODE/TICKS không hợp lệ; size 3 và > 4 cũng không hợp lệ.
+        ts_supported = bool(properties & 0x10) and raw_ts_size in (1, 2, 4)
+        overload = {0b00: "none", 0b01: "pid_msb", 0b10: "event"}.get(
+            (properties >> 6) & 0x03, "none")   # 0b11 không hợp lệ → không báo
 
         return DaqCaps(
             max_daq=int.from_bytes(proc[2:4], order),        # type: ignore[arg-type]
             max_event_channel=int.from_bytes(proc[4:6], order),  # type: ignore[arg-type]
             min_daq=proc[6],
             dynamic_daq=bool(properties & 0x01),
-            timestamp_supported=ts_size != 0,
-            timestamp_size=ts_size,
+            timestamp_supported=ts_supported,
+            timestamp_size=raw_ts_size if ts_supported else 0,
             timestamp_unit_ns=TIMESTAMP_UNIT_NS.get(ts_unit_code, 0),
             timestamp_ticks=int.from_bytes(res[6:8], order),  # type: ignore[arg-type]
             pid_off_supported=bool(properties & 0x20),
             granularity_odt_entry_daq=res[1],
             max_odt_entry_size_daq=res[2],
+            id_field_type=(key_byte >> 6) & 0x03,
+            overload=overload,  # type: ignore[arg-type]
+            timestamp_fixed=bool(ts_mode & 0x08),
         )
 
     def _probe_id(self, caps: SlaveCaps) -> str | None:

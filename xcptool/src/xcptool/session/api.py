@@ -182,8 +182,11 @@ class AppConfig:
 class DaqCaps:
     """Năng lực DAQ, đọc từ GET_DAQ_PROCESSOR_INFO + GET_DAQ_RESOLUTION_INFO.
 
-    Ngoài phạm vi M1/M2 — khai báo sẵn để contract không phải đổi ở M4.
-    `None` ở `SlaveCaps.daq` nghĩa là ECU không trả lời các lệnh này.
+    `None` ở `SlaveCaps.daq` nghĩa là ECU không trả lời các lệnh này — khi đó
+    master dùng layout DTO mặc định (header 1 byte, timestamp 4 byte/10 ns).
+
+    `id_field_type`, `overload`, `timestamp_fixed` quyết định layout DTO; xem
+    `master.daq.DtoFormat`.
     """
     max_daq: int
     max_event_channel: int
@@ -196,6 +199,10 @@ class DaqCaps:
     pid_off_supported: bool
     granularity_odt_entry_daq: int
     max_odt_entry_size_daq: int
+    id_field_type: int = 0          # DAQ_KEY_BYTE bit 7-6: 0 absolute ODT | 1 rel ODT + DAQ (BYTE)
+                                    # | 2 rel ODT + DAQ (WORD) | 3 rel ODT + DAQ (WORD, aligned)
+    overload: Literal["none", "pid_msb", "event"] = "pid_msb"   # DAQ_PROPERTIES bit 7-6
+    timestamp_fixed: bool = False   # TIMESTAMP_MODE bit 3: DTO luôn có timestamp
 
 
 @dataclass(frozen=True)
