@@ -589,12 +589,15 @@ def pack_odts(
     signals: list[DaqSignal],
     timestamp_on: bool,
     max_dto: int = 8,
+    *,
+    fmt: DtoFormat | None = None,
 ) -> list[list[DaqSignal]]:
     """Nhét signals vào các ODT, tôn trọng ngân sách byte từng ODT.
 
-    ODT 0 có ngân sách nhỏ hơn khi timestamp bật (PID 1B + TS 4B = 5B overhead):
-        first_budget = max_dto − 1 − (4 if timestamp_on else 0)   # 3 hoặc 7
-        rest_budget  = max_dto − 1                                 # luôn 7
+    Ngân sách tính từ layout DTO của ECU (`fmt`, mặc định `DtoFormat()`):
+        first_budget = max_dto − header_len − (ts_size nếu timestamp_on)
+        rest_budget  = max_dto − header_len
+    Ví dụ CAN 8 B, header 1 B, TS 4 B: ODT 0 = 3 B, ODT 1+ = 7 B.
 
     Thuật toán: tách signals thành hai nhóm theo first_budget, xử lý ODT 0
     riêng (first-fit-decreasing), sau đó xử lý ODT 1+ (large trước, remaining small).
@@ -603,10 +606,21 @@ def pack_odts(
     signals đều lớn hơn first_budget.
 
     Raises:
-        ValueError: một signal lớn hơn rest_budget — không thể nhét vào bất kỳ ODT nào.
+        ValueError: DTO không đủ chỗ cho header (hoặc header + timestamp), hoặc
+            một signal lớn hơn rest_budget — không thể nhét vào bất kỳ ODT nào.
     """
-    first_budget = max_dto - 1 - (4 if timestamp_on else 0)
-    rest_budget = max_dto - 1
+    if fmt is None:
+        fmt = DtoFormat()
+    header = fmt.header_len
+    ts = fmt.ts_size if timestamp_on else 0
+    rest_budget = max_dto - header
+    first_budget = rest_budget - ts
+    if rest_budget <= 0:
+        raise ValueError(
+            f"max_dto={max_dto}B không đủ chỗ cho header DTO {header}B")
+    if first_budget < 0:
+        raise ValueError(
+            f"max_dto={max_dto}B không đủ chỗ cho header {header}B + timestamp {ts}B")
 
     for s in signals:
         if s.size > rest_budget:
