@@ -24,6 +24,8 @@ from ..master.core import XcpMaster
 from ..master.daq import (
     DaqListConfig,
     DaqSignal as _MasterDaqSignal,
+    DtoFormat,
+    DtoKey,
     PidEntry,
     SamplePoint as _MasterSamplePoint,
     TimestampAccumulator,
@@ -115,7 +117,8 @@ class RealSession:
         self._hex_path: Path | None = None
 
         # DAQ state — protected bởi _daq_lock khi cập nhật _daq_ring
-        self._daq_pid_table: dict[int, PidEntry] | None = None
+        self._daq_pid_table: dict[DtoKey, PidEntry] | None = None
+        self._daq_fmt: DtoFormat = DtoFormat()
         self._daq_ts_accum: TimestampAccumulator = TimestampAccumulator()
         self._daq_ring: deque[SamplePoint] = deque(maxlen=_DAQ_RING_CAPACITY)
         self._daq_lock = threading.Lock()
@@ -325,15 +328,15 @@ class RealSession:
     @_guarded("cấu hình DAQ")
     def start_daq(self, lists: list[DaqList]) -> None:
         master = self._require_master()
-        caps = master.caps
-        byte_order = caps.byte_order if caps else "little"
+        fmt = DtoFormat.from_slave_caps(master.caps)
 
         # Reset trước khi configure để không trộn mẫu từ phiên cũ
         master.set_daq_callback(None)
         self._daq_pid_table = None
         with self._daq_lock:
             self._daq_ring.clear()
-        self._daq_ts_accum = TimestampAccumulator(byte_order=byte_order)
+        self._daq_fmt = fmt
+        self._daq_ts_accum = TimestampAccumulator.from_format(fmt)
 
         master_cfgs = [_to_master_cfg(dl) for dl in lists]
         pid_table = configure_daq(master, master_cfgs)
@@ -359,7 +362,7 @@ class RealSession:
         pid_table = self._daq_pid_table
         if pid_table is None:
             return
-        samples = decode_dto(frame, pid_table, self._daq_ts_accum)
+        samples = decode_dto(frame, pid_table, self._daq_ts_accum, self._daq_fmt)
         if not samples:
             return
         with self._daq_lock:

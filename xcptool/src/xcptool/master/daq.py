@@ -188,7 +188,7 @@ class PidEntry:
 def configure_daq(
     master: "XcpMaster",
     configs: list[DaqListConfig],
-) -> dict[int, PidEntry]:
+) -> dict[DtoKey, PidEntry]:
     """Chạy toàn bộ trình tự cấu hình DAQ, trả về PID table cho decoder.
 
     Dynamic (`caps.daq.dynamic_daq=True`, hoặc `caps.daq is None` — không rõ,
@@ -213,11 +213,15 @@ def configure_daq(
 
     max_dto = caps.max_dto
     daq_caps = caps.daq
-    ts_size = (daq_caps.timestamp_size if daq_caps else 4)  # byte, thường 4 trên ECU tham chiếu
+    fmt = DtoFormat.from_slave_caps(caps)
+    # Timestamp thực sự có trong DTO của từng list (TIMESTAMP_FIXED / ECU không
+    # hỗ trợ / theo yêu cầu) — quyết định ngân sách ODT, offset và bit mode.
+    eff_ts = [effective_timestamp(cfg.timestamp, fmt) for cfg in configs]
 
     # Đóng gói signals vào ODTs theo ngân sách từng ODT
     packed: list[list[list[DaqSignal]]] = [
-        pack_odts(cfg.signals, cfg.timestamp, max_dto) for cfg in configs
+        pack_odts(cfg.signals, ts_on, max_dto, fmt=fmt)
+        for cfg, ts_on in zip(configs, eff_ts)
     ]
 
     if daq_caps is not None and not daq_caps.dynamic_daq:
@@ -225,7 +229,7 @@ def configure_daq(
     else:
         daq_indices = _reserve_dynamic_lists(master, configs, packed, daq_caps)
 
-    return _write_and_start(master, configs, packed, daq_indices, ts_size)
+    return _write_and_start(master, configs, packed, daq_indices, fmt, eff_ts)
 
 
 def _reserve_dynamic_lists(
@@ -340,10 +344,24 @@ class PredefinedDaqList:
     priority: int = 0
 
 
+def _check_predefined_offsets(pl: PredefinedDaqList, fmt: DtoFormat, ts_on: bool) -> None:
+    """Mọi `frame_offset` phải nằm sau header (và timestamp ở ODT 0) — nếu
+    không, decode sẽ sai thầm lặng khi ECU có header dài hơn caller giả định."""
+    for odt_idx, layouts in enumerate(pl.odts):
+        start = fmt.data_start(odt_idx == 0 and ts_on)
+        for layout in layouts:
+            if layout.frame_offset < start:
+                raise ValueError(
+                    f"DAQ list {pl.daq} ODT {odt_idx}: signal '{layout.signal.name}' có "
+                    f"frame_offset={layout.frame_offset} < {start} — chồng lên header "
+                    f"{fmt.header_len}B/timestamp của DTO"
+                )
+
+
 def configure_daq_predefined(
     master: "XcpMaster",
     lists: list[PredefinedDaqList],
-) -> dict[int, PidEntry]:
+) -> dict[DtoKey, PidEntry]:
     """Khởi động các DAQ list có nội dung cố định — không ALLOC_*, không
     CLEAR_DAQ_LIST, không SET_DAQ_PTR/WRITE_DAQ, vì ODT đã có sẵn nội dung
     do ECU tự định nghĩa. Chỉ SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select)
@@ -361,9 +379,15 @@ def configure_daq_predefined(
         NotConnectedError, SlaveError: như các hàm DAQ khác (qua _require_daq
             trong từng lệnh master gọi).
     """
-    pid_table: dict[int, PidEntry] = {}
+    fmt = DtoFormat.from_slave_caps(master.caps)
+    # Kiểm tra offset của MỌI list trước khi gửi bất kỳ lệnh nào
+    for pl in lists:
+        _check_predefined_offsets(pl, fmt, effective_timestamp(pl.timestamp, fmt))
+
+    pid_table: dict[DtoKey, PidEntry] = {}
 
     for pl in lists:
+        ts_on = effective_timestamp(pl.timestamp, fmt)
         info = master.get_daq_list_info(pl.daq)
         if not info.predefined:
             raise ValueError(
@@ -380,15 +404,15 @@ def configure_daq_predefined(
                 "nhưng PredefinedDaqList.event=None — phải chỉ định event."
             )
 
-        daq_mode = 0x10 if pl.timestamp else 0x00
+        daq_mode = 0x10 if ts_on else 0x00
         master.set_daq_list_mode(pl.daq, event, daq_mode, pl.prescaler, pl.priority)
         first_pid = master.start_stop_daq_list(mode=2, daq=pl.daq)
 
         for odt_idx, layouts in enumerate(pl.odts):
-            pid_table[first_pid + odt_idx] = PidEntry(
+            pid_table[make_key(fmt, pl.daq, odt_idx, first_pid)] = PidEntry(
                 daq_list=pl.daq,
                 odt_index=odt_idx,
-                has_timestamp=(odt_idx == 0 and pl.timestamp),
+                has_timestamp=(odt_idx == 0 and ts_on),
                 signals=layouts,
             )
 
@@ -401,8 +425,9 @@ def _write_and_start(
     configs: list[DaqListConfig],
     packed: list[list[list[DaqSignal]]],
     daq_indices: list[int],
-    ts_size: int,
-) -> dict[int, PidEntry]:
+    fmt: DtoFormat,
+    eff_ts: list[bool],
+) -> dict[DtoKey, PidEntry]:
     """SET_DAQ_PTR + WRITE_DAQ → SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select)
     × n → START_STOP_SYNCH(1). Dùng chung cho cả hai nhánh dynamic/static.
 
@@ -419,26 +444,24 @@ def _write_and_start(
                 master.write_daq(0xFF, sig.size, sig.ext, sig.address)
 
     # ── SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select) ─────────────────────
-    pid_table: dict[int, PidEntry] = {}
+    pid_table: dict[DtoKey, PidEntry] = {}
 
     for i, (cfg, odts) in enumerate(zip(configs, packed)):
         daq_idx = daq_indices[i]
-        daq_mode = 0x10 if cfg.timestamp else 0x00   # bit4 = timestamp enable
+        daq_mode = 0x10 if eff_ts[i] else 0x00   # bit4 = timestamp enable
         master.set_daq_list_mode(daq_idx, cfg.event, daq_mode, cfg.prescaler, cfg.priority)
         first_pid = master.start_stop_daq_list(mode=2, daq=daq_idx)
 
         for odt_idx, odt in enumerate(odts):
-            pid = first_pid + odt_idx
-            has_ts = (odt_idx == 0 and cfg.timestamp)
-            base = 1 + (ts_size if has_ts else 0)   # byte 0 = PID, bytes 1..ts_size = TS
+            has_ts = (odt_idx == 0 and eff_ts[i])
+            cur = fmt.data_start(has_ts)   # sau header (+ timestamp nếu có)
 
             layouts: list[OdtSignalLayout] = []
-            cur = base
             for sig in odt:
                 layouts.append(OdtSignalLayout(signal=sig, frame_offset=cur))
                 cur += sig.size
 
-            pid_table[pid] = PidEntry(
+            pid_table[make_key(fmt, daq_idx, odt_idx, first_pid)] = PidEntry(
                 daq_list=daq_idx,
                 odt_index=odt_idx,
                 has_timestamp=has_ts,
