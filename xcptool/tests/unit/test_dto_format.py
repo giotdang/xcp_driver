@@ -173,3 +173,33 @@ def test_accumulator_from_format() -> None:
 def test_accumulator_from_format_without_timestamp_keeps_32bit_width() -> None:
     acc = TimestampAccumulator.from_format(DtoFormat(ts_size=0))
     assert acc.width_bits == 32
+
+
+# ── Final review: frame muộn sau rollover + TIMESTAMP_FIXED không hỗ trợ ─────
+
+def test_accumulator_tracks_each_stream_so_late_frames_do_not_shift_later_ones() -> None:
+    """Hai DAQ list dùng chung một accumulator: list B có frame đến muộn ngay sau khi
+    list A đã rollover. Mỗi list được theo dõi riêng nên chuỗi của B vẫn đúng."""
+    acc = TimestampAccumulator(width_bits=16)
+    a1 = acc.to_ns(0xFFF0, stream="A")
+    b1 = acc.to_ns(0xFFE0, stream="B")
+    a2 = acc.to_ns(0x0010, stream="A")     # A đã rollover
+    b2 = acc.to_ns(0xFFF8, stream="B")     # B: frame đến muộn, vẫn ở chu kỳ trước
+    a3 = acc.to_ns(0x0020, stream="A")
+    b3 = acc.to_ns(0x0008, stream="B")     # B rollover
+    assert [t // 10 for t in (a1, b1, a2, b2, a3, b3)] == [
+        65520, 65504, 65552, 65528, 65568, 65544]
+
+
+def test_accumulator_default_stream_keeps_single_stream_behaviour() -> None:
+    """Không truyền stream → một chuỗi duy nhất như trước (test cũ phụ thuộc vào đây)."""
+    acc = TimestampAccumulator()
+    for raw, expected in ((0xFFFF_FF00, 0xFFFF_FF00), (0x100, 0x1_0000_0100),
+                          (0xFFFF_FF00, 0x1_FFFF_FF00), (0x200, 0x2_0000_0200)):
+        assert acc.to_ns(raw) // 10 == expected
+
+
+def test_effective_timestamp_off_when_fixed_but_ecu_has_no_timestamp() -> None:
+    """TIMESTAMP_FIXED không có nghĩa khi không có timestamp (ts_size == 0)."""
+    assert effective_timestamp(False, DtoFormat(ts_size=0, ts_always=True)) is False
+    assert effective_timestamp(True, DtoFormat(ts_size=0, ts_always=True)) is False

@@ -139,15 +139,16 @@ def make_key(fmt: DtoFormat, daq: int, odt: int, first_pid: int) -> DtoKey:
 def effective_timestamp(requested: bool, fmt: DtoFormat) -> bool:
     """Timestamp thực sự có trong DTO của một DAQ list.
 
-    - TIMESTAMP_FIXED: luôn có (master không tắt được), bất kể `requested`.
     - ECU không hỗ trợ timestamp (`ts_size == 0`): không có — hạ xuống tắt
-      im lặng, kết quả giống `timestamp=False` (`timestamp_ns = 0`).
+      im lặng, kết quả giống `timestamp=False` (`timestamp_ns = 0`). Kiểm tra
+      trước hết, vì TIMESTAMP_FIXED không có nghĩa khi không có timestamp.
+    - TIMESTAMP_FIXED: luôn có (master không tắt được), bất kể `requested`.
     - Còn lại: theo `requested`.
     """
-    if fmt.ts_always:
-        return True
     if fmt.ts_size == 0:
         return False
+    if fmt.ts_always:
+        return True
     return requested
 
 
@@ -510,10 +511,16 @@ class TimestampAccumulator:
 
     Rollover chỉ được ghi nhận khi giá trị tụt quá NỬA chu kỳ
     (`last − raw > 2^(width_bits−1)`). Bước lùi nhỏ hơn là hai frame đến lệch
-    thứ tự (hay gặp khi nhiều DAQ list dùng chung bộ tích lũy): epoch không đổi.
+    thứ tự: epoch không đổi.
 
-    Giới hạn: nếu hai lần nhận timestamp cách nhau quá một chu kỳ đầy đủ thì
-    không phân biệt được; timestamp 1 byte quay vòng rất nhanh nên ít hữu dụng.
+    `stream`: mỗi DAQ list có chuỗi riêng (last + epoch riêng) — frame của cùng
+    một list đến đúng thứ tự, còn frame của các list khác nhau có thể đến lệch
+    nhau ngay tại ranh giới rollover mà không làm lệch cả chu kỳ về sau. Không
+    truyền `stream` (None) là một chuỗi duy nhất.
+
+    Giới hạn: hai timestamp liên tiếp của cùng một chuỗi phải cách nhau dưới
+    nửa chu kỳ, nếu không không phân biệt được bước tiến và bước lùi;
+    timestamp 1 byte quay vòng rất nhanh nên ít hữu dụng.
     """
 
     def __init__(self, byte_order: str = "little", width_bits: int = 32,
@@ -522,8 +529,8 @@ class TimestampAccumulator:
         self.width_bits = width_bits
         self.unit_ns = unit_ns
         self.ticks = ticks
-        self._last: int | None = None
-        self._epoch: int = 0   # số lần tràn × 2^width_bits
+        # stream → [giá trị thô gần nhất, epoch = số lần tràn × 2^width_bits]
+        self._streams: dict[object, list[int]] = {}
 
     @classmethod
     def from_format(cls, fmt: DtoFormat) -> TimestampAccumulator:
@@ -534,18 +541,21 @@ class TimestampAccumulator:
             ticks=fmt.ticks,
         )
 
-    def update(self, raw: int) -> int:
+    def update(self, raw: int, stream: object = None) -> int:
         """Nhận giá trị thô của bộ đếm, trả về tick tích lũy (không tràn)."""
         wrap = 1 << self.width_bits
-        if (self._last is not None and raw < self._last
-                and (self._last - raw) > wrap // 2):
-            self._epoch += wrap
-        self._last = raw
-        return self._epoch + raw
+        state = self._streams.get(stream)
+        if state is None:
+            state = self._streams[stream] = [raw, 0]
+            return raw
+        if raw < state[0] and (state[0] - raw) > wrap // 2:
+            state[1] += wrap
+        state[0] = raw
+        return state[1] + raw
 
-    def to_ns(self, raw: int) -> int:
+    def to_ns(self, raw: int, stream: object = None) -> int:
         """Trả về timestamp tuyệt đối tính bằng nanosecond."""
-        total = self.update(raw)
+        total = self.update(raw, stream)
         if self.unit_ns == 0 or self.ticks == 0:
             return 0
         return total * self.unit_ns // self.ticks
@@ -599,7 +609,7 @@ def decode_dto(
             frame[header_len:header_len + fmt.ts_size],
             ts_accum.byte_order,  # type: ignore[arg-type]
         )
-        ts_ns = ts_accum.to_ns(raw_ts)
+        ts_ns = ts_accum.to_ns(raw_ts, stream=entry.daq_list)
 
     samples: list[SamplePoint] = []
     for layout in entry.signals:

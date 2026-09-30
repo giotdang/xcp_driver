@@ -128,3 +128,11 @@ def test_multi_byte_fields_follow_slave_byte_order() -> None:
     assert caps.max_daq == 5
     assert caps.max_event_channel == 2
     assert caps.timestamp_ticks == 10
+
+
+def test_timestamp_fixed_ignored_when_timestamp_not_supported() -> None:
+    """Final review: bit 4 = 0 thì TIMESTAMP_MODE (kể cả bit 3) không hợp lệ."""
+    caps = _probe("FF01000000000000", "FF010701000C0100")    # bit 4 = 0; mode 0x0C: size 4 + bit 3
+    assert caps is not None
+    assert caps.timestamp_supported is False
+    assert caps.timestamp_fixed is False

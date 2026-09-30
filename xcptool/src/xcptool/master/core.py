@@ -442,7 +442,8 @@ class XcpMaster:
             max_odt_entry_size_daq=res[2],
             id_field_type=(key_byte >> 6) & 0x03,
             overload=overload,  # type: ignore[arg-type]
-            timestamp_fixed=bool(ts_mode & 0x08),
+            # TIMESTAMP_MODE chỉ hợp lệ khi ECU báo hỗ trợ timestamp
+            timestamp_fixed=ts_supported and bool(ts_mode & 0x08),
         )
 
     def _probe_id(self, caps: SlaveCaps) -> str | None:

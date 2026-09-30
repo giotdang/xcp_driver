@@ -169,3 +169,22 @@ def test_decode_invalid_unit_still_skips_timestamp_bytes() -> None:
     frame = bytes([0x00, 0x34, 0x12, 0x99, 0, 0, 0, 0])
     samples = decode_dto(frame, table, _acc(fmt), fmt)
     assert (samples[0].value_raw, samples[0].timestamp_ns) == (b"\x99", 0)
+
+
+def test_decode_keeps_timestamps_of_each_daq_list_independent() -> None:
+    """Final review: hai list dùng chung accumulator, list 1 có frame muộn sau khi list 0
+    rollover. decode_dto phải theo dõi timestamp theo từng DAQ list."""
+    fmt = DtoFormat(id_type=1, ts_size=2, unit_ns=10, ticks=1, overload="none")
+    table = {
+        (0, 0): _entry(0, 0, True, (_sig("a"), 4)),
+        (1, 0): _entry(1, 0, True, (_sig("b"), 4)),
+    }
+    acc = _acc(fmt)
+
+    def stamp(daq: int, raw: int) -> int:
+        frame = bytes([0x00, daq]) + raw.to_bytes(2, "little") + b"\x01\x00\x00\x00"
+        return decode_dto(frame, table, acc, fmt)[0].timestamp_ns // 10
+
+    got = [stamp(0, 0xFFF0), stamp(1, 0xFFE0), stamp(0, 0x0010),
+           stamp(1, 0xFFF8), stamp(0, 0x0020), stamp(1, 0x0008)]
+    assert got == [65520, 65504, 65552, 65528, 65568, 65544]
