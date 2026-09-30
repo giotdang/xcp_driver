@@ -9,6 +9,7 @@ Nguyên tắc: không import can, không import PySide6, không import ui/transp
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -522,25 +523,52 @@ class TimestampAccumulator:
 
 def decode_dto(
     frame: bytes,
-    pid_table: dict[int, PidEntry],
+    pid_table: Mapping[DtoKey, PidEntry],
     ts_accum: TimestampAccumulator,
+    fmt: DtoFormat | None = None,
 ) -> list[SamplePoint]:
-    """Decode một DTO frame thành list SamplePoint.
+    """Decode một DTO frame thành list SamplePoint theo layout `fmt`.
 
-    bit 7 của PID = overrun flag — mask trước khi tra bảng.
-    Timestamp chỉ có ở ODT 0 (has_timestamp=True) — 4 byte @ offset 1.
-    Frame quá ngắn cho một signal → signal đó bị bỏ qua (không raise).
+    Chạy trên RX thread: KHÔNG bao giờ raise — frame rỗng, ngắn hơn header,
+    hoặc khoá không có trong bảng → `[]`.
+
+    Header theo `fmt.id_type` (xem DtoFormat). Bảng tra khoá bằng PID tuyệt đối
+    (kiểu 0) hoặc `(số DAQ list, số ODT)` (kiểu 1–3). Nếu `fmt.overload` là
+    "pid_msb", bit 7 của byte đầu là cờ overrun — mask trước khi tra bảng.
+    Timestamp chỉ có ở ODT 0 (`has_timestamp=True`), ngay sau header; frame
+    ngắn hơn `header + ts_size` thì `timestamp_ns = 0`.
+    Frame quá ngắn cho một signal → signal đó bị bỏ qua.
     """
-    if not frame:
+    if fmt is None:
+        fmt = DtoFormat()
+    header_len = fmt.header_len
+    if len(frame) < header_len:
         return []
-    pid = frame[0] & 0x7F
-    entry = pid_table.get(pid)
+
+    first = frame[0]
+    odt_or_pid = first & 0x7F if fmt.overload == "pid_msb" else first
+    key: DtoKey
+    if fmt.id_type == 0:
+        key = odt_or_pid
+    else:
+        if fmt.id_type == 1:
+            daq = frame[1]
+        elif fmt.id_type == 2:
+            daq = int.from_bytes(frame[1:3], fmt.byte_order)
+        else:                                   # kiểu 3: frame[1] là byte FILL
+            daq = int.from_bytes(frame[2:4], fmt.byte_order)
+        key = (daq, odt_or_pid)
+
+    entry = pid_table.get(key)
     if entry is None:
         return []
 
     ts_ns = 0
-    if entry.has_timestamp and len(frame) >= 5:
-        raw_ts = int.from_bytes(frame[1:5], ts_accum.byte_order)  # type: ignore[arg-type]
+    if entry.has_timestamp and fmt.ts_size > 0 and len(frame) >= header_len + fmt.ts_size:
+        raw_ts = int.from_bytes(
+            frame[header_len:header_len + fmt.ts_size],
+            ts_accum.byte_order,  # type: ignore[arg-type]
+        )
         ts_ns = ts_accum.to_ns(raw_ts)
 
     samples: list[SamplePoint] = []
