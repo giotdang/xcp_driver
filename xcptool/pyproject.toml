@@ -19,7 +19,7 @@ dependencies = [
     "PySide6-Fluent-Widgets>=1.11",
     "pyqtgraph>=0.13",
     "numpy>=1.26",     # dùng trực tiếp trong measurement_view.py (Fix 1: np.fromiter)
-    "PyOpenGL>=3.1",   # dùng trong measurement_view.py (Fix 2: useOpenGL=True)
+    "PyOpenGL>=3.1",   # chỉ dùng khi XCPTOOL_OPENGL=1 (measurement_view.py); mặc định đồ thị vẽ software
     "bincopy>=20.1.1", # Intel HEX / Motorola S-record parsing (Hex View)
 ]
 

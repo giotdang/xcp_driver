@@ -543,3 +543,31 @@ def test_radix_change_updates_float_and_int_live_values(view: MeasurementView) -
 
 
 
+
+
+# ── viewport của đồ thị ──────────────────────────────────────────────────────
+# Trên máy thật (Windows + PySide6 6.11) viewport QOpenGLWidget không tạo được
+# framebuffer ("Framebuffer incomplete") → đồ thị đen và log đầy "QPainter: Painter
+# not active". Vì vậy mặc định phải là software; GL chỉ bật khi người dùng chủ động.
+
+def test_do_thi_mac_dinh_dung_software_khong_dung_opengl(qtbot, monkeypatch) -> None:
+    import pyqtgraph as pg
+
+    monkeypatch.delenv("XCPTOOL_OPENGL", raising=False)
+    v = MeasurementView()
+    qtbot.addWidget(v)
+
+    assert pg.getConfigOption("useOpenGL") is False
+    assert type(v._plot.viewport()).__name__ == "QWidget"
+
+
+def test_do_thi_bat_opengl_khi_nguoi_dung_yeu_cau(qtbot, monkeypatch) -> None:
+    import pyqtgraph as pg
+
+    monkeypatch.setenv("XCPTOOL_OPENGL", "1")
+    v = MeasurementView()
+    qtbot.addWidget(v)
+
+    assert pg.getConfigOption("useOpenGL") is True
+    # trả lại cấu hình mặc định để không rò sang test khác (config của pyqtgraph là global)
+    pg.setConfigOptions(useOpenGL=False, antialias=False)

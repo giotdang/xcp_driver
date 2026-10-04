@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import struct
 import time
 from collections import deque
@@ -231,17 +232,19 @@ class MeasurementView(QWidget):
         self.tree.setColumnWidth(COL_ADDR, 90)
 
         # đồ thị (phải)
-        # Fix 2: OpenGL offload render sang GPU — nhanh hơn software QPainter.
-        # Graceful fallback nếu PyOpenGL chưa cài (log warning, không crash).
-        try:
-            import OpenGL  # noqa: F401
-            pg.setConfigOptions(antialias=True, useOpenGL=True)
-        except ImportError:
-            log.warning(
-                "PyOpenGL chưa cài — scope dùng software rendering (chậm hơn). "
-                "Cài bằng: pip install PyOpenGL"
-            )
-            pg.setConfigOptions(antialias=False, useOpenGL=False)
+        # Mặc định vẽ bằng software. Viewport OpenGL (QOpenGLWidget) từng làm đồ thị đen
+        # hoàn toàn và tràn log "QPainter: Painter not active" trên máy thật: framebuffer
+        # không tạo được ("QOpenGLFramebufferObject: Framebuffer incomplete", "QOpenGLWidget:
+        # Failed to create wrapper texture"), bất kể antialias. Máy nào chạy được GL ổn
+        # thì bật bằng biến môi trường XCPTOOL_OPENGL=1 (cần PyOpenGL).
+        use_gl = os.environ.get("XCPTOOL_OPENGL") == "1"
+        if use_gl:
+            try:
+                import OpenGL  # noqa: F401
+            except ImportError:
+                log.warning("XCPTOOL_OPENGL=1 nhưng PyOpenGL chưa cài — dùng software rendering.")
+                use_gl = False
+        pg.setConfigOptions(antialias=use_gl, useOpenGL=use_gl)
         self._plot = pg.PlotWidget(background=None)
         self._plot.setLabel("left",   "Value")
         self._plot.setLabel("bottom", "Time (s)")

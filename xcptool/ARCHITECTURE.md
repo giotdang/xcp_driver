@@ -317,7 +317,7 @@ sequenceDiagram
             MV->>MV: Cập nhật giá trị số thực cột "Giá trị" (Tree)
             alt Chế độ Scope đang BẬT
                 MV->>MV: np.fromiter() chuyển đổi dữ liệu nhanh
-                MV->>MV: PyOpenGL Curve.setData() vẽ đồ thị thời gian thực
+                MV->>MV: Curve.setData() vẽ đồ thị thời gian thực (software; OpenGL chỉ khi XCPTOOL_OPENGL=1)
             else Chế độ Scope đang TẮT
                 MV->>MV: Bỏ qua 100% việc tính toán và vẽ đồ thị (siêu nhẹ)
             end

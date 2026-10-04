@@ -17,7 +17,7 @@ xcptool hiện đã hoàn thiện các mốc phát triển **M1 → M6** với �
 | **Nạp file mô tả A2L** | Tự động phân tích file A2L (ASAM MCD-2 MC), nạp toàn bộ danh mục CHARACTERISTIC, MEASUREMENT, kiểu dữ liệu và RECORD_LAYOUT. |
 | **Panel Hiệu chỉnh (Calibration)** | Xem và chỉnh sửa tham số theo tên, hỗ trợ phân cấp Struct và mảng Array `[0..N-1]`, sửa trực tiếp inline (double-click), đánh dấu màu cam (dirty), chống ghi đè trang ROM. |
 | **Quản lý trang Calibration** | Điều khiển chuyển đổi trang Working (RAM) và Reference (ROM), hỗ trợ tính năng 1-click Copy Reference $\rightarrow$ Working. |
-| **Panel Đo lường (Measurement & Scope)** | Chọn tín hiệu đo từ A2L, cấu hình DAQ list trên ECU, hiển thị giá trị số thực thời gian thực (Live Value), vẽ đồ thị Scope đa tín hiệu thời gian thực mượt mà (tăng tốc GPU PyOpenGL). |
+| **Panel Đo lường (Measurement & Scope)** | Chọn tín hiệu đo từ A2L, cấu hình DAQ list trên ECU, hiển thị giá trị số thực thời gian thực (Live Value), vẽ đồ thị Scope đa tín hiệu thời gian thực (mặc định software rendering; tăng tốc GPU là tuỳ chọn). |
 | **Switch tối ưu Scope** | Nút gạt bật/tắt đồ thị: Tắt scope giúp giải phóng 100% tải GPU/CPU khi chỉ cần xem bảng giá trị. |
 | **Cửa sổ CAN Trace** | Bảng ghi nhận toàn bộ frame CAN thời gian thực, bộ lọc thông minh (mặc định ẩn DTO để tránh nghẽn UI), tự động cuộn khi đang nhìn thấy, xuất file CSV. |
 | **Console lệnh thô** | Gõ trực tiếp byte CTO dạng Hex, có các nút lệnh nhanh XCP chuẩn, lướt lịch sử lệnh (phím mũi tên). |
@@ -36,10 +36,13 @@ python -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 ```
 
-> **Mẹo tăng tốc đồ thị Scope:**
-> Cài đặt thêm PyOpenGL để bật tính năng render đồ thị bằng phần cứng (GPU):
+> **Tăng tốc đồ thị Scope bằng GPU (tuỳ chọn, mặc định tắt):**
+> Đồ thị mặc định vẽ bằng software vì trên một số máy/driver (đã gặp: Windows + PySide6 6.11)
+> viewport OpenGL không tạo được framebuffer — đồ thị đen và log đầy `QPainter: Painter not active`.
+> Máy nào chạy GL ổn thì cài PyOpenGL và đặt biến môi trường `XCPTOOL_OPENGL=1` trước khi chạy:
 > ```bash
 > .venv\Scripts\pip install PyOpenGL
+> set XCPTOOL_OPENGL=1
 > ```
 
 ### Cài đặt Driver thiết bị phần cứng CAN
@@ -247,5 +250,6 @@ xcptool [--session fake|real] [--backend TÊN] [--channel KÊNH]
 | Thiết bị CAN hiện màu xám | Chưa cài driver nhà sản xuất | Đọc dòng hướng dẫn hiển thị dưới tên thiết bị để tải driver tương ứng. |
 | "ECU không trả lời" (Timeout) | Sai Bitrate hoặc sai CAN ID | Kiểm tra lại Bitrate (500k, 250k...) và cặp CAN ID CRO/DTO trong hộp thoại Kết nối. |
 | Ghi tham số bị từ chối | Đang ở Reference page (ROM) | Bấm nút chuyển sang Working page trong hộp thoại thông báo để ghi lại. |
-| Đồ thị scope giật lag | Đang dùng software rendering | Cài đặt gói `PyOpenGL` (`pip install PyOpenGL`) để kích hoạt tăng tốc GPU. |
+| Đồ thị scope giật lag | Đang dùng software rendering (mặc định) | Thử bật GPU: cài `PyOpenGL` và đặt `XCPTOOL_OPENGL=1`. Nếu đồ thị chuyển sang đen / log báo `Framebuffer incomplete` thì bỏ biến này đi. |
+| Đồ thị scope đen xì, log đầy `QPainter: Painter not active` | Bật OpenGL (`XCPTOOL_OPENGL=1`) trên máy/driver không tạo được framebuffer | Bỏ biến môi trường `XCPTOOL_OPENGL` — mặc định xcptool dùng software rendering. |
 | Bị nghẽn frame khi đo DAQ | Bật hiển thị DAQ trong Trace | Tắt checkbox lọc `DAQ` trong tab Trace CAN để giảm tải vẽ bảng. |
