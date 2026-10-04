@@ -91,3 +91,47 @@ def test_timestamp_ticks_follow_unit_ticks_and_width(channel: str) -> None:
 def test_timestamp_ticks_default_is_32bit_10ns(channel: str) -> None:
     with FakeSlave(SlaveConfig(channel=channel)) as slave:
         assert slave._timestamp_ticks(1_000) == 100
+
+
+# ── DTO trên CAN ID riêng của từng DAQ list ──────────────────────────────────
+
+def _frames_by_can_id(channel: str, slave_ids: dict[int, int]) -> tuple[dict, dict]:
+    """Chạy DAQ hai list ~0.5 s, trả (can_id → các frame, bảng PID)."""
+    import time
+    from dataclasses import replace
+
+    from xcptool.master.daq import DaqListConfig, DaqSignal, configure_daq
+
+    cfg = SlaveConfig(channel=channel, daq_can_ids=slave_ids, max_daq=2)
+    bus = BusConfig(backend="virtual", channel=channel, cro_id=cfg.cro_id,
+                    dto_id=cfg.dto_id, pad_dlc=cfg.pad_dlc, t1_timeout_s=0.5)
+    bus = replace(bus, daq_can_ids=tuple(slave_ids.items()))
+    sig = lambda n: DaqSignal(n, cfg.mem_base, 0, 2, "UINT16")  # noqa: E731
+    session = RealSession()
+    seen: dict[int, list[bytes]] = {}
+    try:
+        with FakeSlave(cfg):
+            session.connect(bus)
+            master = session._master  # type: ignore[attr-defined]
+            master.set_daq_callback(lambda d, cid: seen.setdefault(cid, []).append(d))
+            table = configure_daq(master, [
+                DaqListConfig(signals=[sig("a")], event=0, timestamp=False),
+                DaqListConfig(signals=[sig("b")], event=0, timestamp=False)])
+            time.sleep(0.5)
+    finally:
+        session.close()
+    return seen, table
+
+
+def test_dto_cua_list_phat_tren_id_rieng(channel: str) -> None:
+    seen, table = _frames_by_can_id(channel, {0: 0x611, 1: 0x612})
+
+    assert set(seen) == {0x611, 0x612}
+    for can_id, daq in ((0x611, 0), (0x612, 1)):
+        assert all(table[f[0] & 0x7F].daq_list == daq for f in seen[can_id])
+
+
+def test_khong_cau_hinh_thi_dto_tren_dto_id(channel: str) -> None:
+    seen, _table = _frames_by_can_id(channel, {})
+
+    assert set(seen) == {SlaveConfig().dto_id}

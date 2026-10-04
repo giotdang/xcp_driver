@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import can
 
@@ -79,6 +79,9 @@ class SlaveConfig:
     timestamp_ticks: int = 1
     timestamp_supported: bool = True      # bit TIMESTAMP_SUPPORTED trong DAQ_PROPERTIES
     timestamp_fixed: bool = False         # bit TIMESTAMP_FIXED: DTO luôn có timestamp
+    # DTO của DAQ list vật lý n phát trên `daq_can_ids.get(n, dto_id)`; response và
+    # event vẫn trên `dto_id`. Rỗng = mọi thứ trên một ID như trước.
+    daq_can_ids: dict[int, int] = field(default_factory=dict)
     id_field_type: int = 0                # 0 absolute | 1 rel+DAQ BYTE | 2 rel+DAQ WORD | 3 WORD aligned
     overload: str = "pid_msb"             # "none" | "pid_msb" | "event"
     granularity_odt_entry_daq: int = 1
@@ -325,7 +328,7 @@ class FakeSlave:
                     payload = bytes(frame[:8])
                 try:
                     self._bus.send(can.Message(
-                        arbitration_id=self.cfg.dto_id, data=payload,
+                        arbitration_id=self.cfg.daq_can_ids.get(daq, self.cfg.dto_id), data=payload,
                         is_extended_id=self.cfg.extended_id,
                         is_fd=self.cfg.is_fd,
                         bitrate_switch=self.cfg.is_fd))
