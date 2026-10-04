@@ -325,6 +325,16 @@ sequenceDiagram
     end
 ```
 
+#### 4.4.1 DAQ trên nhiều CAN ID (mỗi DAQ list một ID)
+
+Một số ECU phát DTO của từng DAQ list trên CAN ID riêng (vd 0x6A2 cho list 0, 0x6A3 cho list 1), còn response/event vẫn ở `dto_id`. `BusConfig.daq_can_ids` là các cặp `(số DAQ list vật lý, can_id)`; `BusConfig.rx_ids` = `{dto_id}` ∪ các ID đó. Cả ba tầng cùng đọc tập này:
+
+- **Filter phần cứng** (`transport/pycan.py::rx_filters`): một filter cho mỗi ID trong `rx_ids`.
+- **`XcpMaster._on_frame`**: bỏ frame ngoài `rx_ids`; frame trên `dto_id` phân loại như cũ; frame trên ID riêng của một list **luôn là `daq`** (byte 0xFF/0xFE là dữ liệu, không phải response). Callback DAQ nhận `(data, can_id)`.
+- **Bảng tra DTO**: khi `daq_can_ids` không rỗng, `RealSession.start_daq` truyền `route_of=cfg.daq_can_id_of` cho `configure_daq`, khoá bảng thành `(can_id, khoá)` (`RouteKey`) và `decode_dto(..., can_id=)` tra theo cặp đó — chịu được ECU đánh PID lại theo từng list. ID tra theo số DAQ list **vật lý** (`daq_idx`), không theo vị trí trong danh sách cấu hình. Rỗng thì khoá thuần như cũ.
+
+`BusConfig.validate_ids()` từ chối cấu hình có hai list cùng ID hoặc trùng `cro_id` ngay lúc Connect.
+
 ---
 
 ### 4.5 Luồng Giả lập Xe & ECU khép vòng (`--session fake`)

@@ -27,6 +27,7 @@ from ..master.daq import (
     DtoFormat,
     DtoKey,
     PidEntry,
+    RouteKey,
     SamplePoint as _MasterSamplePoint,
     TimestampAccumulator,
     configure_daq,
@@ -117,7 +118,9 @@ class RealSession:
         self._hex_path: Path | None = None
 
         # DAQ state — protected bởi _daq_lock khi cập nhật _daq_ring
-        self._daq_pid_table: dict[DtoKey, PidEntry] | None = None
+        self._daq_pid_table: dict[DtoKey | RouteKey, PidEntry] | None = None
+        self._daq_routed = False     # bảng khoá theo (can_id, khoá) — xem start_daq
+        self._bus_cfg: BusConfig | None = None   # cấu hình đang dùng để nói chuyện
         self._daq_fmt: DtoFormat = DtoFormat()
         self._daq_ts_accum: TimestampAccumulator = TimestampAccumulator()
         self._daq_ring: deque[SamplePoint] = deque(maxlen=_DAQ_RING_CAPACITY)
@@ -170,10 +173,12 @@ class RealSession:
         self._last_state = ConnState.CONNECTING
 
         try:
+            cfg.validate_ids()
             transport = registry.open_transport(cfg)
             master = XcpMaster(transport, cfg, trace=self._trace)
             self._transport = transport
             self._master = master
+            self._bus_cfg = cfg
 
             caps = master.connect()
             self._reject_if_locked(master, caps)
@@ -343,7 +348,12 @@ class RealSession:
         self._daq_ts_accum = TimestampAccumulator.from_format(fmt)
 
         master_cfgs = [_to_master_cfg(dl) for dl in lists]
-        pid_table = configure_daq(master, master_cfgs)
+        bus = self._bus_cfg
+        # Có ID riêng cho DAQ list thì tra bảng theo (can_id, khoá); không thì
+        # giữ khoá thuần như cũ.
+        route_of = bus.daq_can_id_of if bus is not None and bus.daq_can_ids else None
+        self._daq_routed = route_of is not None
+        pid_table = configure_daq(master, master_cfgs, route_of=route_of)
 
         self._daq_pid_table = pid_table
         master.set_daq_callback(self._on_daq_frame)
@@ -366,7 +376,8 @@ class RealSession:
         pid_table = self._daq_pid_table
         if pid_table is None:
             return
-        samples = decode_dto(frame, pid_table, self._daq_ts_accum, self._daq_fmt)
+        samples = decode_dto(frame, pid_table, self._daq_ts_accum, self._daq_fmt,
+                             can_id if self._daq_routed else None)
         if not samples:
             return
         with self._daq_lock:
