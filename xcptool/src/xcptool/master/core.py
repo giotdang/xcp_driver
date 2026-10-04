@@ -107,9 +107,10 @@ class XcpMaster:
         # False = ECU từ chối (đã chuyển sang hai lệnh rời thành công).
         self._combined_page_switch: bool | None = None
 
-        # DAQ callback — được gọi từ RX thread khi nhận DAO frame (byte0 < 0xFC).
+        # DAQ callback — được gọi từ RX thread khi nhận DAO frame (byte0 < 0xFC,
+        # hoặc mọi frame trên CAN ID riêng của một DAQ list), kèm CAN ID của frame.
         # Phải là hàm nhanh, không chặn; set_daq_callback() để đăng ký/huỷ.
-        self._daq_callback: Callable[[bytes], None] | None = None
+        self._daq_callback: Callable[[bytes, int], None] | None = None
 
         self._stop = threading.Event()
         self._rx_thread = threading.Thread(
@@ -137,10 +138,11 @@ class XcpMaster:
     def drain_trace(self, max_items: int = 5000) -> list[TraceEntry]:
         return self._trace.drain(max_items)
 
-    def set_daq_callback(self, callback: Callable[[bytes], None] | None) -> None:
-        """Đăng ký (hoặc huỷ) callback nhận DAO frame.
+    def set_daq_callback(self, callback: Callable[[bytes, int], None] | None) -> None:
+        """Đăng ký (hoặc huỷ) callback nhận DAO frame: `callback(data, can_id)`.
 
-        Callback được gọi từ RX thread khi frame có byte0 < 0xFC (DAO/event).
+        Gọi từ RX thread khi frame trên `dto_id` có byte0 < 0xFC (DAO/event), hoặc
+        khi frame tới trên CAN ID riêng của một DAQ list (`cfg.daq_can_ids`).
         Phải trả về ngay — không được gọi transact() hay chặn trong callback.
         Truyền None để tắt.
         """
@@ -174,10 +176,14 @@ class XcpMaster:
 
     def _on_frame(self, frame: RxFrame) -> None:
         data = bytes(frame.data)
-        if frame.can_id != self._cfg.dto_id:
+        cfg = self._cfg
+        if frame.can_id not in cfg.rx_ids:
             return
 
-        kind = classify(data)
+        # ID riêng của DAQ list chỉ chở DTO: byte đầu 0xFF/0xFE là dữ liệu, không
+        # phải response. ID trùng `dto_id` thì vẫn phân loại như cũ.
+        dedicated = frame.can_id != cfg.dto_id
+        kind = "daq" if dedicated else classify(data)
         self._trace.add("rx", frame.can_id, data, kind,
                         describe_rx(data, self._pending_cmd), t_mono=frame.t_mono)
 
@@ -195,7 +201,7 @@ class XcpMaster:
             cb = self._daq_callback
             if cb is not None:
                 try:
-                    cb(data)
+                    cb(data, frame.can_id)
                 except Exception:  # noqa: BLE001 — callback không được làm chết RX thread
                     log.exception("Lỗi trong DAQ callback, đã nuốt")
 

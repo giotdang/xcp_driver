@@ -361,7 +361,7 @@ class RealSession:
             count = min(n, len(self._daq_ring))
             return [self._daq_ring.popleft() for _ in range(count)]
 
-    def _on_daq_frame(self, frame: bytes) -> None:
+    def _on_daq_frame(self, frame: bytes, can_id: int) -> None:
         """Callback từ XcpMaster RX thread — giải mã frame và đẩy vào ring."""
         pid_table = self._daq_pid_table
         if pid_table is None:
