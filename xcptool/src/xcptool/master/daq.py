@@ -12,7 +12,7 @@ Nguyên tắc: không import can, không import PySide6, không import ui/transp
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DaqSignal", "pack_odts",
-    "DtoFormat", "DtoKey", "make_key", "effective_timestamp",
+    "DtoFormat", "DtoKey", "RouteKey", "make_key", "route_key", "effective_timestamp",
     "DaqListConfig", "OdtSignalLayout", "PidEntry",
     "configure_daq", "stop_daq",
     "PredefinedDaqList", "configure_daq_predefined",
@@ -125,6 +125,15 @@ DtoKey = int | tuple[int, int]
 """Khoá bảng tra DTO: `PID` (kiểu 0) hoặc `(số DAQ list, số ODT tương đối)` (kiểu 1–3)."""
 
 
+RouteKey = tuple[int, DtoKey]
+"""Khoá bảng tra khi DTO được định tuyến theo CAN ID: `(can_id, DtoKey)`. Một bảng
+chỉ chứa MỘT dạng khoá — thuần (một CAN ID) hoặc `RouteKey` (nhiều CAN ID)."""
+
+
+def route_key(can_id: int, key: DtoKey) -> RouteKey:
+    return (can_id, key)
+
+
 def make_key(fmt: DtoFormat, daq: int, odt: int, first_pid: int) -> DtoKey:
     """Khoá bảng tra cho ODT `odt` của DAQ list vật lý `daq`.
 
@@ -193,7 +202,8 @@ class PidEntry:
 def configure_daq(
     master: "XcpMaster",
     configs: list[DaqListConfig],
-) -> dict[DtoKey, PidEntry]:
+    route_of: Callable[[int], int] | None = None,
+) -> dict[DtoKey | RouteKey, PidEntry]:
     """Chạy toàn bộ trình tự cấu hình DAQ, trả về PID table cho decoder.
 
     Dynamic (`caps.daq.dynamic_daq=True`, hoặc `caps.daq is None` — không rõ,
@@ -204,6 +214,9 @@ def configure_daq(
     Static (`caps.daq.dynamic_daq=False`): ECU không cho ALLOC_*, list phải
     có sẵn — CLEAR_DAQ_LIST thay FREE_DAQ, list vật lý được chọn theo dung
     lượng còn trống (GET_DAQ_LIST_INFO) nên có thể không trùng thứ tự configs.
+
+    `route_of(daq_vat_ly) -> can_id`: ECU phát DTO của từng list trên CAN ID riêng.
+    Có truyền thì khoá bảng là `RouteKey`; `None` thì khoá thuần như trước.
 
     Raises:
         UnsupportedByEcuError: ECU không có DAQ; hoặc (`caps.daq is None`)
@@ -234,7 +247,7 @@ def configure_daq(
     else:
         daq_indices = _reserve_dynamic_lists(master, configs, packed, daq_caps)
 
-    return _write_and_start(master, configs, packed, daq_indices, fmt, eff_ts)
+    return _write_and_start(master, configs, packed, daq_indices, fmt, eff_ts, route_of)
 
 
 def _reserve_dynamic_lists(
@@ -369,7 +382,8 @@ def _check_predefined_offsets(pl: PredefinedDaqList, fmt: DtoFormat, ts_on: bool
 def configure_daq_predefined(
     master: "XcpMaster",
     lists: list[PredefinedDaqList],
-) -> dict[DtoKey, PidEntry]:
+    route_of: Callable[[int], int] | None = None,
+) -> dict[DtoKey | RouteKey, PidEntry]:
     """Khởi động các DAQ list có nội dung cố định — không ALLOC_*, không
     CLEAR_DAQ_LIST, không SET_DAQ_PTR/WRITE_DAQ, vì ODT đã có sẵn nội dung
     do ECU tự định nghĩa. Chỉ SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select)
@@ -392,7 +406,7 @@ def configure_daq_predefined(
     for pl in lists:
         _check_predefined_offsets(pl, fmt, effective_timestamp(pl.timestamp, fmt))
 
-    pid_table: dict[DtoKey, PidEntry] = {}
+    pid_table: dict[DtoKey | RouteKey, PidEntry] = {}
 
     for pl in lists:
         ts_on = effective_timestamp(pl.timestamp, fmt)
@@ -417,7 +431,10 @@ def configure_daq_predefined(
         first_pid = master.start_stop_daq_list(mode=2, daq=pl.daq)
 
         for odt_idx, layouts in enumerate(pl.odts):
-            pid_table[make_key(fmt, pl.daq, odt_idx, first_pid)] = PidEntry(
+            key = make_key(fmt, pl.daq, odt_idx, first_pid)
+            if route_of is not None:
+                key = route_key(route_of(pl.daq), key)
+            pid_table[key] = PidEntry(
                 daq_list=pl.daq,
                 odt_index=odt_idx,
                 has_timestamp=(odt_idx == 0 and ts_on),
@@ -435,7 +452,8 @@ def _write_and_start(
     daq_indices: list[int],
     fmt: DtoFormat,
     eff_ts: list[bool],
-) -> dict[DtoKey, PidEntry]:
+    route_of: Callable[[int], int] | None = None,
+) -> dict[DtoKey | RouteKey, PidEntry]:
     """SET_DAQ_PTR + WRITE_DAQ → SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select)
     × n → START_STOP_SYNCH(1). Dùng chung cho cả hai nhánh dynamic/static.
 
@@ -452,7 +470,7 @@ def _write_and_start(
                 master.write_daq(0xFF, sig.size, sig.ext, sig.address)
 
     # ── SET_DAQ_LIST_MODE + START_STOP_DAQ_LIST(select) ─────────────────────
-    pid_table: dict[DtoKey, PidEntry] = {}
+    pid_table: dict[DtoKey | RouteKey, PidEntry] = {}
 
     for i, (cfg, odts) in enumerate(zip(configs, packed)):
         daq_idx = daq_indices[i]
@@ -469,7 +487,10 @@ def _write_and_start(
                 layouts.append(OdtSignalLayout(signal=sig, frame_offset=cur))
                 cur += sig.size
 
-            pid_table[make_key(fmt, daq_idx, odt_idx, first_pid)] = PidEntry(
+            key = make_key(fmt, daq_idx, odt_idx, first_pid)
+            if route_of is not None:
+                key = route_key(route_of(daq_idx), key)
+            pid_table[key] = PidEntry(
                 daq_list=daq_idx,
                 odt_index=odt_idx,
                 has_timestamp=has_ts,
@@ -563,9 +584,10 @@ class TimestampAccumulator:
 
 def decode_dto(
     frame: bytes,
-    pid_table: Mapping[DtoKey, PidEntry],
+    pid_table: Mapping[DtoKey | RouteKey, PidEntry],
     ts_accum: TimestampAccumulator,
     fmt: DtoFormat | None = None,
+    can_id: int | None = None,
 ) -> list[SamplePoint]:
     """Decode một DTO frame thành list SamplePoint theo layout `fmt`.
 
@@ -575,6 +597,8 @@ def decode_dto(
     Header theo `fmt.id_type` (xem DtoFormat). Bảng tra khoá bằng PID tuyệt đối
     (kiểu 0) hoặc `(số DAQ list, số ODT)` (kiểu 1–3). Nếu `fmt.overload` là
     "pid_msb", bit 7 của byte đầu là cờ overrun — mask trước khi tra bảng.
+    `can_id` khác None: bảng khoá theo `RouteKey` — tra `(can_id, khoá)`; CAN ID
+    không có trong bảng thì `[]`. `None`: bảng khoá thuần.
     Timestamp chỉ có ở ODT 0 (`has_timestamp=True`), ngay sau header; frame
     ngắn hơn `header + ts_size` thì `timestamp_ns = 0`.
     Frame quá ngắn cho một signal → signal đó bị bỏ qua.
@@ -599,7 +623,7 @@ def decode_dto(
             daq = int.from_bytes(frame[2:4], fmt.byte_order)
         key = (daq, odt_or_pid)
 
-    entry = pid_table.get(key)
+    entry = pid_table.get(key if can_id is None else route_key(can_id, key))
     if entry is None:
         return []
 
