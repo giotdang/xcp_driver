@@ -20,7 +20,14 @@ from ..session.api import (
 )
 from .base import CanFrame, Transport, floor_to_can_fd_dlc, round_to_can_fd_dlc
 
-__all__ = ["PyCanTransport", "open_pycan_bus"]
+__all__ = ["PyCanTransport", "open_pycan_bus", "rx_filters"]
+
+
+def rx_filters(cfg: BusConfig) -> list[dict[str, object]]:
+    """Một filter cho mỗi CAN ID master cần nghe (`cfg.rx_ids`), cùng mask 11/29-bit."""
+    mask = 0x1FFFFFFF if cfg.extended_id else 0x7FF
+    return [{"can_id": can_id, "can_mask": mask, "extended": cfg.extended_id}
+            for can_id in sorted(cfg.rx_ids)]
 
 
 def open_pycan_bus(
@@ -47,8 +54,7 @@ def open_pycan_bus(
                 )
             
     # Filter out non-XCP frames at the hardware/OS level
-    mask = 0x1FFFFFFF if cfg.extended_id else 0x7FF
-    kwargs["can_filters"] = [{"can_id": cfg.dto_id, "can_mask": mask, "extended": cfg.extended_id}]
+    kwargs["can_filters"] = rx_filters(cfg)
 
     try:
         return can.Bus(**kwargs)
