@@ -160,6 +160,39 @@ class BusConfig:
     sample_point: float = 87.5          # % — nominal / arbitration phase
     data_sample_point: float = 75.0     # % — data phase (CAN FD)
 
+    # ECU có thể phát DTO của từng DAQ list trên CAN ID riêng. Mỗi cặp là
+    # (số DAQ list vật lý, can_id); list không khai báo dùng `dto_id`. Rỗng =
+    # cấu hình một ID như trước.
+    daq_can_ids: tuple[tuple[int, int], ...] = ()
+    # Lấy ID/bitrate/FD từ A2L lúc connect (xem session/a2l_can.py). Các giá trị
+    # tay ở trên vẫn được giữ nguyên để bỏ tích thì quay lại.
+    use_a2l_can: bool = False
+
+    @property
+    def rx_ids(self) -> frozenset[int]:
+        """Mọi CAN ID master phải nhận: `dto_id` + ID riêng của từng DAQ list."""
+        return frozenset({self.dto_id, *(can_id for _daq, can_id in self.daq_can_ids)})
+
+    def daq_can_id_of(self, daq: int) -> int:
+        """CAN ID DTO của DAQ list vật lý `daq` (mặc định `dto_id`)."""
+        for n, can_id in self.daq_can_ids:
+            if n == daq:
+                return can_id
+        return self.dto_id
+
+    def validate_ids(self) -> None:
+        """Hai list không được cùng ID và không ID nào được trùng `cro_id` —
+        nếu không, frame sẽ bị lẫn rồi mất dữ liệu mà không báo lỗi."""
+        seen: dict[int, int] = {}
+        for daq, can_id in self.daq_can_ids:
+            if can_id == self.cro_id:
+                raise XcpToolError(
+                    f"DAQ list {daq} dùng CAN ID 0x{can_id:X} trùng CRO (host → ECU)")
+            if can_id in seen:
+                raise XcpToolError(
+                    f"DAQ list {seen[can_id]} và {daq} cùng dùng CAN ID 0x{can_id:X}")
+            seen[can_id] = daq
+
 
 @dataclass
 class AppConfig:

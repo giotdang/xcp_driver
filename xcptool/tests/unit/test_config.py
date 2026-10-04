@@ -166,3 +166,25 @@ def test_app_config_defaults_hex_path_empty_and_byte_order_little() -> None:
     cfg = load_app_config()
     assert cfg.last_hex_path == ""
     assert cfg.last_byte_order == "little"
+
+
+def test_daq_can_ids_round_trip_toml() -> None:
+    cfg = replace(DEFAULT_BUS_CONFIG, daq_can_ids=((0, 0x6A2), (1, 0x6A3)))
+    save_bus_config(cfg)
+    assert "0x6A2" in config_path().read_text(encoding="utf-8")
+    assert load_bus_config() == cfg
+
+
+def test_daq_can_ids_sai_dinh_dang_bi_bo_qua() -> None:
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text(
+        '[bus]\nbackend = "vector"\ndaq_can_ids = "abc"\n', encoding="utf-8")
+    cfg = load_bus_config()
+    assert cfg.daq_can_ids == ()
+    assert cfg.backend == "vector"
+
+
+def test_use_a2l_can_round_trip() -> None:
+    cfg = replace(DEFAULT_BUS_CONFIG, use_a2l_can=True)
+    save_bus_config(cfg)
+    assert load_bus_config().use_a2l_can is True

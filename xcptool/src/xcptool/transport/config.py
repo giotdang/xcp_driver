@@ -86,7 +86,7 @@ def _coerce_bus(raw: dict[str, object], base: BusConfig) -> BusConfig:
         ("custom_bit_timing", bool), ("f_clock", int),
         ("brp", int), ("tseg1", int), ("tseg2", int), ("sjw", int),
         ("dbrp", int), ("dtseg1", int), ("dtseg2", int), ("dsjw", int),
-        ("solve_timing", bool),
+        ("solve_timing", bool), ("use_a2l_can", bool),
         ("sample_point", float), ("data_sample_point", float),
     ):
         if key not in raw:
@@ -99,7 +99,24 @@ def _coerce_bus(raw: dict[str, object], base: BusConfig) -> BusConfig:
             continue
         if isinstance(value, kind):
             fields[key] = value
+    daq_ids = _parse_daq_can_ids(raw.get("daq_can_ids"))
+    if daq_ids is not None:
+        fields["daq_can_ids"] = daq_ids
     return replace(base, **fields)  # type: ignore[arg-type]
+
+
+def _parse_daq_can_ids(value: object) -> tuple[tuple[int, int], ...] | None:
+    """"0:0x6A2,1:0x6A3" → ((0, 0x6A2), (1, 0x6A3)). Sai định dạng → None (bỏ khoá)."""
+    if not isinstance(value, str):
+        return None
+    pairs: list[tuple[int, int]] = []
+    try:
+        for item in filter(None, (p.strip() for p in value.split(","))):
+            daq, can_id = item.split(":")
+            pairs.append((int(daq, 0), int(can_id, 0)))
+    except ValueError:
+        return None
+    return tuple(pairs) if pairs else None
 
 
 def load_bus_config(default: BusConfig | None = None) -> BusConfig:
@@ -197,7 +214,17 @@ def dumps_bus_config(cfg: BusConfig) -> str:
         f"solve_timing = {str(cfg.solve_timing).lower()}\n"
         f"sample_point = {cfg.sample_point}\n"
         f"data_sample_point = {cfg.data_sample_point}\n"
+        f"use_a2l_can = {str(cfg.use_a2l_can).lower()}\n"
+        + _dumps_daq_can_ids(cfg)
     )
+
+
+def _dumps_daq_can_ids(cfg: BusConfig) -> str:
+    """Chỉ ghi khi có ID riêng — cấu hình một ID không đổi hình dạng file."""
+    if not cfg.daq_can_ids:
+        return ""
+    pairs = ",".join(f"{daq}:0x{can_id:X}" for daq, can_id in cfg.daq_can_ids)
+    return f'daq_can_ids = "{pairs}"\n'
 
 
 def dumps_app_config(cfg: AppConfig) -> str:
