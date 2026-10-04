@@ -8,10 +8,32 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ..a2l.types import XcpCanInfo
-from .api import BusConfig
+from ..a2l.types import A2LDatabase, XcpCanInfo
+from .api import BusConfig, XcpToolError
 
-__all__ = ["apply_a2l_can"]
+__all__ = ["apply_a2l_can", "resolve_bus_config"]
+
+
+def resolve_bus_config(
+    cfg: BusConfig, db: A2LDatabase, a2l_loaded: bool
+) -> tuple[BusConfig, list[str]]:
+    """Cấu hình hiệu lực để mở bus: `cfg` nguyên vẹn nếu `use_a2l_can` tắt, ngược
+    lại là kết quả `apply_a2l_can`. Dùng chung cho Real/FakeSession.
+
+    Raises:
+        XcpToolError: bật `use_a2l_can` nhưng chưa nạp A2L, hoặc A2L không có
+            block XCP_ON_CAN — nói rõ nguyên nhân thay vì mở bus bằng số đoán.
+    """
+    if not cfg.use_a2l_can:
+        return cfg, []
+    if not a2l_loaded:
+        raise XcpToolError(
+            "Đã chọn 'Config CAN from A2L' nhưng chưa nạp file A2L — nạp A2L hoặc bỏ chọn")
+    if db.can_info is None:
+        raise XcpToolError(
+            "Đã chọn 'Config CAN from A2L' nhưng A2L đang nạp không có block "
+            "XCP_ON_CAN — kiểm tra file A2L hoặc bỏ chọn")
+    return apply_a2l_can(cfg, db.can_info)
 
 
 def apply_a2l_can(cfg: BusConfig, info: XcpCanInfo) -> tuple[BusConfig, list[str]]:

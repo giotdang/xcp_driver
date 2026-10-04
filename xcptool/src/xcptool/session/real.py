@@ -38,6 +38,7 @@ from ..master.trace import DEFAULT_CAPACITY, TraceBuffer
 from ..transport import config as cfg_store
 from ..transport import registry
 from ..transport.base import Transport
+from .a2l_can import resolve_bus_config
 from .api import (
     BusConfig,
     ConnState,
@@ -173,12 +174,17 @@ class RealSession:
         self._last_state = ConnState.CONNECTING
 
         try:
-            cfg.validate_ids()
-            transport = registry.open_transport(cfg)
-            master = XcpMaster(transport, cfg, trace=self._trace)
+            # `cfg` là lựa chọn của người dùng (được nhớ); `eff` là thứ dùng thật.
+            eff, notes = resolve_bus_config(cfg, self._a2l_db, self._a2l_path is not None)
+            eff.validate_ids()
+            if cfg.use_a2l_can:
+                self._trace.add("rx", 0, b"", "other", "CAN config từ A2L",
+                                note="; ".join(notes) or None)
+            transport = registry.open_transport(eff)
+            master = XcpMaster(transport, eff, trace=self._trace)
             self._transport = transport
             self._master = master
-            self._bus_cfg = cfg
+            self._bus_cfg = eff
 
             caps = master.connect()
             self._reject_if_locked(master, caps)

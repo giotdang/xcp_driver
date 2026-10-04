@@ -22,6 +22,7 @@ from ..a2l import hexfile
 from ..a2l import load as _a2l_load
 from ..a2l.dataset import DatasetImportResult, apply_dataset, build_dataset
 from ..a2l.hexfile import HexImage
+from .a2l_can import resolve_bus_config
 from .api import (
     AppConfig,
     BusConfig,
@@ -154,6 +155,7 @@ class FakeSession:
         self._state = ConnState.DISCONNECTED
         self._caps: SlaveCaps | None = None
         self._cfg: BusConfig | None = None
+        self._user_cfg: BusConfig | None = None
 
         self._trace: deque[TraceEntry] = deque(maxlen=self.behavior.trace_capacity)
         self._trace_lock = threading.Lock()
@@ -204,7 +206,7 @@ class FakeSession:
         Không có bus/file thật đứng sau — FakeSession không cần bền qua lần
         chạy khác, chỉ cần đúng hành vi "nhớ trong phiên" để UI test được.
         """
-        return self._cfg or BusConfig(backend="virtual", channel="fake0")
+        return self._user_cfg or self._cfg or BusConfig(backend="virtual", channel="fake0")
 
     def load_app_config(self) -> AppConfig:
         return getattr(
@@ -220,7 +222,7 @@ class FakeSession:
 
     def save_app_config(self, cfg: AppConfig) -> None:
         self._app_cfg = cfg
-        self._cfg = cfg.bus
+        self._cfg = self._user_cfg = cfg.bus
 
     @property
     def symbols(self) -> A2LDatabase:
@@ -279,7 +281,16 @@ class FakeSession:
 
         self._closed.clear()
         self._set_state(ConnState.CONNECTING)
-        self._cfg = cfg
+        try:
+            eff, notes = resolve_bus_config(cfg, self._a2l_db, self._a2l_path is not None)
+            eff.validate_ids()
+        except XcpToolError:
+            self._set_state(ConnState.DISCONNECTED)
+            raise
+        self._user_cfg = cfg      # lựa chọn của người dùng — load_config() trả lại
+        self._cfg = cfg = eff     # cấu hình hiệu lực — mọi frame giả dùng ID này
+        if self._user_cfg.use_a2l_can:
+            self._emit(0, "rx", b"", "other", "CAN config từ A2L", note="; ".join(notes) or None)
 
         try:
             self._sleep_interruptible(self.behavior.connect_delay_s)
