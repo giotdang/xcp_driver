@@ -87,3 +87,58 @@ def test_ghi_chu_cua_parser_duoc_noi_vao_cuoi() -> None:
     _eff, notes = apply_a2l_can(_cfg(), _info(notes=("CAN_ID_MASTER_INCREMENTAL: x",)))
 
     assert notes[-1] == "CAN_ID_MASTER_INCREMENTAL: x"
+
+
+# ── resolve_bus_config: thanh ghi timing phải khớp bitrate hiệu lực ──────────
+
+def _db(info: XcpCanInfo):
+    from xcptool.a2l.types import A2LDatabase
+    return A2LDatabase(can_info=info)
+
+
+def _regs(cfg: BusConfig) -> tuple[int, int, int, int]:
+    return (cfg.brp, cfg.tseg1, cfg.tseg2, cfg.sjw)
+
+
+def test_resolve_giai_lai_thanh_ghi_khi_a2l_doi_bitrate() -> None:
+    """A2L đổi bitrate 500k → 250k: thanh ghi brp/tseg cũ (của 500k) sẽ chạy bus sai
+    tốc độ, nên phải giải lại cho bitrate hiệu lực."""
+    from xcptool.session.a2l_can import resolve_bus_config
+    from xcptool.session.bit_timing import solve
+
+    cfg = _cfg(bitrate=500_000, solve_timing=True, f_clock=80_000_000, use_a2l_can=True,
+               brp=99, tseg1=99, tseg2=9, sjw=9)
+    eff, _ = resolve_bus_config(cfg, _db(_info(baudrate=250_000, sample_point=80.0)), True)
+
+    want = solve(80_000_000, 250_000, 80.0).nominal
+    assert _regs(eff) == (want.brp, want.tseg1, want.tseg2, want.sjw)
+
+
+def test_resolve_giai_lai_ca_data_phase_khi_fd() -> None:
+    from xcptool.session.a2l_can import resolve_bus_config
+    from xcptool.session.bit_timing import solve
+
+    cfg = _cfg(solve_timing=True, f_clock=80_000_000, use_a2l_can=True)
+    info = _info(is_fd=True, baudrate=500_000, sample_point=80.0,
+                 fd_data_baudrate=2_000_000, fd_data_sample_point=75.0)
+    eff, _ = resolve_bus_config(cfg, _db(info), True)
+
+    want = solve(80_000_000, 500_000, 80.0, data_bitrate=2_000_000, data_sample_point=75.0)
+    assert (eff.dbrp, eff.dtseg1, eff.dtseg2, eff.dsjw) == (
+        want.data.brp, want.data.tseg1, want.data.tseg2, want.data.sjw)
+
+
+def test_resolve_giu_thanh_ghi_khi_timing_thu_cong_hoac_solver_tat() -> None:
+    from xcptool.session.a2l_can import resolve_bus_config
+
+    for kw in ({"custom_bit_timing": True}, {"solve_timing": False}):
+        cfg = _cfg(use_a2l_can=True, brp=7, tseg1=8, tseg2=9, sjw=3, **kw)
+        eff, _ = resolve_bus_config(cfg, _db(_info(baudrate=250_000)), True)
+        assert _regs(eff) == (7, 8, 9, 3), kw
+
+
+def test_resolve_tat_use_a2l_can_tra_nguyen_cfg() -> None:
+    from xcptool.session.a2l_can import resolve_bus_config
+
+    cfg = _cfg(use_a2l_can=False)
+    assert resolve_bus_config(cfg, _db(_info()), True) == (cfg, [])

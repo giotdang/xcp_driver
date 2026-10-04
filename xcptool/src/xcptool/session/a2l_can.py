@@ -10,6 +10,7 @@ from dataclasses import replace
 
 from ..a2l.types import A2LDatabase, XcpCanInfo
 from .api import BusConfig, XcpToolError
+from .bit_timing import solve
 
 __all__ = ["apply_a2l_can", "resolve_bus_config"]
 
@@ -33,7 +34,31 @@ def resolve_bus_config(
         raise XcpToolError(
             "Đã chọn 'Config CAN from A2L' nhưng A2L đang nạp không có block "
             "XCP_ON_CAN — kiểm tra file A2L hoặc bỏ chọn")
-    return apply_a2l_can(cfg, db.can_info)
+    eff, notes = apply_a2l_can(cfg, db.can_info)
+    return _resolve_timing_registers(eff), notes
+
+
+def _resolve_timing_registers(cfg: BusConfig) -> BusConfig:
+    """Giải lại brp/tseg/sjw cho bitrate/sample point HIỆU LỰC.
+
+    A2L có thể đổi bitrate so với giá trị tay; thanh ghi cũ (giải cho bitrate tay)
+    sẽ chạy bus sai tốc độ. Timing thủ công hoặc solver tắt thì giữ nguyên, đúng
+    thứ tự ưu tiên của dialog: thủ công > solver > bitrate thô.
+
+    Raises:
+        BitTimingError: không có bộ số hợp lệ cho bitrate A2L ở clock này.
+    """
+    if cfg.custom_bit_timing or not cfg.solve_timing:
+        return cfg
+    if cfg.is_fd:
+        sol = solve(cfg.f_clock, cfg.bitrate, cfg.sample_point,
+                    data_bitrate=cfg.data_bitrate, data_sample_point=cfg.data_sample_point)
+    else:
+        sol = solve(cfg.f_clock, cfg.bitrate, cfg.sample_point)
+    n, d = sol.nominal, sol.data
+    return replace(
+        cfg, brp=n.brp, tseg1=n.tseg1, tseg2=n.tseg2, sjw=n.sjw,
+        **({} if d is None else dict(dbrp=d.brp, dtseg1=d.tseg1, dtseg2=d.tseg2, dsjw=d.sjw)))
 
 
 def apply_a2l_can(cfg: BusConfig, info: XcpCanInfo) -> tuple[BusConfig, list[str]]:
