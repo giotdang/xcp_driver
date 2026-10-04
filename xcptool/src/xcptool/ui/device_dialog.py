@@ -11,6 +11,8 @@ Two things that must not be silently dropped:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -39,7 +41,8 @@ from qfluentwidgets import (
     SubtitleLabel,
 )
 
-from ..session.api import BusConfig, DeviceInfo
+from ..session.a2l_can import apply_a2l_can
+from ..session.api import BusConfig, DeviceInfo, XcpCanInfo
 from ..session.bit_timing import BitTimingError
 from ..session.bit_timing import solve as solve_bit_timing
 
@@ -65,13 +68,25 @@ class DeviceDialog(MessageBoxBase):
 
     detect_requested = Signal()
 
+    # Ô bị khoá khi tích "Config CAN from A2L" — giá trị hiển thị lúc đó là của A2L.
+    _A2L_LOCKED = ("cro_edit", "dto_edit", "ext_cb", "pad_cb", "bitrate_combo",
+                   "data_bitrate_combo", "fd_cb", "sp_spin", "dsp_spin")
+
     def __init__(
-        self, parent: QWidget | None = None, initial: BusConfig | None = None
+        self,
+        parent: QWidget | None = None,
+        initial: BusConfig | None = None,
+        a2l_can: XcpCanInfo | None = None,
     ) -> None:
         super().__init__(parent)
         self.selected_config: BusConfig | None = None
         self._devices: list[DeviceInfo] = []
         self._initial = initial or _BUS_DEFAULTS
+        self._a2l_can = a2l_can
+        self._a2l_locked = False
+        self._manual: BusConfig | None = None      # giá trị tay, cất khi tích
+        self._fd_enabled_before = True
+        self._temp_items: list[tuple[ComboBox, int]] = []   # mục combo thêm tạm cho A2L
 
         self.titleLabel = SubtitleLabel("Select CAN Interface", self)
 
@@ -182,6 +197,21 @@ class DeviceDialog(MessageBoxBase):
         self.adv_timing_btn.clicked.connect(self._on_adv_timing)
         self.adv_timing_btn.setToolTip("Set BRP, TSEG1, TSEG2, SJW by hand (overrides the solver)")
 
+        # ── Config CAN from A2L ──────────────────────────────────────────────
+        self.a2l_cb = CheckBox("Config CAN from A2L", self)
+        self.a2l_summary = CaptionLabel("", self)
+        self.a2l_summary.setWordWrap(True)
+        if a2l_can is None:
+            self.a2l_cb.setEnabled(False)
+            self.a2l_cb.setToolTip(
+                "Load an A2L file that has an XCP_ON_CAN block to enable this "
+                "(none loaded, or the loaded A2L has no XCP_ON_CAN).")
+        else:
+            self.a2l_cb.setToolTip(
+                "At connect time take CAN IDs, bitrate, CAN FD and DAQ-list IDs from "
+                "the loaded A2L. Untick to go back to the values typed here.")
+        self.a2l_cb.stateChanged.connect(self._on_a2l_toggled)
+
         # Một chiều cao chung cho mọi ô nhập — nếu không, layout thiếu chỗ sẽ bóp
         # combo box xuống vài pixel và chúng đè lên hàng trên.
         for w in (self.bitrate_combo, self.data_bitrate_combo, self.cro_edit,
@@ -244,6 +274,8 @@ class DeviceDialog(MessageBoxBase):
         form_col.setContentsMargins(0, 0, 10, 0)
         form_col.setSpacing(6)
         form_col.addWidget(StrongBodyLabel("Bus Parameters", self))
+        form_col.addWidget(self.a2l_cb)
+        form_col.addWidget(self.a2l_summary)
         form_col.addLayout(bus_grid)
         form_col.addSpacing(6)
         form_col.addWidget(StrongBodyLabel("Bit Timing", self))
@@ -290,6 +322,8 @@ class DeviceDialog(MessageBoxBase):
         self._solved: object | None = None
 
         self._apply_initial_config()
+        if a2l_can is not None and getattr(self._initial, "use_a2l_can", False):
+            self.a2l_cb.setChecked(True)
 
     # ── device list population ─────────────────────────────────────────────
 
@@ -379,6 +413,7 @@ class DeviceDialog(MessageBoxBase):
         self.bitrate_combo.setEnabled(not custom_timing)
         self.data_bitrate_combo.setEnabled(is_fd and not custom_timing)
         self._fd_label.setEnabled(is_fd)
+        self._apply_a2l_lock()
 
     def _on_fd_changed(self, state: int) -> None:
         self._sync_bitrate_controls()
@@ -388,6 +423,12 @@ class DeviceDialog(MessageBoxBase):
         self._recompute_timing()
 
     def _recompute_timing(self) -> None:
+        try:
+            self._recompute_timing_inner()
+        finally:
+            self._apply_a2l_lock()   # các nhánh return sớm không được mở khoá lại
+
+    def _recompute_timing_inner(self) -> None:
         """Giải bộ số từ (bitrate, sample point, clock) và cập nhật preview.
 
         Manual override (Advanced Timing) thắng; khi tắt solver thì bitrate được
@@ -536,7 +577,7 @@ class DeviceDialog(MessageBoxBase):
         if timing is None:
             return None
 
-        return BusConfig(
+        cfg = BusConfig(
             backend=d.backend,
             channel=d.channel,
             bitrate=self.bitrate_combo.currentData(),
@@ -550,8 +591,114 @@ class DeviceDialog(MessageBoxBase):
             solve_timing=self.solve_cb.isChecked(),
             sample_point=self.sp_spin.value(),
             data_sample_point=self.dsp_spin.value(),
+            # Không có ô nhập tay; giữ nguyên giá trị người dùng đã sửa trong config.toml.
+            daq_can_ids=self._initial.daq_can_ids,
+            use_a2l_can=self._a2l_locked,
             **timing,
         )
+        if self._a2l_locked and self._manual is not None:
+            # Ô đang hiển thị giá trị của A2L; thứ được nhớ/trả về là giá trị TAY —
+            # connect() mới là nơi áp A2L (xem session/a2l_can.py).
+            m = self._manual
+            cfg = replace(
+                cfg, bitrate=m.bitrate, cro_id=m.cro_id, dto_id=m.dto_id,
+                extended_id=m.extended_id, pad_dlc=m.pad_dlc, is_fd=m.is_fd,
+                data_bitrate=m.data_bitrate, sample_point=m.sample_point,
+                data_sample_point=m.data_sample_point)
+        return cfg
+
+    # ── Config CAN from A2L ────────────────────────────────────────────────
+
+    def _snapshot_manual(self) -> BusConfig:
+        """Giá trị tay hiện đang nhập — chỉ các trường mà A2L có thể ghi đè."""
+        def _hex(edit: LineEdit, default: int) -> int:
+            try:
+                return int(edit.text().strip().lower().removeprefix("0x"), 16)
+            except ValueError:
+                return default
+
+        return BusConfig(
+            backend="", channel="",
+            bitrate=self.bitrate_combo.currentData(),
+            cro_id=_hex(self.cro_edit, _BUS_DEFAULTS.cro_id),
+            dto_id=_hex(self.dto_edit, _BUS_DEFAULTS.dto_id),
+            extended_id=self.ext_cb.isChecked(),
+            pad_dlc=self.pad_cb.isChecked(),
+            is_fd=self.fd_cb.isChecked(),
+            data_bitrate=self.data_bitrate_combo.currentData(),
+            sample_point=self.sp_spin.value(),
+            data_sample_point=self.dsp_spin.value(),
+            custom_bit_timing=self._custom_bit_timing,
+        )
+
+    def _write_values(self, c: BusConfig, *, temp_items: bool) -> None:
+        """Đổ giá trị của `c` vào các ô. `temp_items`: bitrate không có trong combo
+        thì thêm một mục tạm để hiển thị đúng thay vì giữ giá trị cũ."""
+        self.cro_edit.setText(f"0x{c.cro_id:03X}")
+        self.dto_edit.setText(f"0x{c.dto_id:03X}")
+        self.ext_cb.setChecked(c.extended_id)
+        self.pad_cb.setChecked(c.pad_dlc)
+        self._select_bitrate(self.bitrate_combo, c.bitrate, "kbps", 1000, temp_items)
+        self.fd_cb.setChecked(c.is_fd)
+        self._select_bitrate(self.data_bitrate_combo, c.data_bitrate, "Mbps", 1_000_000,
+                             temp_items)
+        self.sp_spin.setValue(c.sample_point)
+        self.dsp_spin.setValue(c.data_sample_point)
+
+    def _select_bitrate(
+        self, combo: ComboBox, value: int, unit: str, div: int, temp_items: bool
+    ) -> None:
+        idx = combo.findData(value)
+        if idx < 0 and temp_items:
+            combo.addItem(f"{value / div:g} {unit}", userData=value)
+            idx = combo.count() - 1
+            self._temp_items.append((combo, idx))
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
+    def _apply_a2l_lock(self) -> None:
+        if self._a2l_locked:
+            for name in self._A2L_LOCKED:
+                getattr(self, name).setEnabled(False)
+
+    def _on_a2l_toggled(self, _state: int) -> None:
+        on = self.a2l_cb.isChecked()
+        if on == self._a2l_locked:
+            return
+        if on:
+            if self._a2l_can is None:
+                self.a2l_cb.setChecked(False)
+                return
+            self._manual = self._snapshot_manual()
+            eff, notes = apply_a2l_can(self._manual, self._a2l_can)
+            self._fd_enabled_before = self.fd_cb.isEnabled()
+            self._a2l_locked = True
+            self._write_values(eff, temp_items=True)
+            self.a2l_summary.setText(self._a2l_summary_text(eff, notes))
+        else:
+            self._a2l_locked = False
+            if self._manual is not None:
+                self._write_values(self._manual, temp_items=False)
+            for combo, idx in reversed(self._temp_items):
+                combo.removeItem(idx)
+            self._temp_items.clear()
+            for name in self._A2L_LOCKED:
+                getattr(self, name).setEnabled(True)
+            self.fd_cb.setEnabled(self._fd_enabled_before)
+            self.a2l_summary.setText("")
+        self._sync_bitrate_controls()
+        self._recompute_timing()
+
+    @staticmethod
+    def _a2l_summary_text(eff: BusConfig, notes: list[str]) -> str:
+        parts = [f"CRO 0x{eff.cro_id:X} · DTO 0x{eff.dto_id:X}",
+                 "29-bit" if eff.extended_id else "11-bit",
+                 f"{eff.bitrate / 1000:g} kbps"]
+        if eff.is_fd:
+            parts.append(f"CAN FD {eff.data_bitrate / 1_000_000:g} Mbps")
+        if eff.daq_can_ids:
+            parts.append(f"{len(eff.daq_can_ids)} DAQ list có ID riêng")
+        return " · ".join(parts) + "".join(f"\n⚠ {n}" for n in notes)
 
     def _resolve_timing(self) -> dict | None:
         """`custom_bit_timing` + các register cho `BusConfig`, theo thứ tự ưu tiên:

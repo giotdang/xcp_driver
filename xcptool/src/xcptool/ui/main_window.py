@@ -495,7 +495,8 @@ class MainWindow(QMainWindow):
         if self.busy:
             self.notify("Busy", f"Please wait for '{self._busy_label}' to finish.")
             return
-        dlg = DeviceDialog(self, initial=self.session.load_config())
+        dlg = DeviceDialog(self, initial=self.session.load_config(),
+                           a2l_can=self.session.symbols.can_info)
         self._dialog = dlg
         dlg.detect_requested.connect(self._detect_devices)
         self._detect_devices()

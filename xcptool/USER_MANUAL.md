@@ -84,6 +84,16 @@ Khi đã cắm thiết bị CAN và nối dây tới ECU:
 3. Kiểm tra Bitrate (mặc định 500 kbps) và CAN ID của CRO/DTO (mặc định `0x7E0` / `0x7E1`).
 4. Bấm **Kết nối**. Thanh trạng thái dưới cùng sẽ hiển thị thông tin ECU: `MAX_CTO`, `MAX_DTO`, Endianness và các tính năng hỗ trợ (`CAL`, `DAQ`...).
 
+#### Lấy cấu hình CAN từ file A2L (tuỳ chọn)
+Nếu file A2L của ECU có block `XCP_ON_CAN`, hãy **nạp A2L trước** (Bước 2) rồi mở hộp thoại Kết nối và tích **Config CAN from A2L**. Khi kết nối, xcptool lấy từ A2L: CAN ID của CRO/DTO, 11/29-bit, bitrate, sample point, CAN FD (nếu có) và CAN ID riêng của từng DAQ list (`DAQ_LIST_CAN_ID ... FIXED`).
+
+- Các ô tương ứng bị khoá và hiện giá trị lấy từ A2L; dòng tóm tắt bên dưới ô tích cho biết ID, bitrate, số DAQ list có ID riêng và các cảnh báo.
+- Bỏ tích thì các ô mở khoá và trả về giá trị bạn đã nhập tay (không bị mất).
+- Ô tích bị xám nếu chưa nạp A2L hoặc A2L không có `XCP_ON_CAN` — rê chuột lên để xem lý do.
+- DAQ list khai báo `VARIABLE` (ECU cho master tự gán CAN ID) chưa được hỗ trợ: tool cảnh báo và không nhận dữ liệu của list đó trên ID riêng.
+- Nếu đang dùng **Advanced Timing** (timing thủ công) thì bitrate/sample point của A2L không được áp — dòng cảnh báo sẽ nói rõ.
+- Bus không có ID riêng cho DAQ list thì DAQ vẫn chạy trên một CAN ID như trước.
+
 ### Bước 2: Nạp file A2L
 1. Bấm **Nạp A2L…** trên thanh công cụ của tab Hiệu chỉnh hoặc Đo lường (phím tắt `Ctrl+O`).
 2. Chọn file `.a2l` (ví dụ: `examples/xcp_daq_example.a2l`).

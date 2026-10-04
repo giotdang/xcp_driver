@@ -56,7 +56,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from ..a2l import A2LDatabase
 from ..a2l.dataset import DatasetImportResult, SkipReason
-from ..a2l.types import InstanceNode
+from ..a2l.types import InstanceNode, XcpCanInfo
 
 __all__ = [
     "ConnState", "PageMode", "Direction", "FrameKind",
@@ -66,7 +66,7 @@ __all__ = [
     "BusError", "ProtocolError", "XcpTimeoutError", "MalformedResponseError",
     "SlaveError", "WriteProtectedError", "OutOfRangeError", "SequenceError",
     "AccessDeniedError", "NotConnectedError", "BusyError", "UnsupportedByEcuError",
-    "A2LDatabase", "InstanceNode", "DatasetImportResult", "SkipReason", "Session",
+    "A2LDatabase", "InstanceNode", "XcpCanInfo", "DatasetImportResult", "SkipReason", "Session",
 ]
 
 

@@ -80,9 +80,9 @@ def test_main_window_truyen_load_config_vao_dialog(qtbot, cfg: BusConfig, monkey
     seen: list[BusConfig | None] = []
     real_init = dd_mod.DeviceDialog.__init__
 
-    def spy_init(self, parent=None, initial=None):
+    def spy_init(self, parent=None, initial=None, a2l_can=None):
         seen.append(initial)
-        real_init(self, parent, initial=initial)
+        real_init(self, parent, initial=initial, a2l_can=a2l_can)
 
     monkeypatch.setattr(dd_mod.DeviceDialog, "__init__", spy_init)
     monkeypatch.setattr(dd_mod.DeviceDialog, "exec", lambda self: False)
@@ -354,3 +354,131 @@ def test_device_dialog_displays_detailed_channel_name(qtbot, host) -> None:
     assert "VN5620A Channel 5" in item_text
 
 
+
+
+# ── "Config CAN from A2L" ────────────────────────────────────────────────────
+
+def _can_info(**kw):
+    from xcptool.a2l.types import XcpCanInfo
+
+    base = dict(master_id=0x6A0, slave_id=0x6A1, extended=False, baudrate=500_000,
+                sample_point=75.0, is_fd=False, fd_data_baudrate=None,
+                fd_data_sample_point=None, max_dlc_required=False)
+    base.update(kw)
+    return XcpCanInfo(**base)
+
+
+def _ready(dlg: DeviceDialog, session: FakeSession) -> None:
+    dlg.set_devices(session.list_devices())
+
+
+def test_checkbox_xam_khi_khong_co_a2l_can(qtbot, host) -> None:
+    dlg = DeviceDialog(host)
+
+    assert not dlg.a2l_cb.isEnabled()
+    assert not dlg.a2l_cb.isChecked()
+    assert dlg.a2l_cb.toolTip() != ""
+
+
+def test_tich_khoa_o_va_hien_gia_tri_a2l(qtbot, host) -> None:
+    dlg = DeviceDialog(host, a2l_can=_can_info())
+
+    dlg.a2l_cb.setChecked(True)
+
+    assert dlg.cro_edit.text() == "0x6A0"
+    assert dlg.dto_edit.text() == "0x6A1"
+    assert not dlg.cro_edit.isEnabled()
+    assert not dlg.dto_edit.isEnabled()
+    assert not dlg.bitrate_combo.isEnabled()
+    assert "0x6A1" in dlg.a2l_summary.text()
+
+
+def test_bo_tich_tra_lai_gia_tri_tay(qtbot, host) -> None:
+    dlg = DeviceDialog(host, a2l_can=_can_info())
+    dlg.cro_edit.setText("0x700")
+
+    dlg.a2l_cb.setChecked(True)
+    dlg.a2l_cb.setChecked(False)
+
+    assert dlg.cro_edit.text() == "0x700"
+    assert dlg.cro_edit.isEnabled()
+    assert dlg.bitrate_combo.isEnabled()
+
+
+def test_build_config_giu_gia_tri_tay_va_co_use_a2l_can(
+    qtbot, host, session: FakeSession
+) -> None:
+    dlg = DeviceDialog(host, a2l_can=_can_info())
+    _ready(dlg, session)
+    dlg.cro_edit.setText("0x700")
+
+    dlg.a2l_cb.setChecked(True)
+    cfg = dlg.build_config()
+
+    assert cfg is not None
+    assert cfg.cro_id == 0x700          # giá trị tay, không phải của A2L
+    assert cfg.use_a2l_can is True
+
+
+def test_bitrate_a2l_ngoai_combo_van_hien_dung(qtbot, host, session: FakeSession) -> None:
+    dlg = DeviceDialog(host, a2l_can=_can_info(baudrate=200_000))
+    _ready(dlg, session)
+    items_before = dlg.bitrate_combo.count()
+
+    dlg.a2l_cb.setChecked(True)
+    assert dlg.bitrate_combo.currentData() == 200_000
+    cfg = dlg.build_config()
+    assert cfg is not None and cfg.bitrate == 500_000   # giá trị tay
+
+    dlg.a2l_cb.setChecked(False)
+    assert dlg.bitrate_combo.currentData() == 500_000
+    assert dlg.bitrate_combo.count() == items_before    # mục tạm đã gỡ
+
+
+def test_custom_bit_timing_dang_bat_co_canh_bao(qtbot, host) -> None:
+    initial = BusConfig(backend="virtual", channel="fake0", custom_bit_timing=True)
+    dlg = DeviceDialog(host, initial=initial, a2l_can=_can_info())
+
+    dlg.a2l_cb.setChecked(True)
+
+    assert "timing thủ công" in dlg.a2l_summary.text()
+
+
+def test_mo_lai_voi_initial_use_a2l_can(qtbot, host, session: FakeSession) -> None:
+    initial = BusConfig(backend="virtual", channel="fake0", use_a2l_can=True)
+
+    co_a2l = DeviceDialog(host, initial=initial, a2l_can=_can_info())
+    assert co_a2l.a2l_cb.isChecked()
+
+    khong_a2l = DeviceDialog(host, initial=initial)
+    _ready(khong_a2l, session)
+    assert not khong_a2l.a2l_cb.isChecked()
+    cfg = khong_a2l.build_config()
+    assert cfg is not None and cfg.use_a2l_can is False
+
+
+def test_main_window_truyen_can_info_vao_dialog(qtbot, monkeypatch) -> None:
+    from pathlib import Path
+
+    from xcptool.ui import device_dialog as dd_mod
+
+    session = FakeSession()
+    session.load_a2l(Path(__file__).parents[3] / "examples" / "xcp_daq_example.a2l")
+    window = MainWindow(session)
+    qtbot.addWidget(window)
+
+    seen: list[object] = []
+    real_init = dd_mod.DeviceDialog.__init__
+
+    def spy_init(self, parent=None, initial=None, a2l_can=None):
+        seen.append(a2l_can)
+        real_init(self, parent, initial=initial, a2l_can=a2l_can)
+
+    monkeypatch.setattr(dd_mod.DeviceDialog, "__init__", spy_init)
+    monkeypatch.setattr(dd_mod.DeviceDialog, "exec", lambda self: False)
+
+    window.open_device_dialog()
+
+    assert seen == [session.symbols.can_info]
+    assert seen[0] is not None
+    window.close()
