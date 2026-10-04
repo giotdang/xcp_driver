@@ -67,9 +67,9 @@ import re
 from dataclasses import dataclass, field
 
 from .types import (
-    A2LDatabase, Characteristic, CharacteristicTypeDef, EventChannel, Instance,
-    Measurement, MeasurementTypeDef, RecordLayout, StaticDaqList, StructComponent,
-    StructTypeDef, XcpDaqInfo, XcpProtocolInfo,
+    A2LDatabase, Characteristic, CharacteristicTypeDef, DaqListCanId, EventChannel,
+    Instance, Measurement, MeasurementTypeDef, RecordLayout, StaticDaqList,
+    StructComponent, StructTypeDef, XcpCanInfo, XcpDaqInfo, XcpProtocolInfo,
 )
 
 _log = logging.getLogger(__name__)
@@ -414,6 +414,91 @@ def _extract_xcp_protocol_info(b: _Block) -> XcpProtocolInfo | None:
     return info
 
 
+_CAN_EXTENDED_FLAG = 0x8000_0000
+
+
+def _kw_number(tokens: list[str], keyword: str) -> int | None:
+    """Số nguyên ngay sau `keyword`; thiếu hoặc không phải số → None (không ném)."""
+    for i, tok in enumerate(tokens):
+        if tok == keyword:
+            try:
+                return _to_int(tokens[i + 1])
+            except (ValueError, IndexError):
+                return None
+    return None
+
+
+def _extract_daq_list_can_id(b: _Block) -> DaqListCanId | None:
+    """/begin DAQ_LIST_CAN_ID <list> (VARIABLE | FIXED <can_id>) /end — tokens của
+    block đã bỏ nhãn kiểu block."""
+    t = b.tokens
+    try:
+        daq = _to_int(t[0])
+        if "FIXED" in t:
+            return DaqListCanId(daq, True, _to_int(t[t.index("FIXED") + 1]) & 0x7FFF_FFFF)
+        if "VARIABLE" in t:
+            return DaqListCanId(daq, False, None)
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _extract_xcp_can_info(b: _Block) -> XcpCanInfo | None:
+    """XCP_ON_CAN (hoặc XCP_ON_CAN_FD đứng riêng) trong IF_DATA XCP → XcpCanInfo.
+
+    Đọc theo TỪ KHOÁ, không theo vị trí. Block CAN FD nhận cả hai cách đặt tên
+    chưa đối chiếu được với A2L thật: block `CAN_FD` lồng trong XCP_ON_CAN, hoặc
+    block `XCP_ON_CAN_FD` đứng cạnh (tên mà XcpProtocolInfo đã nhận).
+    """
+    can = next((c for c in b.children if c.name == "XCP_ON_CAN"), None)
+    fd_sibling = next((c for c in b.children if c.name == "XCP_ON_CAN_FD"), None)
+    base = can or fd_sibling
+    if base is None:
+        return None
+    fd_nested = next((c for c in base.children if c.name == "CAN_FD"), None)
+    fd = fd_nested or fd_sibling
+
+    notes: list[str] = []
+    raw_master = _kw_number(base.tokens, "CAN_ID_MASTER")
+    raw_slave = _kw_number(base.tokens, "CAN_ID_SLAVE")
+    flags = [bool(r & _CAN_EXTENDED_FLAG) for r in (raw_master, raw_slave) if r is not None]
+    extended = flags[0] if flags else None
+    if len(set(flags)) > 1:
+        notes.append("CAN_ID_MASTER và CAN_ID_SLAVE khác nhau về cờ 29-bit (bit 31) — dùng cờ của MASTER")
+    if "CAN_ID_MASTER_INCREMENTAL" in base.tokens:
+        notes.append("CAN_ID_MASTER_INCREMENTAL: master ID tăng dần theo từng slave — chưa hỗ trợ, dùng CAN_ID_MASTER")
+
+    daq_ids: list[DaqListCanId] = []
+    for child in base.children:
+        if child.name == "DAQ_LIST_CAN_ID":
+            entry = _extract_daq_list_can_id(child)
+            if entry is None:
+                notes.append(f"DAQ_LIST_CAN_ID không đọc được: {' '.join(child.tokens)}")
+            else:
+                daq_ids.append(entry)
+
+    return XcpCanInfo(
+        master_id=None if raw_master is None else raw_master & 0x7FFF_FFFF,
+        slave_id=None if raw_slave is None else raw_slave & 0x7FFF_FFFF,
+        extended=extended,
+        baudrate=_kw_number(base.tokens, "BAUDRATE"),
+        sample_point=_to_float_or_none(_kw_number(base.tokens, "SAMPLE_POINT")),
+        is_fd=fd is not None,
+        fd_data_baudrate=(None if fd is None
+                          else _kw_number(fd.tokens, "CAN_FD_DATA_TRANSFER_BAUDRATE")),
+        fd_data_sample_point=(None if fd_nested is None
+                              else _to_float_or_none(_kw_number(fd_nested.tokens, "SAMPLE_POINT"))),
+        max_dlc_required=("MAX_DLC_REQUIRED" in base.tokens
+                          or (fd is not None and "CAN_FD_MAX_DLC_REQUIRED" in fd.tokens)),
+        daq_list_ids=tuple(daq_ids),
+        notes=tuple(notes),
+    )
+
+
+def _to_float_or_none(value: int | None) -> float | None:
+    return None if value is None else float(value)
+
+
 def _extract_event_channel(b: _Block) -> EventChannel | None:
     """Một /begin EVENT ... /end EVENT lồng trong DAQ/EVENT — xem
     examples/xcp_daq_example.a2l:101-110. t[3] (DAQ|STIM|DAQ_STIM) bỏ qua —
@@ -588,6 +673,12 @@ def parse(text: str) -> A2LDatabase:
                     db.protocol_info = proto
             except Exception as exc:
                 _log.warning("Skipping IF_DATA XCP (protocol): %s", exc)
+            try:
+                can_info = _extract_xcp_can_info(block)
+                if can_info is not None:
+                    db.can_info = can_info
+            except Exception as exc:
+                _log.warning("Skipping IF_DATA XCP (XCP_ON_CAN): %s", exc)
             try:
                 daq_info, events, static_lists = _extract_xcp_daq(block)
                 if daq_info is not None:

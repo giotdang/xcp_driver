@@ -10,10 +10,12 @@ from .types import (
     Characteristic,
     DataType,
     DATATYPE_SIZES,
+    DaqListCanId,
     EventChannel,
     Measurement,
     RecordLayout,
     StaticDaqList,
+    XcpCanInfo,
     XcpDaqInfo,
 )
 
@@ -27,5 +29,7 @@ __all__ = [
     "Measurement",
     "RecordLayout",
     "StaticDaqList",
+    "XcpCanInfo",
     "XcpDaqInfo",
+    "DaqListCanId",
 ]

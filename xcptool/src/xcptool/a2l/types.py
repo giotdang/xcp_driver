@@ -170,6 +170,35 @@ class XcpProtocolInfo:
 
 
 @dataclass(frozen=True)
+class DaqListCanId:
+    """Một /begin DAQ_LIST_CAN_ID trong XCP_ON_CAN: DAQ list này phát trên CAN ID
+    riêng. `VARIABLE` không kèm ID (master phải SET_DAQ_ID) nên `can_id=None`."""
+    daq_list: int
+    fixed: bool
+    can_id: int | None
+
+
+@dataclass(frozen=True)
+class XcpCanInfo:
+    """Cấu hình CAN của ECU đọc từ IF_DATA XCP / XCP_ON_CAN. Trường nào A2L không
+    có thì None — người dùng/`BusConfig` tự điền.
+
+    ID đã bỏ bit 31 (cờ 29-bit), cờ đó nằm ở `extended`.
+    """
+    master_id: int | None
+    slave_id: int | None
+    extended: bool | None
+    baudrate: int | None
+    sample_point: float | None            # % của bit time
+    is_fd: bool
+    fd_data_baudrate: int | None
+    fd_data_sample_point: float | None
+    max_dlc_required: bool
+    daq_list_ids: tuple[DaqListCanId, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class XcpDaqInfo:
     """/begin DAQ ... /end DAQ trong IF_DATA XCP cấp MODULE — song song với
     DaqCaps runtime (session/api.py, đọc từ GET_DAQ_PROCESSOR_INFO lúc
@@ -231,6 +260,7 @@ class A2LDatabase:
     instances: dict[str, Instance] = field(default_factory=dict)
     instance_trees: dict[str, InstanceNode] = field(default_factory=dict)
     protocol_info: XcpProtocolInfo | None = None
+    can_info: XcpCanInfo | None = None
     daq_info: XcpDaqInfo | None = None
     events: dict[int, EventChannel] = field(default_factory=dict)
     static_daq_lists: dict[int, StaticDaqList] = field(default_factory=dict)
