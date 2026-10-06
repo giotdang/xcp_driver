@@ -167,16 +167,14 @@ Tab **Đo lường** (biểu tượng công cụ trên thanh điều hướng):
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ [Nạp A2L…]  [Bắt đầu đo]  [Dừng]  [🔘 Đồ thị: Bật]    12 MEASUREMENT    │
-├───────────────────────────────────┬─────────────────────────────────────┤
-│ Signal                      Kiểu    Giá trị│ 📈 Scope (pyqtgraph)         │
-│ ☑ vehicleSpeedKph           FLOAT32 45.2  │    ── vehicleSpeedKph         │
-│ ☑ engineRpm                 FLOAT32 2150  │    ── engineRpm               │
-│ ☑ speedPidTelemetry_error   FLOAT32 1.45  │                               │
-│ ☑ speedPidTelemetry_integral FLOAT32 0.32 │  80 ┤     /\     /\           │
-│ ☑ speedPidTelemetry_output  FLOAT32 12.8  │  40 ┤____/  \___/  \____      │
-│ ▶ ☑ torqueSamples           FLOAT32[4] —  │   0 ┼───────────────────      │
-│                                          │     0s      5s     10s    15s │
-└───────────────────────────────────┴─────────────────────────────────────┘
+├────────────────────────────────────────────┬────────────────────────────┤
+│ Signal              Kiểu   Synchronous Event   Giá trị│ 📈 Scope         │
+│ ☑ vehicleSpeedKph   FLOAT32 [0 — 10 ms raster ]  45.2 │  ── vehicleSpeed │
+│ ☑ engineRpm         UINT16  [0 — 10 ms raster ]  2150 │  ── engineRpm    │
+│ ☑ coolantTempC      FLOAT32 [1 — 100 ms raster]  88.5 │                  │
+│ ☑ pidTuning_kp      FLOAT32 [— select event — ]    —  │  80 ┤   /\   /\   │
+│ ▶ ☑ torqueSamples   FLOAT32[4] [0 — 10 ms raster] —   │  40 ┤__/  \_/  \_ │
+└────────────────────────────────────────────┴────────────────────────────┘
 (minh hoạ một phần — file mẫu còn nhiều MEASUREMENT khác, sắp theo A→Z)
 ```
 
@@ -186,13 +184,40 @@ Tab **Đo lường** (biểu tượng công cụ trên thanh điều hướng):
    - Đối với nhóm Struct hoặc mảng Array (khi A2L có `INSTANCE` thật —
      xem lưu ý phía trên): Chỉ cần tích chọn 1 ô ở dòng cha, toàn bộ các
      tín hiệu con sẽ tự động được đưa vào danh sách đo.
-2. **Bắt đầu đo**:
+2. **Chọn Synchronous Event (raster)** — cột `Synchronous Event`:
+   - Mỗi tín hiệu được ECU lấy mẫu theo **một** event channel (raster).
+     Tín hiệu khác event **bắt buộc** nằm ở DAQ list khác, vì lệnh XCP
+     `SET_DAQ_LIST_MODE` chỉ nhận một event cho mỗi list. xcptool tự gom
+     theo event bạn chọn: mỗi event = một DAQ list, rồi tự chia tín hiệu
+     vào các ODT theo đúng ngân sách byte của DTO.
+   - Danh sách lựa chọn lấy từ A2L (`IF_DATA XCP / DAQ / begin EVENT`),
+     nhãn gồm số kênh, tên raster và chu kỳ — ví dụ `1 — 100 ms raster
+     (100 ms)`. Event chỉ dùng cho STIM không xuất hiện trong danh sách.
+   - Khi A2L đã cố định raster cho tín hiệu (`FIXED_EVENT_LIST` một
+     event), ô chọn được điền sẵn và **khoá** — không có gì để chọn.
+     Khi A2L cho nhiều lựa chọn (`FIXED_EVENT_LIST` nhiều event, hoặc
+     `VARIABLE` + `AVAILABLE_EVENT_LIST`), ô hiện `— select event —` và
+     bạn phải chọn; `DEFAULT_EVENT_LIST` nếu có sẽ được chọn sẵn.
+   - Gán nhanh cho nhiều tín hiệu: chọn nhiều dòng → chuột phải →
+     **Assign Synchronous Event**. Dòng cha của STRUCT/ARRAY có ô chọn
+     gán một lượt cho toàn bộ tín hiệu con.
+   - Bấm **Bắt đầu đo** mà còn tín hiệu chưa gán event → ứng dụng báo
+     ngay tên các tín hiệu đó và **không gửi gì lên bus** (thà dừng còn
+     hơn âm thầm đo sai raster). Số raster chọn vượt `MAX_DAQ` mà A2L
+     khai cũng bị chặn tại đây, kèm con số cụ thể.
+   - A2L không khai event nào: ô hiện `Event 0 (no event info in A2L)` —
+     đây là **phỏng đoán của tool** (ECU có DAQ thì luôn có kênh 0), không
+     phải thông tin đọc được từ A2L. Lấy danh sách event trực tiếp từ ECU
+     (`GET_DAQ_EVENT_INFO`) là việc của phiên bản sau.
+   - Cột này bị khoá trong lúc đang đo: đổi raster chỉ có tác dụng ở lần
+     cấu hình DAQ list kế tiếp, nên hãy **Dừng** rồi chọn lại.
+3. **Bắt đầu đo**:
    - Bấm **Bắt đầu đo**. Ứng dụng sẽ tự động cấu hình danh sách DAQ trên ECU và bắt đầu thu thập dữ liệu.
    - Cột **Giá trị** sẽ hiển thị số thực trực tiếp theo thời gian thực (chu kỳ cập nhật 40ms).
    - Đồ thị Scope bên phải sẽ vẽ các đường tín hiệu tương ứng với màu sắc phân biệt.
-3. **Tối ưu hiệu năng với Switch "Đồ thị"**:
+4. **Tối ưu hiệu năng với Switch "Đồ thị"**:
    - Gạt switch **Đồ thị: Tắt** khi bạn chỉ cần theo dõi các con số trong bảng hoặc đo số lượng lớn tín hiệu cùng lúc. Chế độ này ngắt hoàn toàn việc vẽ đồ thị để đạt tốc độ xử lý tối đa và không tốn CPU/GPU.
-4. **Dừng đo**: Bấm nút **Dừng**.
+5. **Dừng đo**: Bấm nút **Dừng**.
 
 ---
 

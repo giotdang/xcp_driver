@@ -56,9 +56,19 @@ Token layout (after /begin KEYWORD was consumed, so b.name = "KEYWORD"):
       [0] DAQ_LIST_NUMBER, keyword MAX_ODT/MAX_ODT_ENTRIES/EVENT_FIXED,
       child /begin PREDEFINED (marker, không tham số)
 
-  MEASUREMENT / IF_DATA XCP / DAQ_EVENT (event của riêng 1 signal — xem
-  examples/xcp_daq_example.a2l:150-156):
-    /begin DAQ_EVENT /begin FIXED_EVENT_LIST EVENT <n> /end FIXED_EVENT_LIST /end DAQ_EVENT
+  MEASUREMENT | TYPEDEF_MEASUREMENT | INSTANCE  /  IF_DATA XCP / DAQ_EVENT
+  (event mà riêng 1 signal đồng bộ theo — xem examples/xcp_daq_example.a2l:150-156):
+
+    /begin DAQ_EVENT FIXED_EVENT_LIST    EVENT <n> [EVENT <n> …]      /end DAQ_EVENT
+    /begin DAQ_EVENT VARIABLE
+      /begin AVAILABLE_EVENT_LIST  EVENT <n> [EVENT <n> …]  /end AVAILABLE_EVENT_LIST
+      /begin DEFAULT_EVENT_LIST    EVENT <n> [EVENT <n> …]  /end DEFAULT_EVENT_LIST
+    /end DAQ_EVENT
+
+  Ba danh sách EVENT xuất hiện ở ngoài thực tế theo CẢ HAI cách: lồng thành
+  `/begin … /end` riêng, hoặc chỉ là keyword + token nằm thẳng trong
+  DAQ_EVENT. `_parse_daq_event()` nhận cả hai, vì tool này phải đọc được A2L
+  của ECU bất kỳ, không riêng file mẫu trong repo.
 """
 from __future__ import annotations
 
@@ -66,10 +76,12 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+from .events import default_event_of
 from .types import (
-    A2LDatabase, Characteristic, CharacteristicTypeDef, DaqListCanId, EventChannel,
-    Instance, Measurement, MeasurementTypeDef, RecordLayout, StaticDaqList,
-    StructComponent, StructTypeDef, XcpCanInfo, XcpDaqInfo, XcpProtocolInfo,
+    A2LDatabase, Characteristic, CharacteristicTypeDef, DaqEventSpec, DaqListCanId,
+    EventChannel, Instance, Measurement, MeasurementTypeDef, RecordLayout,
+    StaticDaqList, StructComponent, StructTypeDef, XcpCanInfo, XcpDaqInfo,
+    XcpProtocolInfo,
 )
 
 _log = logging.getLogger(__name__)
@@ -209,24 +221,81 @@ def _extract_matrix_dim(t: list[str]) -> list[int]:
     return []
 
 
-def _extract_measurement_event_channel(b: _Block) -> int | None:
-    """DAQ_EVENT/FIXED_EVENT_LIST/EVENT <n> lồng trong IF_DATA XCP của một
-    MEASUREMENT — xem examples/xcp_daq_example.a2l:150-156. Chỉ lấy event
-    ĐẦU TIÊN nếu FIXED_EVENT_LIST khai nhiều dòng EVENT — Measurement/
-    DaqListConfig hiện chỉ mô hình 1 event/signal (multi-event measurement
-    ngoài phạm vi hiện tại)."""
+_EVENT_LIST_KEYWORDS = ("FIXED_EVENT_LIST", "AVAILABLE_EVENT_LIST", "DEFAULT_EVENT_LIST")
+
+
+def _event_numbers(tokens: list[str]) -> tuple[int, ...]:
+    """Mọi số đứng sau một token `EVENT` trong `tokens`, giữ nguyên thứ tự.
+
+    Trùng lặp bị loại (A2L khai lặp là lỗi của file, không phải thông tin),
+    nhưng thứ tự khai được giữ: phần tử đầu của DEFAULT_EVENT_LIST là gợi ý
+    mặc định nên không được sắp lại."""
+    out: list[int] = []
+    for i, tok in enumerate(tokens):
+        if tok != "EVENT" or i + 1 >= len(tokens):
+            continue
+        num = _to_int(tokens[i + 1])
+        if num not in out:
+            out.append(num)
+    return tuple(out)
+
+
+def _inline_event_numbers(tokens: list[str], keyword: str) -> tuple[int, ...]:
+    """`EVENT <n>` nằm thẳng trong token của DAQ_EVENT sau `keyword`, cắt lại
+    khi gặp một keyword danh sách khác (dạng không lồng block)."""
+    if keyword not in tokens:
+        return ()
+    start = tokens.index(keyword) + 1
+    end = len(tokens)
+    for other in _EVENT_LIST_KEYWORDS:
+        if other == keyword:
+            continue
+        if other in tokens:
+            pos = tokens.index(other)
+            if start <= pos < end:
+                end = pos
+    return _event_numbers(tokens[start:end])
+
+
+def _parse_daq_event(b: _Block) -> DaqEventSpec | None:
+    """Một `/begin DAQ_EVENT … /end DAQ_EVENT` → DaqEventSpec.
+
+    Nhận cả dạng lồng block và dạng keyword inline (xem docstring module).
+    Trả None khi block rỗng/không khai được event nào — "không khai" KHÁC
+    "khai event 0", tầng trên dựa vào đó để bắt người dùng chọn raster thay
+    vì âm thầm đo sai."""
+    fixed = _event_numbers([t for sub in b.children if sub.name == "FIXED_EVENT_LIST"
+                            for t in sub.tokens])
+    available = _event_numbers([t for sub in b.children if sub.name == "AVAILABLE_EVENT_LIST"
+                                for t in sub.tokens])
+    default = _event_numbers([t for sub in b.children if sub.name == "DEFAULT_EVENT_LIST"
+                              for t in sub.tokens])
+
+    fixed = fixed or _inline_event_numbers(b.tokens, "FIXED_EVENT_LIST")
+    available = available or _inline_event_numbers(b.tokens, "AVAILABLE_EVENT_LIST")
+    default = default or _inline_event_numbers(b.tokens, "DEFAULT_EVENT_LIST")
+
+    is_variable = ("VARIABLE" in b.tokens) or bool(available) or bool(default)
+    if is_variable:
+        return DaqEventSpec(mode="variable", available=available, default=default)
+    if fixed:
+        return DaqEventSpec(mode="fixed", fixed=fixed)
+    return None
+
+
+def _extract_daq_event(b: _Block) -> DaqEventSpec | None:
+    """`IF_DATA XCP / DAQ_EVENT` của một MEASUREMENT / TYPEDEF_MEASUREMENT /
+    INSTANCE. Khai nhiều DAQ_EVENT trong cùng một block là sai theo ASAM —
+    lấy cái đầu tiên đọc được."""
     for child in b.children:
         if child.name != "IF_DATA" or not child.tokens or child.tokens[0] != "XCP":
             continue
         for daq_event in child.children:
             if daq_event.name != "DAQ_EVENT":
                 continue
-            for fel in daq_event.children:
-                if fel.name != "FIXED_EVENT_LIST":
-                    continue
-                ev = fel.get("EVENT", 1)
-                if ev:
-                    return _to_int(ev[0])
+            spec = _parse_daq_event(daq_event)
+            if spec is not None:
+                return spec
     return None
 
 
@@ -247,6 +316,7 @@ def _extract_measurement(b: _Block) -> Measurement | None:
     address  = _to_int(addr_tok[0]) if addr_tok else 0
 
     matrix_dim = _extract_matrix_dim(t)
+    daq_event = _extract_daq_event(b)
 
     return Measurement(
         name=name,
@@ -257,7 +327,8 @@ def _extract_measurement(b: _Block) -> Measurement | None:
         upper_limit=upper_limit,
         compu_method=compu_method,
         matrix_dim=matrix_dim,
-        event_channel=_extract_measurement_event_channel(b),
+        daq_event=daq_event,
+        event_channel=default_event_of(daq_event),
     )
 
 
@@ -269,6 +340,7 @@ def _extract_measurement_type(b: _Block) -> MeasurementTypeDef | None:
         name=t[0], description=t[1].strip('"'), datatype=t[2],
         compu_method=t[3], lower_limit=_to_float(t[6]), upper_limit=_to_float(t[7]),
         matrix_dim=_extract_matrix_dim(t),
+        daq_event=_extract_daq_event(b),
     )
 
 
@@ -279,6 +351,7 @@ def _extract_instance(b: _Block) -> Instance | None:
     return Instance(
         name=t[0], description=t[1].strip('"'), type_name=t[2],
         address=_to_int(t[3]), matrix_dim=_extract_matrix_dim(t),
+        daq_event=_extract_daq_event(b),
     )
 
 
@@ -501,8 +574,9 @@ def _to_float_or_none(value: int | None) -> float | None:
 
 def _extract_event_channel(b: _Block) -> EventChannel | None:
     """Một /begin EVENT ... /end EVENT lồng trong DAQ/EVENT — xem
-    examples/xcp_daq_example.a2l:101-110. t[3] (DAQ|STIM|DAQ_STIM) bỏ qua —
-    STIM ngoài phạm vi (CLAUDE.md: Disabled Features)."""
+    examples/xcp_daq_example.a2l:101-110. t[3] = DAQ | STIM | DAQ_STIM:
+    giữ lại trong `direction` để UI không chào mời một event chỉ-STIM như
+    raster đo được (STIM tự nó vẫn ngoài phạm vi)."""
     t = b.tokens
     if len(t) < 8:
         return None
@@ -514,6 +588,7 @@ def _extract_event_channel(b: _Block) -> EventChannel | None:
         time_cycle=_to_int(t[5]),
         time_unit=_to_int(t[6]),
         priority=_to_int(t[7]),
+        direction=t[3],
     )
 
 

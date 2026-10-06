@@ -6,11 +6,18 @@ import struct
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QTreeWidgetItem
 
-from xcptool.a2l.types import A2LDatabase, Characteristic, InstanceNode, Measurement
+from xcptool.a2l.events import default_event_of
+from xcptool.a2l.types import (
+    A2LDatabase, Characteristic, DaqEventSpec, EventChannel, InstanceNode, Measurement,
+    XcpDaqInfo,
+)
 from xcptool.session.api import DaqList, DaqSignal, SamplePoint
 from xcptool.session.fake import FakeBehavior, FakeSession, MEM_BASE
-from xcptool.ui.measurement_view import COL_ADDR, COL_DTYPE, COL_NAME, COL_VALUE, MeasurementView
+from xcptool.ui.measurement_view import (
+    COL_ADDR, COL_DTYPE, COL_EVENT, COL_NAME, COL_VALUE, MeasurementView,
+)
 
 
 # ── fixture helpers ──────────────────────────────────────────────────────────
@@ -571,3 +578,186 @@ def test_do_thi_bat_opengl_khi_nguoi_dung_yeu_cau(qtbot, monkeypatch) -> None:
     assert pg.getConfigOption("useOpenGL") is True
     # trả lại cấu hình mặc định để không rò sang test khác (config của pyqtgraph là global)
     pg.setConfigOptions(useOpenGL=False, antialias=False)
+
+
+# ── cột Synchronous Event ────────────────────────────────────────────────────
+#
+# Trước khi có cột này view tự gán MỌI signal vào event 0 (xem
+# `_build_daq_lists`): signal thuộc raster 100 ms vẫn bị sample theo raster của
+# event 0 mà không có gì trên UI nói ra. Nhóm test này chốt hành vi mới: event
+# đến từ A2L khi A2L nói, từ người dùng khi A2L để ngỏ, và KHÔNG BAO GIỜ từ
+# phỏng đoán khi A2L có mô tả event.
+
+def _db_with_events(*, specs: dict[str, DaqEventSpec | None]) -> A2LDatabase:
+    """DB có catalog 3 raster (0/1/2) + measurement theo `specs`."""
+    db = A2LDatabase()
+    db.daq_info = XcpDaqInfo(dynamic_daq=True, max_daq=4, max_event_channel=3, min_daq=0)
+    for number, (name, cycle) in enumerate(
+            [("10 ms raster", 10), ("100 ms raster", 100), ("1 s raster", 1000)]):
+        db.events[number] = EventChannel(
+            name=name, short_name=name, number=number, max_daq_list=1,
+            time_cycle=cycle, time_unit=6, priority=0, direction="DAQ")
+    for i, (name, spec) in enumerate(specs.items()):
+        db.measurements[name] = Measurement(
+            name=name, description="", datatype="UWORD", address=MEM_BASE + 4 * i,
+            lower_limit=0.0, upper_limit=1.0,
+            daq_event=spec, event_channel=default_event_of(spec))
+    return db
+
+
+def _row(view: MeasurementView, name: str) -> QTreeWidgetItem:
+    for i in range(view.tree.topLevelItemCount()):
+        item = view.tree.topLevelItem(i)
+        if item.text(COL_NAME) == name:
+            return item
+    raise AssertionError(f"no row for {name}")
+
+
+def _combo(view: MeasurementView, name: str):
+    return view.tree.itemWidget(_row(view, name), COL_EVENT)
+
+
+def _check(view: MeasurementView, *names: str) -> None:
+    for name in names:
+        _row(view, name).setCheckState(COL_NAME, Qt.Checked)
+
+
+def test_event_column_exists_with_header(view: MeasurementView) -> None:
+    assert view.tree.columnCount() == 5
+    assert view.tree.headerItem().text(COL_EVENT) == "Synchronous Event"
+
+
+def test_fixed_single_event_combo_is_preselected_and_locked(view: MeasurementView) -> None:
+    view.set_database(_db_with_events(
+        specs={"sig": DaqEventSpec(mode="fixed", fixed=(1,))}))
+    combo = _combo(view, "sig")
+    assert combo is not None
+    assert combo.currentData() == 1
+    assert not combo.isEnabled()          # A2L đã cố định, không có gì để chọn
+
+
+def test_multi_choice_signal_blocks_start_until_user_picks(qtbot, view: MeasurementView) -> None:
+    """FIXED_EVENT_LIST nhiều event / VARIABLE không default: tool không được
+    chọn hộ, và phải nói rõ còn thiếu gì thay vì đo sai raster."""
+    view.set_database(_db_with_events(
+        specs={"sig": DaqEventSpec(mode="variable", available=(0, 1))}))
+    _check(view, "sig")
+
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert emitted == []
+    assert "synchronous event" in view.status_label.text().lower()
+    assert "sig" in view.status_label.text()
+
+
+def test_user_choice_lands_in_daq_list_event(qtbot, view: MeasurementView) -> None:
+    view.set_database(_db_with_events(
+        specs={"sig": DaqEventSpec(mode="variable", available=(0, 2))}))
+    combo = _combo(view, "sig")
+    # index 0 = "— select event —", nên event 2 là mục cuối
+    combo.setCurrentIndex(combo.count() - 1)
+    assert combo.currentData() == 2
+    _check(view, "sig")
+
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert len(emitted) == 1
+    assert [dl.event for dl in emitted[0]] == [2]
+
+
+def test_signals_on_different_chosen_events_split_into_separate_lists(
+        qtbot, view: MeasurementView) -> None:
+    view.set_database(_db_with_events(specs={
+        "fast": DaqEventSpec(mode="fixed", fixed=(0,)),
+        "slow": DaqEventSpec(mode="fixed", fixed=(1,)),
+    }))
+    _check(view, "fast", "slow")
+
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert len(emitted) == 1
+    assert {dl.event: {s.name for s in dl.signals} for dl in emitted[0]} == {
+        0: {"fast"}, 1: {"slow"}}
+
+
+def test_variable_signal_without_default_offers_every_daq_event(view: MeasurementView) -> None:
+    view.set_database(_db_with_events(specs={"sig": DaqEventSpec(mode="variable")}))
+    combo = _combo(view, "sig")
+    # 3 event trong catalog + mục "— select event —"
+    assert combo.count() == 4
+    assert [combo.itemData(i) for i in range(combo.count())] == [None, 0, 1, 2]
+    assert combo.isEnabled()
+
+
+def test_max_daq_from_a2l_blocks_start_before_touching_the_bus(
+        qtbot, view: MeasurementView) -> None:
+    db = _db_with_events(specs={
+        "a": DaqEventSpec(mode="fixed", fixed=(0,)),
+        "b": DaqEventSpec(mode="fixed", fixed=(1,)),
+        "c": DaqEventSpec(mode="fixed", fixed=(2,)),
+    })
+    db.daq_info = XcpDaqInfo(dynamic_daq=True, max_daq=2, max_event_channel=3, min_daq=0)
+    view.set_database(db)
+    _check(view, "a", "b", "c")
+
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+
+    assert emitted == []
+    assert "MAX_DAQ=2" in view.status_label.text()
+
+
+def test_assign_event_sets_every_named_signal(view: MeasurementView) -> None:
+    """Đường đi của menu chuột phải "Assign Synchronous Event" (gán hàng loạt)."""
+    view.set_database(_db_with_events(specs={
+        "a": DaqEventSpec(mode="variable", available=(0, 1)),
+        "b": DaqEventSpec(mode="variable", available=(0, 1)),
+    }))
+    view._assign_event(("a", "b"), 1)
+    assert _combo(view, "a").currentData() == 1
+    assert _combo(view, "b").currentData() == 1
+
+
+def test_assign_event_refuses_signal_the_a2l_forbids(view: MeasurementView) -> None:
+    view.set_database(_db_with_events(specs={
+        "free": DaqEventSpec(mode="variable", available=(0, 1)),
+        "pinned": DaqEventSpec(mode="fixed", fixed=(0,)),
+    }))
+    view._assign_event(("free", "pinned"), 1)
+    assert _combo(view, "free").currentData() == 1
+    assert _combo(view, "pinned").currentData() == 0      # giữ nguyên
+    assert "pinned" in view.status_label.text()
+
+
+def test_event_combos_locked_while_daq_runs(view: MeasurementView) -> None:
+    view.set_database(_db_with_events(
+        specs={"sig": DaqEventSpec(mode="variable", available=(0, 1))}))
+    view.on_daq_started()
+    assert not _combo(view, "sig").isEnabled()
+    view.on_daq_stopped()
+    assert _combo(view, "sig").isEnabled()
+
+
+def test_a2l_without_event_info_falls_back_to_event_zero_visibly(
+        qtbot, view: MeasurementView) -> None:
+    """A2L tối giản (không /begin EVENT, không MAX_EVENT_CHANNEL): vẫn đo được
+    như trước, nhưng nhãn phải nói rõ kênh 0 là phỏng đoán của tool, không
+    phải thông tin đọc từ A2L."""
+    view.set_database(_make_db())         # không có db.events / db.daq_info
+    combo = _combo(view, "speed")
+    assert combo.currentData() == 0
+    assert "no event info" in combo.currentText().lower()
+    assert not combo.isEnabled()
+
+    _check(view, "speed")
+    emitted: list[list[DaqList]] = []
+    view.daq_start_requested.connect(emitted.append)
+    view.start_btn.click()
+    assert [dl.event for dl in emitted[0]] == [0]

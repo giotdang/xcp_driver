@@ -4,8 +4,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from .events import default_event_of
 from .parser import parse
-from .types import DATATYPE_SIZES, A2LDatabase, Characteristic, InstanceNode, Measurement
+from .types import (
+    DATATYPE_SIZES, A2LDatabase, Characteristic, DaqEventSpec, InstanceNode, Measurement,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -54,7 +57,7 @@ def _resolve_instances(db: A2LDatabase) -> None:
     struct và mảng (component lẫn instance) xem Task 8/9/11."""
     for inst in db.instances.values():
         node = _resolve_one(db, inst.type_name, inst.address, inst.name,
-                            inst.matrix_dim, frozenset())
+                            inst.matrix_dim, frozenset(), inst.daq_event)
         if node is not None:
             db.instance_trees[inst.name] = node
 
@@ -77,10 +80,14 @@ def _size_of(db: A2LDatabase, type_name: str) -> int | None:
 def _resolve_one(
     db: A2LDatabase, type_name: str, base_addr: int, name: str,
     matrix_dim: list[int], seen: frozenset[str],
+    daq_event: DaqEventSpec | None = None,
 ) -> InstanceNode | None:
+    """`daq_event`: DAQ_EVENT khai ở cấp INSTANCE, áp cho mọi lá bên trong
+    (xem `_resolve_type`). None = instance không khai → lá dùng khai báo của
+    TYPEDEF_MEASUREMENT nếu có."""
     n = _array_len(matrix_dim)
     if n == 1:
-        return _resolve_type(db, type_name, base_addr, name, seen)
+        return _resolve_type(db, type_name, base_addr, name, seen, daq_event)
     if n == 0:
         # MATRIX_DIM khai sai (VD "MATRIX_DIM 0") — mọi guard khác trong hàm
         # này/(_resolve_type) đều warning trước khi trả None; nhánh này trước
@@ -98,7 +105,8 @@ def _resolve_one(
         return None
     children: list[InstanceNode] = []
     for i in range(n):
-        child = _resolve_type(db, type_name, base_addr + i * size, f"{name}[{i}]", seen)
+        child = _resolve_type(db, type_name, base_addr + i * size, f"{name}[{i}]", seen,
+                              daq_event)
         if child is not None:
             children.append(child)
     if not children:
@@ -109,6 +117,7 @@ def _resolve_one(
 
 def _resolve_type(
     db: A2LDatabase, type_name: str, addr: int, name: str, seen: frozenset[str],
+    daq_event: DaqEventSpec | None = None,
 ) -> InstanceNode | None:
     if type_name in db.struct_types:
         if type_name in seen:
@@ -120,7 +129,7 @@ def _resolve_type(
         for comp in struct.components:
             child = _resolve_one(db, comp.type_name, addr + comp.offset,
                                  f"{name}.{comp.name}", comp.matrix_dim,
-                                 seen | {type_name})
+                                 seen | {type_name}, daq_event)
             if child is not None:
                 children.append(child)
         return InstanceNode(name=name, address=addr, leaf_name=None,
@@ -146,10 +155,15 @@ def _resolve_type(
             _log.warning("INSTANCE-resolved name %r collides with an existing "
                         "MEASUREMENT, skipping", name)
             return None
+        # DAQ_EVENT: khai ở INSTANCE thắng khai ở TYPEDEF_MEASUREMENT (instance
+        # là chỗ cụ thể hoá template). Không có cái nào thì để None — lá
+        # resolve-từ-INSTANCE trước đây LUÔN mất event và bị UI đẩy về event 0.
+        leaf_event = daq_event or tmpl.daq_event
         db.measurements[name] = Measurement(
             name=name, description=tmpl.description, datatype=tmpl.datatype,
             address=addr, lower_limit=tmpl.lower_limit, upper_limit=tmpl.upper_limit,
-            compu_method=tmpl.compu_method, matrix_dim=tmpl.matrix_dim)
+            compu_method=tmpl.compu_method, matrix_dim=tmpl.matrix_dim,
+            daq_event=leaf_event, event_channel=default_event_of(leaf_event))
         return InstanceNode(name=name, address=addr, leaf_name=name,
                             is_measurement=True, struct_size=None)
     _log.warning("INSTANCE/STRUCTURE_COMPONENT %r references unknown type %r, skipping",

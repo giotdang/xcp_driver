@@ -14,11 +14,13 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
+    QMenu,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -35,6 +37,8 @@ from qfluentwidgets import (
     SwitchButton,
 )
 
+from ..a2l.events import EventOption, allowed_events, event_catalog, event_locked
+from ..a2l.types import Measurement
 from ..session.api import A2LDatabase, DaqList, DaqSignal, InstanceNode, SamplePoint
 
 __all__ = ["MeasurementView"]
@@ -68,7 +72,29 @@ _FRIENDLY_DTYPE: dict[str, str] = {
 COL_NAME  = 0
 COL_DTYPE = 1
 COL_ADDR  = 2
-COL_VALUE = 3
+COL_EVENT = 3
+COL_VALUE = 4
+
+# Mục "chưa chọn" ở đầu combobox event. userData=None nên `currentData()` tự
+# phân biệt được "chưa gán" với "đã gán event 0" — placeholder của ComboBox
+# không mang được dữ liệu nên không dùng.
+_EVENT_UNSET_TEXT = "— select event —"
+
+# A2L không khai event nào (không có /begin EVENT, cũng không có
+# MAX_EVENT_CHANNEL): vẫn phải đo được, nhưng nói thẳng trên UI là tool đang
+# đoán kênh 0 chứ không phải A2L nói thế. ECU nào cũng có kênh 0 nếu nó có DAQ.
+_FALLBACK_EVENT = EventOption(
+    number=0, label="Event 0 (no event info in A2L)", cycle_ns=0,
+    max_daq_list=0, described=False,
+)
+
+
+class _DaqSetupError(ValueError):
+    """Cấu hình đo chưa hợp lệ — thông điệp đã viết cho người dùng đọc.
+
+    `_on_start()` bắt riêng lớp này để hiện nguyên văn lên status bar: đây là
+    lỗi của cấu hình (thiếu raster, vượt MAX_DAQ), phát hiện TRƯỚC khi gửi
+    lệnh nào lên bus, không phải lỗi ECU trả về."""
 
 
 
@@ -153,6 +179,18 @@ class MeasurementView(QWidget):
         self._tree_items: dict[str, QTreeWidgetItem] = {}
         self._last_raw: dict[str, tuple[bytes, str]] = {}
 
+        # ── Synchronous Event ───────────────────────────────────────────────
+        # Nguồn sự thật DUY NHẤT cho "signal này đồng bộ theo event nào":
+        # tên MEASUREMENT → số kênh event, None = chưa gán. Combobox chỉ là
+        # cách hiển thị/sửa nó, `_build_daq_lists()` chỉ đọc dict này.
+        self._event_of: dict[str, int | None] = {}
+        self._catalog: dict[int, EventOption] = {}
+        self._event_combos: dict[str, ComboBox] = {}
+        # Combobox ở dòng STRUCT/ARRAY cha: gán một lúc cho mọi lá bên dưới.
+        self._bulk_combos: list[tuple[ComboBox, tuple[str, ...]]] = []
+        # Chặn vòng lặp signal khi code tự setCurrentIndex (bulk → lá → bulk).
+        self._suppress_event_signals = False
+
         # Plot state — được thiết lập khi _setup_curves() chạy
         self._curves: dict[str, pg.PlotDataItem] = {}
         # Fix 1: Tách thành hai deque float riêng thay vì deque[tuple] —
@@ -217,19 +255,25 @@ class MeasurementView(QWidget):
 
         # signal tree (left) — parameter table & live values
         self.tree = QTreeWidget(self)
-        self.tree.setColumnCount(4)
-        self.tree.setHeaderLabels(["Signal", "Type", "Address", "Value"])
+        self.tree.setColumnCount(5)
+        self.tree.setHeaderLabels(
+            ["Signal", "Type", "Address", "Synchronous Event", "Value"])
         self.tree.setRootIsDecorated(True)
         self.tree.setAlternatingRowColors(True)
+        self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         hdr = self.tree.header()
         hdr.setSectionResizeMode(COL_NAME,  QHeaderView.Interactive)
         hdr.setSectionResizeMode(COL_DTYPE, QHeaderView.Interactive)
         hdr.setSectionResizeMode(COL_ADDR,  QHeaderView.Interactive)
+        hdr.setSectionResizeMode(COL_EVENT, QHeaderView.Interactive)
         hdr.setSectionResizeMode(COL_VALUE, QHeaderView.Stretch)
-        
+
         self.tree.setColumnWidth(COL_NAME, 200)
         self.tree.setColumnWidth(COL_DTYPE, 100)
         self.tree.setColumnWidth(COL_ADDR, 90)
+        self.tree.setColumnWidth(COL_EVENT, 250)   # đủ cho "1 — 100 ms raster (100 ms)"
 
         # đồ thị (phải)
         # Mặc định vẽ bằng software. Viewport OpenGL (QOpenGLWidget) từng làm đồ thị đen
@@ -393,6 +437,7 @@ class MeasurementView(QWidget):
         self._db = db
         self.tree.clear()
         self._tree_items.clear()
+        self._reset_event_state()
 
         handled: set[str] = set()
         for node in db.instance_trees.values():
@@ -435,13 +480,282 @@ class MeasurementView(QWidget):
                     self._tree_items[child_name] = child
                 item.setExpanded(True)
 
+        self._install_event_editors()
+
         n = len(db.measurements)
         self.count_label.setText(f"{n} MEASUREMENT(s)")
-        self.status_label.setText(
-            "Select signals (check boxes) then click 'Start Acquisition'."
-            if n > 0 else "A2L file contains no MEASUREMENTs."
-        )
+        unassigned = sum(1 for ev in self._event_of.values() if ev is None)
+        if n == 0:
+            self.status_label.setText("A2L file contains no MEASUREMENTs.")
+        elif unassigned:
+            self.status_label.setText(
+                f"Select signals (check boxes) and pick a Synchronous Event for "
+                f"{unassigned} signal(s) the A2L does not fix, then click "
+                f"'Start Acquisition'."
+            )
+        else:
+            self.status_label.setText(
+                "Select signals (check boxes) then click 'Start Acquisition'.")
 
+
+    # ── Synchronous Event (raster) ───────────────────────────────────────────
+    #
+    # Vì sao phải có cột này: `SET_DAQ_LIST_MODE` của XCP nhận ĐÚNG MỘT event
+    # channel cho mỗi DAQ list, nên "signal này đo theo raster nào" là thông
+    # tin BẮT BUỘC, không suy ra được từ địa chỉ hay kiểu dữ liệu. A2L nói
+    # được điều đó (IF_DATA XCP / DAQ_EVENT) nhưng không bắt buộc phải nói —
+    # và khi A2L cho nhiều lựa chọn thì chỉ người dùng mới biết chọn cái nào.
+    # Trước đây view tự đẩy mọi signal về event 0: sai raster một cách im
+    # lặng với mọi signal thuộc raster khác.
+
+    def _reset_event_state(self) -> None:
+        """Dựng lại catalog event + gán sẵn event cho từng measurement khi nạp
+        A2L mới. Lựa chọn cũ KHÔNG được giữ: A2L mới có thể đánh số event khác
+        hẳn, giữ lại là âm thầm đo theo raster của file trước."""
+        self._catalog = {opt.number: opt for opt in event_catalog(self._db)}
+        self._event_combos.clear()
+        self._bulk_combos.clear()
+        self._event_of = {}
+        for name, meas in self._db.measurements.items():
+            self._event_of[name] = self._initial_event(meas, self._options_for(name))
+
+    def _options_for(self, name: str) -> list[EventOption]:
+        """Các event hợp lệ cho một measurement, theo A2L.
+
+        A2L không khai event nào ở bất cứ đâu → `_FALLBACK_EVENT`: tool vẫn đo
+        được trên ECU chỉ có A2L tối giản, nhưng nhãn nói rõ kênh 0 là phỏng
+        đoán của tool. Khác hẳn trường hợp A2L CÓ catalog nhưng DAQ_EVENT của
+        signal không liệt kê event nào (A2L hỏng) — khi đó trả rỗng, không
+        được lẳng lặng thay bằng kênh 0."""
+        meas = self._db.measurements.get(name)
+        if meas is None:
+            return []
+        options = allowed_events(meas, self._db, self._catalog)
+        if options:
+            return options
+        return [] if self._catalog else [_FALLBACK_EVENT]
+
+    def _initial_event(self, meas: Measurement, options: list[EventOption]) -> int | None:
+        """Giá trị chọn sẵn: `DEFAULT_EVENT_LIST`/FIXED một phần tử (đã suy ra
+        trong `Measurement.event_channel`), hoặc event duy nhất còn lại. Nhiều
+        lựa chọn mà A2L không gợi ý → None, người dùng phải chọn."""
+        numbers = [opt.number for opt in options]
+        if meas.event_channel is not None and meas.event_channel in numbers:
+            return meas.event_channel
+        if len(numbers) == 1:
+            return numbers[0]
+        return None
+
+    def _measurement_names_of(self, item: QTreeWidgetItem) -> list[str]:
+        """Tên MEASUREMENT mà một dòng đại diện. Dòng phần tử mảng (`x[0]`)
+        trả rỗng — nó không phải MEASUREMENT riêng, event của nó là event của
+        cả mảng."""
+        data = item.data(COL_NAME, Qt.UserRole)
+        if isinstance(data, str):
+            return [data] if data in self._db.measurements else []
+        if isinstance(data, list):
+            return [n for n in data if n in self._db.measurements]
+        return []
+
+    def _install_event_editors(self) -> None:
+        """Gắn combobox vào cột Event cho mọi dòng tương ứng một MEASUREMENT;
+        dòng STRUCT/ARRAY cha được combobox gán-hàng-loạt cho các lá bên dưới."""
+        stack = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while stack:
+            item = stack.pop()
+            for i in range(item.childCount()):
+                stack.append(item.child(i))
+            names = self._measurement_names_of(item)
+            if not names:
+                continue
+            if len(names) == 1:
+                self._install_signal_combo(item, names[0])
+            else:
+                self._install_bulk_combo(item, names)
+        self._refresh_bulk_displays()
+
+    def _install_signal_combo(self, item: QTreeWidgetItem, name: str) -> None:
+        options = self._options_for(name)
+        combo = ComboBox(self.tree)
+        if not options:
+            combo.addItem("no event allowed by A2L", userData=None)
+            combo.setEnabled(False)
+            combo.setToolTip(
+                "The A2L declares a DAQ_EVENT for this signal but lists no event "
+                "channel in it — nothing can be measured until the A2L is fixed.")
+            self.tree.setItemWidget(item, COL_EVENT, combo)
+            self._event_combos[name] = combo
+            return
+
+        current = self._event_of.get(name)
+        if current is None:
+            combo.addItem(_EVENT_UNSET_TEXT, userData=None)
+        for opt in options:
+            combo.addItem(opt.label, userData=opt.number)
+        combo.setCurrentIndex(
+            0 if current is None
+            else next(i for i, opt in enumerate(options) if opt.number == current))
+
+        meas = self._db.measurements[name]
+        if event_locked(meas, self._db) or len(options) <= 1:
+            # Không có gì để chọn — khoá lại thay vì giả vờ cho chọn.
+            combo.setEnabled(False)
+            if event_locked(meas, self._db):
+                combo.setToolTip(
+                    f"A2L fixes this signal to event {options[0].number} "
+                    f"(FIXED_EVENT_LIST) — not selectable.")
+            elif not options[0].described:
+                combo.setToolTip(
+                    "The A2L declares no event channels (no /begin EVENT, no "
+                    "MAX_EVENT_CHANNEL). Event 0 is the tool's assumption, not "
+                    "a value read from the A2L.")
+        combo.currentIndexChanged.connect(
+            lambda _idx, n=name, c=combo: self._on_signal_event_changed(n, c))
+        self.tree.setItemWidget(item, COL_EVENT, combo)
+        self._event_combos[name] = combo
+
+    def _install_bulk_combo(self, item: QTreeWidgetItem, names: list[str]) -> None:
+        """Dòng cha: chỉ chào những event mà MỌI lá bên dưới đều dùng được.
+
+        A2L cố định raster cho một signal (FIXED_EVENT_LIST) vì ECU chỉ cập
+        nhật biến đó trong ngữ cảnh raster ấy. Ép nó sang event khác thì ECU
+        KHÔNG báo lỗi gì — nó vẫn lấy mẫu đều đặn, chỉ là lấy ra giá trị cũ.
+        Lỗi im lặng kiểu đó phải chặn từ UI."""
+        common: set[int] | None = None
+        for name in names:
+            numbers = {opt.number for opt in self._options_for(name)}
+            common = numbers if common is None else (common & numbers)
+        combo = ComboBox(self.tree)
+        if not common:
+            combo.addItem("members use different events", userData=None)
+            combo.setEnabled(False)
+            combo.setToolTip(
+                "Members of this struct/array are fixed to different events by "
+                "the A2L — set the Synchronous Event on each member row.")
+            self.tree.setItemWidget(item, COL_EVENT, combo)
+            return
+
+        combo.addItem(_EVENT_UNSET_TEXT, userData=None)
+        for number in sorted(common):
+            opt = self._catalog.get(number)
+            combo.addItem(opt.label if opt else f"Event {number}", userData=number)
+        combo.currentIndexChanged.connect(
+            lambda _idx, ns=tuple(names), c=combo: self._on_bulk_event_changed(ns, c))
+        self.tree.setItemWidget(item, COL_EVENT, combo)
+        self._bulk_combos.append((combo, tuple(names)))
+
+    def _on_signal_event_changed(self, name: str, combo: ComboBox) -> None:
+        if self._suppress_event_signals:
+            return
+        self._event_of[name] = combo.currentData()
+        self._refresh_bulk_displays()
+
+    def _on_bulk_event_changed(self, names: tuple[str, ...], combo: ComboBox) -> None:
+        if self._suppress_event_signals:
+            return
+        number = combo.currentData()
+        if number is None:          # người dùng chọn lại mục "— select event —"
+            return
+        self._assign_event(names, number)
+
+    def _assign_event(self, names: tuple[str, ...] | list[str], number: int) -> None:
+        """Gán event cho nhiều signal, bỏ qua signal mà A2L không cho phép."""
+        changed = 0
+        rejected: list[str] = []
+        for name in names:
+            if number not in {opt.number for opt in self._options_for(name)}:
+                rejected.append(name)
+                continue
+            self._event_of[name] = number
+            changed += 1
+        self._sync_combos_from_state()
+        if rejected:
+            self.status_label.setText(
+                f"Event {number} assigned to {changed} signal(s); not allowed by "
+                f"the A2L for: {', '.join(sorted(rejected)[:5])}"
+                + (" …" if len(rejected) > 5 else ""))
+        else:
+            self.status_label.setText(f"Event {number} assigned to {changed} signal(s).")
+
+    def _sync_combos_from_state(self) -> None:
+        """Đẩy `_event_of` ra mọi combobox. Có cờ chặn signal: setCurrentIndex
+        phát currentIndexChanged, không chặn thì bulk → lá → bulk thành vòng."""
+        self._suppress_event_signals = True
+        try:
+            for name, combo in self._event_combos.items():
+                current = self._event_of.get(name)
+                for i in range(combo.count()):
+                    if combo.itemData(i) == current:
+                        combo.setCurrentIndex(i)
+                        break
+        finally:
+            self._suppress_event_signals = False
+        self._refresh_bulk_displays()
+
+    def _refresh_bulk_displays(self) -> None:
+        """Dòng cha hiện event chung của các lá, hoặc "— select event —" khi
+        các lá đang khác nhau."""
+        self._suppress_event_signals = True
+        try:
+            for combo, names in self._bulk_combos:
+                values = {self._event_of.get(n) for n in names}
+                shared = values.pop() if len(values) == 1 else None
+                for i in range(combo.count()):
+                    if combo.itemData(i) == shared:
+                        combo.setCurrentIndex(i)
+                        break
+        finally:
+            self._suppress_event_signals = False
+
+    def _set_event_editors_enabled(self, enabled: bool) -> None:
+        """Khoá cột Event khi DAQ đang chạy: đổi raster chỉ có tác dụng ở lần
+        cấu hình list kế tiếp, để sửa được giữa phiên là mời người dùng tin
+        vào một thứ chưa xảy ra."""
+        for name, combo in self._event_combos.items():
+            if not enabled:
+                combo.setEnabled(False)
+                continue
+            # Bật lại = khôi phục đúng trạng thái A2L quy định, không phải bật
+            # hết: dòng bị FIXED_EVENT_LIST cố định vẫn phải khoá.
+            meas = self._db.measurements.get(name)
+            locked = meas is None or event_locked(meas, self._db) \
+                or len(self._options_for(name)) <= 1
+            combo.setEnabled(not locked)
+        for combo, _names in self._bulk_combos:
+            combo.setEnabled(enabled and combo.count() > 1)
+
+    def _on_tree_context_menu(self, pos: QPoint) -> None:
+        """"Assign Synchronous Event" cho mọi dòng đang chọn — gán từng
+        combobox một cho cả struct lớn thì quá lặt nhặt."""
+        if self._daq_running:
+            return
+        names: list[str] = []
+        for item in self.tree.selectedItems():
+            for name in self._measurement_names_of(item):
+                if name not in names:
+                    names.append(name)
+        if not names:
+            return
+
+        common: set[int] | None = None
+        for name in names:
+            numbers = {opt.number for opt in self._options_for(name)}
+            common = numbers if common is None else (common & numbers)
+
+        menu = QMenu(self.tree)
+        title = menu.addAction(f"Assign Synchronous Event — {len(names)} signal(s)")
+        title.setEnabled(False)
+        menu.addSeparator()
+        if not common:
+            none_action = menu.addAction("no event allowed for all selected signals")
+            none_action.setEnabled(False)
+        for number in sorted(common or ()):
+            opt = self._catalog.get(number)
+            action = QAction(opt.label if opt else f"Event {number}", menu)
+            action.triggered.connect(
+                lambda _checked=False, n=number, ns=tuple(names): self._assign_event(ns, n))
+            menu.addAction(action)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def set_byte_order(self, byte_order: str) -> None:
         self._byte_order = byte_order
@@ -457,6 +771,7 @@ class MeasurementView(QWidget):
         self._daq_running = True
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self._set_event_editors_enabled(False)
         self.status_label.setText("Acquiring DAQ data…")
         self._t0_ns = 0
         self._start_mono = time.perf_counter()
@@ -466,6 +781,7 @@ class MeasurementView(QWidget):
         self._daq_running = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self._set_event_editors_enabled(True)
         self.status_label.setText("Stopped.")
 
     def on_samples(self, samples: list[SamplePoint]) -> None:
@@ -547,7 +863,13 @@ class MeasurementView(QWidget):
             self.a2l_load_requested.emit(path)
 
     def _on_start(self) -> None:
-        lists = self._build_daq_lists()
+        try:
+            lists = self._build_daq_lists()
+        except _DaqSetupError as exc:
+            # Cấu hình sai (thiếu raster, vượt MAX_DAQ) — nói đúng cái sai,
+            # đừng để người dùng đoán, và đừng gửi gì lên bus.
+            self.status_label.setText(str(exc))
+            return
         if not lists:
             self.status_label.setText(
                 "Select at least one signal before starting acquisition."
@@ -610,31 +932,41 @@ class MeasurementView(QWidget):
 
 
     def _build_daq_lists(self) -> list[DaqList]:
-        """Dựng danh sách DaqList từ signals được tick, GOM THEO EVENT_CHANNEL
-        khai trong A2L (DAQ_EVENT/FIXED_EVENT_LIST — xem
-        examples/xcp_daq_example.a2l). Một DaqList chỉ có MỘT event; ECU
-        trigger cả list theo event đó nên signal thuộc event khác nhau phải
-        tách list khác nhau, nhét chung sẽ sample sai raster. Measurement
-        không khai DAQ_EVENT (event_channel=None — A2L cũ, hoặc resolve từ
-        INSTANCE/TYPEDEF_MEASUREMENT chưa mang field này) mặc định event 0.
+        """Dựng danh sách DaqList từ signal được tick, GOM THEO EVENT mà người
+        dùng chọn ở cột "Synchronous Event" (`_event_of`).
 
-        Array signal (MATRIX_DIM) tự động tách thành N DaqSignal riêng:
+        Một DaqList chỉ mang MỘT event vì `SET_DAQ_LIST_MODE` chỉ nhận một
+        event channel cho mỗi list — signal thuộc raster khác nhau nhét chung
+        một list thì ECU sample tất cả theo raster của event đó. Thứ tự list
+        theo số event tăng dần, nên list vật lý thứ i trên ECU luôn ứng với
+        event thứ i trong danh sách này (quan trọng khi ECU phát DTO của mỗi
+        list trên một CAN ID riêng).
+
+        Array signal (MATRIX_DIM) tách thành N DaqSignal riêng, tất cả dùng
+        event của measurement mẹ (A2L khai DAQ_EVENT cho cả mảng, không cho
+        từng phần tử):
           torqueSamples[4] (FLOAT32_IEEE, 4B) →
-            torqueSamples[0] @ addr+0
-            torqueSamples[1] @ addr+4
-            torqueSamples[2] @ addr+8
-            torqueSamples[3] @ addr+12
-        Scalar signal (matrix_dim rỗng) giữ nguyên.
+            torqueSamples[0] @ addr+0 … torqueSamples[3] @ addr+12
+
+        Raises:
+            _DaqSetupError: có signal chưa gán event, hoặc số DAQ list cần
+                dùng vượt MAX_DAQ mà A2L khai. Phát hiện ở đây, trước khi gửi
+                lệnh nào lên bus.
         """
         checked = self._checked_names()
         if not checked:
             return []
         by_event: dict[int, list[DaqSignal]] = {}
+        missing: list[str] = []
         for name in checked:
             meas = self._db.measurements.get(name)
             if meas is None:
                 continue
-            event = meas.event_channel if meas.event_channel is not None else 0
+            event = self._event_of.get(name)
+            if event is None:
+                # KHÔNG mặc định về 0: xem khối "Synchronous Event" ở trên.
+                missing.append(name)
+                continue
             bucket = by_event.setdefault(event, [])
             n = meas.array_size       # 1 nếu scalar, >1 nếu array
             elem_size = meas.byte_size // n   # kích thước một phần tử (bytes)
@@ -657,8 +989,33 @@ class MeasurementView(QWidget):
                         size=elem_size,
                         datatype=meas.datatype,
                     ))
-        return [DaqList(signals=sigs, event=event, timestamp=True)
-                for event, sigs in sorted(by_event.items()) if sigs]
+
+        if missing:
+            shown = ", ".join(sorted(missing)[:6])
+            more = f" (+{len(missing) - 6} more)" if len(missing) > 6 else ""
+            raise _DaqSetupError(
+                f"Pick a Synchronous Event for {len(missing)} selected signal(s) "
+                f"first: {shown}{more}")
+
+        lists = [DaqList(signals=sigs, event=event, timestamp=True)
+                 for event, sigs in sorted(by_event.items()) if sigs]
+        self._check_daq_capacity(lists)
+        return lists
+
+    def _check_daq_capacity(self, lists: list[DaqList]) -> None:
+        """So số DAQ list cần dùng với MAX_DAQ mà A2L khai (`/begin DAQ`).
+
+        Chỉ kiểm khi A2L có khai (`max_daq > 0`): ECU từ chối ALLOC_DAQ cũng
+        ra lỗi, nhưng lúc đó người dùng chỉ thấy mã lỗi thô giữa chuỗi cấu
+        hình, còn ở đây nói được chính xác cần mấy list và có mấy."""
+        info = self._db.daq_info
+        if info is None or info.max_daq <= 0 or len(lists) <= info.max_daq:
+            return
+        events = ", ".join(str(dl.event) for dl in lists)
+        raise _DaqSetupError(
+            f"{len(lists)} different events selected (event {events}) need "
+            f"{len(lists)} DAQ lists, but the A2L declares MAX_DAQ="
+            f"{info.max_daq}. Deselect signals from one of the rasters.")
 
     def _setup_curves(self, lists: list[Any]) -> None:
         """Xoá curves cũ và khởi tạo curve mới cho mỗi signal được chọn."""

@@ -25,6 +25,41 @@ class RecordLayout:
     datatype: DataType
 
 
+# Mã EVENT_CHANNEL_TIME_UNIT / TIMESTAMP_UNIT theo ASAM (A2L dùng chung bảng
+# này cho EVENT và cho timestamp DAQ). Giá trị = số nanosecond của 1 unit;
+# thiếu mã nào (picosecond 0xA–0xC) = không biểu diễn được bằng ns nguyên.
+TIME_UNIT_NS: dict[int, int] = {
+    0x0: 1, 0x1: 10, 0x2: 100,
+    0x3: 1_000, 0x4: 10_000, 0x5: 100_000,
+    0x6: 1_000_000, 0x7: 10_000_000, 0x8: 100_000_000,
+    0x9: 1_000_000_000,
+}
+
+
+@dataclass(frozen=True)
+class DaqEventSpec:
+    """`/begin DAQ_EVENT ... /end DAQ_EVENT` trong IF_DATA XCP của một
+    MEASUREMENT / TYPEDEF_MEASUREMENT / INSTANCE (ASAM MCD-2 MC).
+
+    Hai dạng theo spec:
+
+    * ``mode="fixed"``   -- `/begin FIXED_EVENT_LIST EVENT n ... /end`: signal
+      CHỈ đo được ở các event này. Một phần tử => không có gì để chọn; nhiều
+      phần tử => người dùng chọn trong số đó.
+    * ``mode="variable"`` -- `VARIABLE` + `/begin AVAILABLE_EVENT_LIST ...` và
+      `/begin DEFAULT_EVENT_LIST ...`: người dùng chọn trong `available`
+      (rỗng = mọi event của ECU), `default` là gợi ý ban đầu.
+
+    `None` (field không được set) nghĩa là A2L KHÔNG khai gì -- khác hẳn với
+    "khai event 0". Khi đó mọi event DAQ của ECU đều là lựa chọn hợp lệ và
+    tool không được tự đoán giúp.
+    """
+    mode: Literal["fixed", "variable"]
+    fixed: tuple[int, ...] = ()
+    available: tuple[int, ...] = ()
+    default: tuple[int, ...] = ()
+
+
 @dataclass
 class Measurement:
     name: str
@@ -35,7 +70,12 @@ class Measurement:
     upper_limit: float
     compu_method: str = "NO_COMPU_METHOD"
     matrix_dim: list[int] = field(default_factory=list)
+    # Event mặc định suy ra từ `daq_event` (DEFAULT_EVENT_LIST, hoặc
+    # FIXED_EVENT_LIST một phần tử). None = A2L không khai -> người dùng phải
+    # chọn. Cần TẤT CẢ lựa chọn hợp lệ (không chỉ cái mặc định) thì dùng
+    # `a2l.events.allowed_events()`.
     event_channel: int | None = None
+    daq_event: DaqEventSpec | None = None
 
     @property
     def array_size(self) -> int:
@@ -120,6 +160,7 @@ class MeasurementTypeDef:
     upper_limit: float
     compu_method: str = "NO_COMPU_METHOD"
     matrix_dim: list[int] = field(default_factory=list)
+    daq_event: DaqEventSpec | None = None
 
     @property
     def array_size(self) -> int:
@@ -137,6 +178,9 @@ class Instance:
     type_name: str          # -> StructTypeDef | CharacteristicTypeDef | MeasurementTypeDef
     address: int
     matrix_dim: list[int] = field(default_factory=list)
+    # DAQ_EVENT khai ở cấp INSTANCE -- áp cho MỌI lá measurement bên trong và
+    # thắng khai báo của TYPEDEF_MEASUREMENT (instance cụ thể hoá template).
+    daq_event: DaqEventSpec | None = None
 
     @property
     def array_size(self) -> int:
@@ -224,6 +268,20 @@ class EventChannel:
     time_cycle: int
     time_unit: int
     priority: int
+    # Token [3] của /begin EVENT: DAQ | STIM | DAQ_STIM. Event chỉ-STIM không
+    # dùng được để đo. "" = A2L cũ không khai -> coi như dùng được cho DAQ:
+    # thà hiện một event không dùng được còn hơn ẩn mất event hợp lệ.
+    direction: str = ""
+
+    @property
+    def supports_daq(self) -> bool:
+        return self.direction in ("", "DAQ", "DAQ_STIM")
+
+    @property
+    def cycle_ns(self) -> int:
+        """Chu kỳ raster tính bằng ns; 0 = không tuần hoàn (TIME_CYCLE=0 theo
+        ASAM) hoặc mã TIME_UNIT không quy đổi được."""
+        return self.time_cycle * TIME_UNIT_NS.get(self.time_unit, 0)
 
 
 @dataclass(frozen=True)
