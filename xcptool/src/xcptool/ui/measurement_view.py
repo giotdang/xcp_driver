@@ -37,9 +37,15 @@ from qfluentwidgets import (
     SwitchButton,
 )
 
-from ..a2l.events import EventOption, allowed_events, event_catalog, event_locked
-from ..a2l.types import Measurement
-from ..session.api import A2LDatabase, DaqList, DaqSignal, InstanceNode, SamplePoint
+from ..session.api import (
+    A2LDatabase,
+    DaqList,
+    DaqSignal,
+    InstanceNode,
+    Measurement,
+    SamplePoint,
+)
+from ..session.events import EventOption, allowed_events, event_catalog, event_locked
 
 __all__ = ["MeasurementView"]
 
