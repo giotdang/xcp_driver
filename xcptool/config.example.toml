@@ -1,0 +1,58 @@
+# xcptool — cấu hình mẫu
+#
+# File thật là `config.toml` cạnh file này; nó KHÔNG được git track vì chứa
+# thiết lập riêng của từng máy (backend/channel của card CAN, thanh ghi bit
+# timing theo f_clock thực tế, đường dẫn A2L, trạng thái dock của cửa sổ).
+# Chép file này thành `config.toml` rồi sửa, hoặc cứ mở xcptool và đặt trong
+# dialog Connect — công cụ tự ghi lại.
+#
+# Các giá trị dưới đây là mặc định trong code (`session/api.py:BusConfig`),
+# chỉ là điểm khởi đầu tiện tay chứ không phải giả định về ECU nào.
+
+[bus]
+# python-can backend + channel. "virtual" chạy không cần card, dùng để thử
+# với devtools/fakeslave.py. Card thật: "vector", "kvaser", "pcan", "slcan"...
+backend = "virtual"
+channel = "xcptool"
+
+bitrate = 500000
+cro_id = 0x7E0            # host → ECU (CMD)
+dto_id = 0x7E1            # ECU → host: response, event VÀ dữ liệu DAQ
+extended_id = false       # false = 11-bit
+pad_dlc = true            # A2L MAX_DLC_REQUIRED → luôn đệm đủ 8 byte
+t1_timeout_s = 1.0        # timeout chờ response của một lệnh
+
+# CAN FD
+is_fd = false
+data_bitrate = 2000000
+
+# Sample-point solver: bật thì chỉ cần bitrate + sample_point, xcptool tự giải
+# ra brp/tseg qua python-can theo f_clock. Tắt thì dùng thanh ghi gõ tay bên dưới.
+solve_timing = true
+sample_point = 87.5       # % — nominal / arbitration phase
+data_sample_point = 75.0  # % — data phase (CAN FD)
+
+# Thanh ghi bit timing gõ tay — chỉ có tác dụng khi custom_bit_timing = true.
+# f_clock phải khớp clock thật của card, nếu không baudrate ra sai.
+custom_bit_timing = false
+f_clock = 80000000
+brp = 1
+tseg1 = 119
+tseg2 = 40
+sjw = 40
+dbrp = 1
+dtseg1 = 29
+dtseg2 = 10
+dsjw = 10
+
+# ECU có thể phát DTO của từng DAQ list trên CAN ID riêng. Định dạng
+# "<số DAQ list vật lý>:<can_id>", cách nhau bằng dấu phẩy. List không khai
+# báo thì dùng dto_id. Bỏ trống = một ID duy nhất như mặc định.
+# daq_can_ids = "0:0x6A2,1:0x6A3"
+
+# Lấy CAN ID / bitrate / FD từ A2L (block XCP_ON_CAN) lúc connect. Các giá trị
+# gõ tay ở trên vẫn được giữ để bỏ tích thì quay lại đúng như cũ.
+use_a2l_can = false
+
+# [session] và [ui] do công cụ tự ghi (đường dẫn A2L mở lần cuối, dock_state,
+# route đang xem, bộ lọc Trace). Không cần đặt tay, nên file mẫu không có.

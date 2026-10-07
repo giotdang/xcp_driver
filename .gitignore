@@ -10,3 +10,20 @@ __pycache__/
 
 # git worktrees
 .worktrees/
+
+# CodeGraph index — 12 MB, dựng lại được bằng `codegraph index`
+.codegraph/
+
+# Cấu hình chạy của từng máy (card CAN, bit timing theo f_clock thật, đường
+# dẫn A2L, dock_state). Mẫu để chép: xcptool/config.example.toml
+xcptool/config.toml
+
+# Sản phẩm sinh ra và gói phát hành
+# - dataset.json: export của dialog Calibration
+# - *.zip: gói phát hành
+# - docs/*.pptx: slide training, không version trong git
+# - *_mod.hex: output của HexView generate-hex
+xcptool/dataset.json
+xcptool/*.zip
+xcptool/docs/*.pptx
+examples/*_mod.hex
