@@ -1,0 +1,51 @@
+[
+  {
+    "content": "NGUYÊN TẮC THIẾT KẾ xcptool (chủ dự án nhắc nhiều lần): xcptool là công cụ XCP master GENERIC, dùng để kiểm thử nhiều ECU khác nhau. Mọi quyết định thiết kế phải bám ASAM MCD-1 XCP (protocol/transport) và ASAM MCD-2 MC (A2L), KHÔNG được suy ra từ firmware trong driver/ của repo này. Firmware XcpBasic/TC2xx chỉ được dùng làm ví dụ minh hoạ cụ thể, không bao giờ làm cơ sở cho hành vi của tool.",
+    "type": "preference",
+    "concepts": ["xcptool", "nguyên tắc thiết kế", "ASAM", "XCP spec", "generic tool"],
+    "files": ["xcptool/DESIGN.md", "xcptool/ARCHITECTURE.md"],
+    "project": "xcp_driver"
+  },
+  {
+    "content": "ĐÃ XONG (2026-10-06, commit 9b2ada8 trên nhánh claude/elegant-einstein-8rqqtj): cột 'Synchronous Event' trong MeasurementView của xcptool. Trước đó view tự gán MỌI signal vào event 0 khi A2L không khai DAQ_EVENT, nên signal thuộc raster khác bị ECU lấy mẫu sai tần số một cách im lặng. Giờ mỗi dòng MEASUREMENT có combobox chọn event; dòng STRUCT/ARRAY cha và menu chuột phải gán hàng loạt; Start Acquisition bị chặn (không gửi gì lên bus) khi còn signal chưa gán event hoặc khi số raster vượt MAX_DAQ khai trong A2L; cột bị khoá trong lúc đang đo. Test: 757 unit+ui, 121 integration, tất cả xanh.",
+    "type": "milestone",
+    "concepts": ["xcptool", "DAQ", "event mapping", "Synchronous Event", "MeasurementView", "UI"],
+    "files": ["xcptool/src/xcptool/ui/measurement_view.py", "xcptool/tests/ui/test_measurement_view.py"],
+    "project": "xcp_driver"
+  },
+  {
+    "content": "MÔ HÌNH DAQ_EVENT trong tầng A2L của xcptool: types.DaqEventSpec có mode 'fixed' (FIXED_EVENT_LIST, nhiều EVENT) hoặc 'variable' (VARIABLE + AVAILABLE_EVENT_LIST + DEFAULT_EVENT_LIST). Parser đọc được CẢ hai dạng viết: lồng /begin…/end và keyword inline. DAQ_EVENT còn được đọc ở TYPEDEF_MEASUREMENT và INSTANCE (INSTANCE thắng TYPEDEF) — trước đây lá resolve từ INSTANCE luôn mất event. a2l/events.py giữ toàn bộ logic chọn event: event_catalog(), allowed_events(), default_event_of(), event_locked(), format_cycle(). QUY TẮC CỐT LÕI: A2L không khai thì tool KHÔNG đoán — không hàm nào trong events.py trả về event 0 làm mặc định. Chỉ riêng tầng UI mới có fallback 'Event 0 (no event info in A2L)' và chỉ khi A2L hoàn toàn không mô tả event nào.",
+    "type": "architecture",
+    "concepts": ["xcptool", "A2L", "DAQ_EVENT", "parser", "events.py", "ASAM MCD-2 MC"],
+    "files": ["xcptool/src/xcptool/a2l/events.py", "xcptool/src/xcptool/a2l/parser.py", "xcptool/src/xcptool/a2l/types.py", "xcptool/src/xcptool/a2l/database.py"],
+    "project": "xcp_driver"
+  },
+  {
+    "content": "LỖI CÒN TREO #1 (ưu tiên cao, đã có plan, chưa làm): khi ODT 0 rỗng, configure_daq() vẫn gửi ALLOC_ODT_ENTRY với count=0 — slave có quyền trả ERR_OUT_OF_RANGE và nhiều slave làm vậy. Trên CAN classic (MAX_DTO 8, header 1B, timestamp 4B) ngân sách ODT 0 chỉ 3B nên MỌI lựa chọn chỉ gồm signal >= 4 byte (FLOAT32/ULONG) đều rơi vào ca này và start_daq hỏng hoàn toàn. Hướng đã chốt (hướng 1): khi ODT 0 rỗng thì pack lại chính DAQ list đó với timestamp TẮT. Kế hoạch chi tiết 5 task nằm ở xcptool/docs/superpowers/plans/2026-10-06-empty-odt0-timestamp-fallback-plan.md. BA CẠM BẪY đã ghi trong plan: (1) phải cập nhật eff_ts cùng lúc với pack lại, quên thì mode vẫn 0x10 và frame_offset lệch 4 byte, decode ra rác mà KHÔNG có lỗi nào; (2) ECU có TIMESTAMP_FIXED thì không tắt timestamp được, phải ném UnsupportedByEcuError với thông điệp rõ; (3) test tests/integration/test_daq.py::test_multiple_daq_lists_get_sequential_pids hiện đang assert ĐÚNG hành vi cũ (pid_list0 == {0,1}) nên phải sửa cùng, sau fix thành {0} và {1}. Cũng cần vá devtools/fakeslave.py vì nó không kiểm count==0 nên test không bắt được lỗi này.",
+    "type": "issue",
+    "concepts": ["xcptool", "DAQ", "ODT", "ALLOC_ODT_ENTRY", "timestamp", "bug còn treo", "kế hoạch"],
+    "files": ["xcptool/docs/superpowers/plans/2026-10-06-empty-odt0-timestamp-fallback-plan.md", "xcptool/src/xcptool/master/daq.py", "xcptool/src/xcptool/devtools/fakeslave.py", "xcptool/tests/integration/test_daq.py"],
+    "project": "xcp_driver"
+  },
+  {
+    "content": "LỖI CÒN TREO #2 (chưa có plan): timestamp chỉ tới được signal nằm ở ODT 0. Theo ASAM, timestamp chỉ nằm trong ODT đầu tiên của DAQ list mỗi chu kỳ; decode_dto() đặt has_timestamp = (odt_index == 0) và KHÔNG lan timestamp đó sang các ODT khác cùng chu kỳ, nên mọi sample ở ODT 1+ có timestamp_ns = 0 và MeasurementView rơi về đồng hồ host (vón cục theo tick drain 40 ms). Với DTO 8 byte, ODT 0 chứa tối đa 3 byte nên thực tế đa số signal không có timestamp ECU. Hướng sửa rẻ: giữ 'timestamp gần nhất theo DAQ list' trong decode_dto và gán cho các ODT tiếp sau (ODT của một chu kỳ vào send queue theo thứ tự ODT0 -> ODTn nên xấp xỉ này an toàn).",
+    "type": "issue",
+    "concepts": ["xcptool", "DAQ", "timestamp", "decode_dto", "ODT", "bug còn treo"],
+    "files": ["xcptool/src/xcptool/master/daq.py", "xcptool/src/xcptool/ui/measurement_view.py"],
+    "project": "xcp_driver"
+  },
+  {
+    "content": "CHẠY TEST xcptool TRONG PHIÊN CLOUD (container claude.ai/code không có sẵn gì ngoài numpy): tạo venv rồi pip install pytest pytest-qt pytest-timeout PySide6 PySide6-Fluent-Widgets pyqtgraph numpy python-can bincopy PyOpenGL. Qt cần thư viện hệ thống: apt-get update TRƯỚC rồi apt-get install -y libegl1 libegl-mesa0 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1 (thiếu libEGL.so.1 thì ngay cả import qfluentwidgets cũng chết). Chạy với QT_QPA_PLATFORM=offscreen và PYTHONPATH=<repo>/xcptool/src. Mốc xanh ngày 2026-10-07: 757 test (tests/unit + tests/ui) và 121 test (tests/integration). LƯU Ý: đừng chạy hai tiến trình pytest song song — test tests/ui/test_calibration_view.py::test_cal_set_page_chi_gui_mot_lenh_set_cal_page nhạy timing và sẽ đỏ giả khi hai event loop Qt tranh CPU.",
+    "type": "howto",
+    "concepts": ["xcptool", "test", "pytest", "PySide6", "cloud session", "môi trường"],
+    "files": ["xcptool/pyproject.toml", ".claude/skills/test_strategy/SKILL.md"],
+    "project": "xcp_driver"
+  },
+  {
+    "content": "GIỚI HẠN MÔI TRƯỜNG: agentmemory KHÔNG dùng được từ phiên Claude Code chạy trên cloud (claude.ai/code). Phiên cloud chạy trong container riêng nên localhost:3111 ở đó là chính container, không phải máy cá nhân; MCP server local/stdio cấu hình ở user scope trên desktop cũng không đi theo vào phiên cloud. Hệ quả: trong phiên cloud, ghi chú bền phải commit vào repo (ví dụ docs/superpowers/plans/) chứ không memory_save được. Để đẩy ngược memory vào agentmemory sau đó, chạy trên máy cá nhân: python3 tools/agentmemory/push_seed.py (xem tools/agentmemory/README.md).",
+    "type": "context",
+    "concepts": ["agentmemory", "cloud session", "giới hạn môi trường", "memory"],
+    "files": ["tools/agentmemory/push_seed.py", "tools/agentmemory/README.md", ".claude/CLAUDE.md"],
+    "project": "xcp_driver"
+  }
+]
