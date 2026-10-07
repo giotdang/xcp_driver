@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XCP Commands Reference</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --ink:#1c2430; --mute:#5d6b7c; --line:#dfe3e8;
+  --accent:#1f5fbf; --code-bg:#eef1f5;
+  --ok:#1b7f3b; --ok-bg:#e2f4e8;
+  --part:#9a6100; --part-bg:#fdf0d4;
+  --off:#a13a1c; --off-bg:#fbe6de;
+  --no:#5d6b7c; --no-bg:#e8ebef;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12161c; --panel:#1a2029; --ink:#e4e9f0; --mute:#93a1b3; --line:#2b3441;
+    --accent:#6ea8ff; --code-bg:#242c38;
+    --ok:#5fd287; --ok-bg:#16301f; --part:#f0b955; --part-bg:#3a2d10;
+    --off:#ff9b7c; --off-bg:#3b1f16; --no:#93a1b3; --no-bg:#242c38;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:28px 20px 8px;max-width:1100px;margin:0 auto}
+h1{margin:0 0 4px;font-size:26px}
+h2{font-size:20px;margin:36px 0 10px;padding-top:8px}
+h3{font-size:16px;margin:0}
+main{max-width:1100px;margin:0 auto;padding:0 20px 60px}
+p.sub{margin:0;color:var(--mute)}
+code,.mono{font-family:ui-monospace,Consolas,"Cascadia Mono",monospace;font-size:.92em}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0}
+.box.warn{border-left:4px solid var(--part)}
+.box.bad{border-left:4px solid var(--off)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+th{background:var(--code-bg);font-weight:600}
+.tw{overflow-x:auto}
+.badge{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:99px;white-space:nowrap}
+.b-ok{color:var(--ok);background:var(--ok-bg)}
+.b-part{color:var(--part);background:var(--part-bg)}
+.b-off{color:var(--off);background:var(--off-bg)}
+.b-no{color:var(--no);background:var(--no-bg)}
+.tools{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0;align-items:center}
+.tools input{flex:1 1 240px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font:inherit}
+.chip{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:5px 11px;border-radius:99px;cursor:pointer;font:inherit;font-size:13px}
+.chip[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.idx td:first-child,.idx th:first-child{white-space:nowrap}
+.idx a{color:var(--accent);text-decoration:none;font-weight:600}
+.cmd{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:14px 0;overflow:hidden}
+.cmd>summary{cursor:pointer;padding:11px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;list-style:none}
+.cmd>summary::-webkit-details-marker{display:none}
+.cmd>summary::before{content:"▸";color:var(--mute);width:1em}
+.cmd[open]>summary::before{content:"▾"}
+.cmd .code{font-family:ui-monospace,Consolas,monospace;font-weight:700;color:var(--accent)}
+.cmd .body{padding:2px 16px 14px;border-top:1px solid var(--line)}
+.cmd h4{margin:14px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+.cmd ul{margin:6px 0;padding-left:20px}
+.cat{color:var(--mute);font-size:12px}
+.lv{font-size:12px;border:1px solid var(--line);padding:1px 8px;border-radius:99px;color:var(--mute);white-space:nowrap}
+.lv.m{color:var(--accent);border-color:var(--accent);font-weight:600}
+.src{color:var(--mute);font-size:12px}
+footer{color:var(--mute);font-size:13px;margin-top:40px}
+@media (max-width:640px){header,main{padding-left:14px;padding-right:14px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>XCP Commands Reference</h1>
+  <p class="sub">Đối chiếu <b>ASAM MCD-1 XCP v1.0 – Part 2 (Protocol Layer)</b> với <code>driver/Xcp_Handler.c</code> (Vector XcpBasic v1.30.04, cấu hình TC2xx trong <code>driver/xcp_cfg.h</code>)</p>
+</header>
+<main>
+
+<div class="box warn">
+  <b>Cách đọc tài liệu này.</b>
+  Phần “Chuẩn” đã được đối chiếu với <b>ASAM MCD-1 XCP v1.0 – Part 2 (Protocol Layer)</b> (<code>Doc/Specification/Version 1.0/XCP -Part 2- Protocol Layer Specification -1.0.pdf</code>), kèm ví dụ của Part 5 và Part 3 (CAN); điểm khác của v1.1 được ghi riêng. Lưu ý: khi trích chữ từ PDF, bảng lệnh bị lệch một dòng giữa cột vị trí và cột mô tả, nên vị trí byte đã được kiểm chéo với các ví dụ frame trong Part 5 và với macro <code>CRO_*/CRM_*</code> trong <code>Xcp_Handler.h</code>.
+  Mục “Driver” và cột trạng thái được đọc trực tiếp từ source, đã tính đến các cờ <code>XCP_ENABLE_*</code> thực sự bật trong build này.
+</div>
+
+<h2 id="legend">1. Chú giải trạng thái</h2>
+<div class="tw"><table>
+<tr><td><span class="badge b-ok">Hỗ trợ</span></td><td>Có <code>case</code> trong <code>Xcp_Command()</code> và được biên dịch với cấu hình hiện tại.</td></tr>
+<tr><td><span class="badge b-part">Hỗ trợ một phần</span></td><td>Có xử lý nhưng bỏ qua/giới hạn một số tham số (ghi rõ ở mục “Driver”).</td></tr>
+<tr><td><span class="badge b-off">Tắt bởi cấu hình</span></td><td>Có code nhưng bị <code>#if</code> loại khỏi build hiện tại → rơi vào <code>default</code>, trả <code>ERR_CMD_UNKNOWN (0x20)</code>. Bật cờ tương ứng trong <code>xcp_cfg.h</code> để dùng.</td></tr>
+<tr><td><span class="badge b-no">Không có</span></td><td>Driver không có handler → <code>ERR_CMD_UNKNOWN (0x20)</code>.</td></tr>
+</table></div>
+<p>Slave chỉ phản hồi khi đã <code>CONNECT</code>. Khi chưa kết nối, mọi lệnh khác <code>CONNECT</code> bị bỏ qua hoàn toàn (không có response, kể cả lệnh không tồn tại).</p>
+<p>Cột “Theo chuẩn” lấy từ bảng lệnh của Part 2 (mục 1.4): <b>Bắt buộc</b> = không được bỏ nếu slave báo resource tương ứng (CAL/PAG, DAQ, PGM); <b>Tuỳ chọn</b> = optional; <b>Phụ trợ</b> = auxiliary (<code>TRANSPORT_LAYER_CMD</code>, <code>USER_CMD</code>).</p>
+
+<h2 id="general">2. Khái niệm chung</h2>
+
+<h3>2.1 Gói tin</h3>
+<div class="tw"><table>
+<tr><th>Loại</th><th>Hướng</th><th>Byte 0 (PID)</th><th>Ý nghĩa</th></tr>
+<tr><td>CMD (CRO)</td><td>master → slave</td><td><code>0xC0…0xFF</code></td><td>Command Transfer Object: byte 0 là command code (CMD), các byte sau là tham số.</td></tr>
+<tr><td>RES</td><td>slave → master</td><td><code>0xFF</code></td><td>Positive response. Các byte sau là dữ liệu phản hồi.</td></tr>
+<tr><td>ERR</td><td>slave → master</td><td><code>0xFE</code></td><td>Negative response: byte 1 = error code (bảng 2.3).</td></tr>
+<tr><td>EV</td><td>slave → master</td><td><code>0xFD</code></td><td>Event packet. Driver này tắt (<code>XCP_ENABLE_SEND_EVENT</code> không bật).</td></tr>
+<tr><td>SERV</td><td>slave → master</td><td><code>0xFC</code></td><td>Service request. Driver này tắt.</td></tr>
+<tr><td>DAQ (DTO)</td><td>slave → master</td><td><code>0x00…0xFB</code></td><td>Data Transfer Object: PID = số ODT tuyệt đối (identification field type “absolute ODT number”).</td></tr>
+</table></div>
+<p>Với XCP on CAN của dự án: MAX_CTO = MAX_DTO = 8 byte, CMD ID <code>0x7E0</code>, RES/DAQ ID <code>0x7E1</code>, byte order little-endian (bit 0 của COMM_MODE_BASIC = 0).</p>
+
+<h3>2.2 Kiểu dữ liệu ký hiệu</h3>
+<p><code>B</code> = BYTE (8 bit), <code>W</code> = WORD (16 bit), <code>DW</code> = DWORD (32 bit). Word/DWORD theo byte order của slave (little-endian với TC2xx). Số trong cột “Byte” là vị trí trong gói CTO (byte 0 là command code/PID). Theo chuẩn, tham số WORD luôn nằm ở vị trí chia hết cho 2, DWORD ở vị trí chia hết cho 4; byte “reserved” có thể mang giá trị bất kỳ.</p>
+
+<h3>2.3 Error codes (ERR_*)</h3>
+<div class="tw"><table>
+<tr><th>Code</th><th>Tên</th><th>Ý nghĩa</th><th>Driver dùng khi</th></tr>
+<tr><td><code>0x00</code></td><td>ERR_CMD_SYNCH</td><td>Trả lời cho SYNCH, không phải lỗi thật</td><td>Lệnh SYNCH</td></tr>
+<tr><td><code>0x10</code></td><td>ERR_CMD_BUSY</td><td>Slave đang bận, thử lại sau</td><td>Định nghĩa có sẵn, không thấy dùng trong <code>Xcp_Command()</code></td></tr>
+<tr><td><code>0x11</code></td><td>ERR_DAQ_ACTIVE</td><td>Không cho phép khi DAQ đang chạy</td><td>Định nghĩa có sẵn</td></tr>
+<tr><td><code>0x12</code></td><td>ERR_PGM_ACTIVE</td><td>Không cho phép khi đang lập trình flash</td><td>Không dùng</td></tr>
+<tr><td><code>0x20</code></td><td>ERR_CMD_UNKNOWN</td><td>Lệnh không được hỗ trợ</td><td>Lệnh không có handler / bị tắt bởi cấu hình</td></tr>
+<tr><td><code>0x21</code></td><td>ERR_CMD_SYNTAX</td><td>Sai cú pháp/tham số</td><td>Callback ghi/kết nối trả <code>XCP_CMD_SYNTAX</code></td></tr>
+<tr><td><code>0x22</code></td><td>ERR_OUT_OF_RANGE</td><td>Tham số/địa chỉ ngoài phạm vi</td><td>Kiểm tra tham số (DAQ/ODT index, size, prescaler…)</td></tr>
+<tr><td><code>0x23</code></td><td>ERR_WRITE_PROTECTED</td><td>Vùng nhớ chỉ đọc</td><td>DOWNLOAD vào ROM/reference page</td></tr>
+<tr><td><code>0x24</code></td><td>ERR_ACCESS_DENIED</td><td>Vùng nhớ không truy cập được</td><td>UPLOAD bị callback từ chối</td></tr>
+<tr><td><code>0x25</code></td><td>ERR_ACCESS_LOCKED</td><td>Resource đang bị khoá (Seed &amp; Key)</td><td>Chỉ khi bật <code>XCP_ENABLE_SEED_KEY</code></td></tr>
+<tr><td><code>0x26</code></td><td>ERR_PAGE_NOT_VALID</td><td>Page không tồn tại</td><td>Callback <code>SetCalPage</code> tự trả</td></tr>
+<tr><td><code>0x27</code></td><td>ERR_MODE_NOT_VALID</td><td>Mode không hợp lệ</td><td>Callback <code>SetCalPage</code> tự trả</td></tr>
+<tr><td><code>0x28</code></td><td>ERR_SEGMENT_NOT_VALID</td><td>Segment không tồn tại</td><td>Callback <code>SetCalPage</code> tự trả</td></tr>
+<tr><td><code>0x29</code></td><td>ERR_SEQUENCE</td><td>Sai thứ tự lệnh</td><td><code>ALLOC_DAQ/ODT/ODT_ENTRY</code> sai thứ tự</td></tr>
+<tr><td><code>0x2A</code></td><td>ERR_DAQ_CONFIG</td><td>DAQ chưa được cấu hình đủ</td><td><code>WRITE_DAQ</code>, <code>START_STOP_DAQ_LIST_SYNCH</code> khi chưa alloc</td></tr>
+<tr><td><code>0x30</code></td><td>ERR_MEMORY_OVERFLOW</td><td>Hết bộ nhớ</td><td>Hết pool <code>kXcpDaqMemSize</code> hoặc ODT &gt; giới hạn PID</td></tr>
+<tr><td><code>0x31</code></td><td>ERR_GENERIC</td><td>Lỗi chung</td><td>—</td></tr>
+<tr><td><code>0x32</code></td><td>ERR_VERIFY</td><td>Lỗi verify (chương trình flash)</td><td>Không dùng</td></tr>
+</table></div>
+
+<h3>2.4 Resource mask (CONNECT / GET_STATUS / GET_SEED / UNLOCK)</h3>
+<div class="tw"><table>
+<tr><th>Bit</th><th>Mask</th><th>Resource</th><th>Driver này</th></tr>
+<tr><td>0</td><td><code>0x01</code></td><td>CAL/PAG (calibration &amp; paging)</td><td>Báo hỗ trợ (vì <code>XCP_ENABLE_CALIBRATION_PAGE</code>)</td></tr>
+<tr><td>2</td><td><code>0x04</code></td><td>DAQ</td><td>Báo hỗ trợ</td></tr>
+<tr><td>3</td><td><code>0x08</code></td><td>STIM</td><td>Không</td></tr>
+<tr><td>4</td><td><code>0x10</code></td><td>PGM</td><td>Không</td></tr>
+</table></div>
+<p>→ <code>RESOURCE</code> trong response CONNECT của driver này = <code>0x05</code>.</p>
+
+<h3>2.5 COMM_MODE_BASIC (response CONNECT, byte 2)</h3>
+<div class="tw"><table>
+<tr><th>Bit</th><th>Tên</th><th>Ý nghĩa</th><th>Driver này</th></tr>
+<tr><td>0</td><td>BYTE_ORDER</td><td>0 = Intel (little-endian), 1 = Motorola</td><td>0 (TriCore little-endian)</td></tr>
+<tr><td>1–2</td><td>ADDRESS_GRANULARITY</td><td>0 = BYTE, 1 = WORD, 2 = DWORD</td><td>0 (BYTE)</td></tr>
+<tr><td>6</td><td>SLAVE_BLOCK_MODE</td><td>Slave hỗ trợ block transfer</td><td>0 (block mode tắt)</td></tr>
+<tr><td>7</td><td>OPTIONAL</td><td>Slave có <code>GET_COMM_MODE_INFO</code></td><td>1 (<code>XCP_ENABLE_COMM_MODE_INFO</code>)</td></tr>
+</table></div>
+<p>→ Driver này trả <code>COMM_MODE_BASIC = 0x80</code>.</p>
+
+<h3>2.6 Session status (GET_STATUS, byte 1)</h3>
+<div class="tw"><table>
+<tr><th>Bit</th><th>Mask</th><th>Tên</th><th>Ý nghĩa</th></tr>
+<tr><td>0</td><td><code>0x01</code></td><td>STORE_CAL_REQ</td><td>Yêu cầu lưu calibration data (resume mode)</td></tr>
+<tr><td>2</td><td><code>0x04</code></td><td>STORE_DAQ_REQ</td><td>Yêu cầu lưu cấu hình DAQ (resume mode)</td></tr>
+<tr><td>3</td><td><code>0x08</code></td><td>CLEAR_DAQ_REQ</td><td>Yêu cầu xoá cấu hình DAQ đã lưu</td></tr>
+<tr><td>6</td><td><code>0x40</code></td><td>DAQ_RUNNING</td><td>Có DAQ list đang chạy</td></tr>
+<tr><td>7</td><td><code>0x80</code></td><td>RESUME</td><td>Slave đang ở resume mode</td></tr>
+</table></div>
+<p>Ghi chú: bảng trên là bit theo chuẩn. Driver nội bộ còn dùng các bit riêng (<code>SS_CONNECTED 0x20</code>, <code>SS_ERROR 0x10</code>, <code>SS_POLLING 0x100</code>, <code>SS_BLOCK_UPLOAD 0x02</code>) trong <code>SessionStatusType</code>; GET_STATUS trả <code>(vuint8)xcp.SessionStatus</code> nên các bit nội bộ trong byte thấp sẽ lộ ra ở response (ví dụ bit <code>0x20</code> luôn bật khi đã kết nối). Cần lưu ý khi đối chiếu với spec.</p>
+
+<h3 id="addrext">2.7 Địa chỉ và ADDRESS_EXTENSION</h3>
+<p>Theo Part 1 (mục 1.2.1.1 và 1.2.3.1), bộ nhớ của slave được xem như một không gian địa chỉ liên tục và mỗi phần tử được tham chiếu bằng <b>địa chỉ 40 bit = 32 bit ADDRESS + 8 bit ADDRESS_EXTENSION</b>. Trong gói lệnh, hai trường này luôn đi cùng nhau: <code>ADDRESS_EXTENSION</code> là 1 byte, <code>ADDRESS</code> là DWORD.</p>
+
+<h4>Chuẩn quy định gì và không quy định gì</h4>
+<ul>
+<li><b>Có quy định:</b> extension là 8 bit; nó được lấy theo <b>SEGMENT</b> chứa địa chỉ đó (mọi đối tượng calibration nằm trong cùng một SEGMENT dùng chung một extension); <code>GET_SEGMENT_INFO</code> (mode 1) trả <code>ADDRESS_EXTENSION</code> của segment để master biết giá trị cần dùng với <code>SET_MTA</code>, <code>SHORT_UPLOAD</code>, <code>SHORT_DOWNLOAD</code> khi truy cập một page của segment.</li>
+<li><b>Không quy định:</b> giá trị <code>0x00…0xFF</code> tương ứng vùng nhớ nào hay cách truy cập nào. Đó là quy ước riêng của từng slave. Chuẩn cũng không nêu mã lỗi riêng cho extension không hợp lệ ở <code>SET_MTA</code> (slave có thể dùng <code>ERR_OUT_OF_RANGE</code> hoặc <code>ERR_ACCESS_DENIED</code> khi thực sự truy cập).</li>
+</ul>
+
+<h4>Master lấy giá trị extension từ đâu</h4>
+<ul>
+<li>Từ file mô tả A2L: extension của từng biến/tham số (<code>ECU_ADDRESS_EXTENSION</code> của <code>MEASUREMENT</code>/<code>CHARACTERISTIC</code>, thuộc ASAM MCD-2 MC, không nằm trong bộ tài liệu XCP) và extension của <code>MEMORY_SEGMENT</code> trong <code>IF_DATA XCP</code>.</li>
+<li>Từ <code>GET_SEGMENT_INFO</code> (mode 1) nếu slave hỗ trợ.</li>
+</ul>
+
+<h4>Lệnh nào mang ADDRESS_EXTENSION</h4>
+<div class="tw"><table>
+<tr><th>Lệnh</th><th>Vị trí</th><th>Hiệu lực</th></tr>
+<tr><td><code>SET_MTA</code></td><td>byte 3</td><td>Đặt MTA = (ext, addr). Các lệnh <code>UPLOAD</code>, <code>DOWNLOAD</code>, <code>DOWNLOAD_MAX</code>, <code>BUILD_CHECKSUM</code>, <code>MODIFY_BITS</code>, <code>PROGRAM*</code> đều truy cập qua MTA này và <b>không</b> mang ext riêng.</td></tr>
+<tr><td><code>SHORT_UPLOAD</code>, <code>SHORT_DOWNLOAD</code></td><td>byte 3</td><td>Tương đương <code>SET_MTA</code> + <code>UPLOAD</code>/<code>DOWNLOAD</code> trong một lệnh; MTA sau đó trỏ tới phần tử ngay sau khối vừa truy cập.</td></tr>
+<tr><td><code>WRITE_DAQ</code> / <code>READ_DAQ</code></td><td>byte 3 / response byte 3</td><td>Mỗi ODT entry có ext riêng. Ràng buộc ở bên dưới.</td></tr>
+<tr><td><code>GET_SEGMENT_INFO</code></td><td>response mode 1</td><td>Cho biết ext của segment.</td></tr>
+</table></div>
+
+<h4>Ràng buộc trong DAQ (DAQ_KEY_BYTE, bit 5–4)</h4>
+<p>Slave có thể yêu cầu master dùng cùng một extension trong nhiều entry, khai báo qua <code>GET_DAQ_PROCESSOR_INFO</code> (<code>Address_Extension_DAQ</code>/<code>Address_Extension_ODT</code>) và qua từ khoá A2L <code>ADDRESS_EXTENSION_FREE / _ODT / _DAQ</code>:</p>
+<div class="tw"><table>
+<tr><th>Giá trị</th><th>Ý nghĩa</th></tr>
+<tr><td>FREE (00)</td><td>Extension có thể khác nhau giữa các entry trong cùng một ODT</td></tr>
+<tr><td>ODT (01)</td><td>Mọi entry trong <b>một ODT</b> phải cùng extension</td></tr>
+<tr><td>DAQ (11)</td><td>Mọi entry trong <b>một DAQ list</b> phải cùng extension</td></tr>
+</table></div>
+
+<h4>Ví dụ frame <code>SET_MTA</code> (little-endian, byte 3 là extension, byte 4–7 là địa chỉ)</h4>
+<pre class="mono">F6 xx xx 00 00 10 00 A0   → ext = 0x00, addr = 0xA0001000
+F6 xx xx 01 00 10 00 A0   → ext = 0x01, addr = 0xA0001000   (cùng địa chỉ, khác extension)</pre>
+<p>Với một slave có nhiều không gian nhớ (ví dụ RAM, flash, EEPROM, bộ nhớ ngoài, hay bộ nhớ cục bộ của từng core) hai lệnh trên có thể trỏ tới hai vị trí vật lý khác nhau. Đây chỉ là ví dụ điển hình về cách các slave hay dùng trường này, không phải quy định của chuẩn.</p>
+
+<h4>Hành vi trong driver này</h4>
+<div class="box bad">
+  <b>Driver bỏ qua hoàn toàn ADDRESS_EXTENSION; mọi giá trị 0…255 cho cùng một kết quả và không bao giờ gây lỗi.</b>
+  Luồng xử lý của <code>SET_MTA</code>:
+  <ol>
+    <li><code>Xcp_Handler.c:2382</code>: <code>XcpSetMta(GetPointer(CRO_SET_MTA_EXT, CRO_SET_MTA_ADDR), CRO_SET_MTA_EXT)</code>.</li>
+    <li>Callback <code>Xcp_GetPointer(addr_ext, addr)</code> (<code>port/tricore_illd/xcp_appl.c:49</code>) gọi <code>(void)addr_ext;</code> nên bỏ luôn tham số này. Nó chỉ xét <code>addr</code>: nếu XCP đang ở working page và <code>addr</code> nằm trong vùng calibration ROM thì đổi sang địa chỉ RAM tương ứng, còn lại trả nguyên <code>addr</code> làm con trỏ phẳng 32 bit.</li>
+    <li>Macro <code>XcpSetMta(p, e)</code> (<code>Xcp_Handler.c:764</code>) được định nghĩa là <code>(xcp.Mta = (p))</code>, tham số <code>e</code> bị loại bỏ. Do đó <code>xcp.Mta</code> chỉ là một con trỏ; extension không được lưu ở đâu cả, và <code>UPLOAD</code>/<code>DOWNLOAD</code> sau đó chỉ dùng con trỏ.</li>
+  </ol>
+  Cùng cơ chế áp dụng cho <code>SHORT_UPLOAD</code> (<code>:2551</code>) và <code>WRITE_DAQ</code> (<code>:3073</code>). Với <code>GET_ID</code> và <code>GET_DAQ_EVENT_INFO</code>, driver tự truyền <code>0xFF</code> làm giá trị đánh dấu nội bộ (vùng ROM-const), cũng bị bỏ qua.
+</div>
+<p><b>Hệ quả khi cấu hình:</b> trong A2L của dự án nên để extension = 0 (<code>ECU_ADDRESS_EXTENSION 0</code>, <code>ADDRESS_EXTENSION_FREE</code>, khớp với <code>examples/xcp_daq_example.a2l</code>) và ô “ext” trong memory view của xcptool mặc định 0. Đổi extension thành giá trị khác sẽ <b>không</b> đổi vùng nhớ được truy cập và cũng không gây lỗi, nên dễ che giấu một A2L cấu hình sai. Nếu sau này cần phân biệt các vùng (ví dụ nhiều core TriCore với bộ nhớ cục bộ), phải sửa <code>Xcp_GetPointer</code> để dùng <code>addr_ext</code>, đồng thời cân nhắc lưu extension trong <code>xcp.Mta</code> nếu <code>CalibrationRead/Write</code> cần biết.</p>
+
+<h2 id="index">3. Bảng tổng hợp command</h2>
+<div class="tools">
+  <input id="q" type="search" placeholder="Tìm theo tên hoặc mã (vd: DAQ, 0xE2, upload)…" aria-label="Tìm command">
+  <button class="chip" data-f="all" aria-pressed="true">Tất cả</button>
+  <button class="chip" data-f="ok" aria-pressed="false">Hỗ trợ</button>
+  <button class="chip" data-f="part" aria-pressed="false">Một phần</button>
+  <button class="chip" data-f="off" aria-pressed="false">Tắt bởi cấu hình</button>
+  <button class="chip" data-f="no" aria-pressed="false">Không có</button>
+  <button class="chip" id="toggleAll" aria-pressed="false">Mở tất cả</button>
+</div>
+<div class="tw"><table class="idx"><thead><tr><th>Code</th><th>Command</th><th>Nhóm</th><th>Theo chuẩn</th><th>Trạng thái trong driver</th></tr></thead><tbody id="idx"></tbody></table></div>
+
+<h2 id="detail">4. Chi tiết từng command</h2>
+<div id="cmds"></div>
+
+<h2 id="findings">5. Phát hiện khi đối chiếu source</h2>
+<div class="box bad">
+  <b>5.1 <code>DOWNLOAD</code> / <code>DOWNLOAD_MAX</code> phụ thuộc <code>XCP_ENABLE_CALIBRATION</code>, cờ này không được định nghĩa ở đâu trong repo.</b><br>
+  <code>Xcp_Handler.c:2397</code> và <code>:2451</code> bọc thân lệnh trong <code>#if defined(XCP_ENABLE_CALIBRATION)</code>. <code>xcp_cfg.h</code> chỉ bật <code>XCP_ENABLE_CALIBRATION_PAGE</code>, <code>XCP_ENABLE_PAGE_COPY</code> và <code>XCP_ENABLE_CALIBRATION_MEM_ACCESS_BY_APPL</code>; <code>xcp_def.h</code> không có default cho cờ này. Nếu cờ cũng không được truyền qua <code>-D</code> trong project build (không nằm trong repo), thì bản build hiện tại trả <code>ERR_CMD_UNKNOWN (0x20)</code> cho <code>DOWNLOAD</code> và <code>ERR_ACCESS_DENIED (0x24)</code> cho <code>DOWNLOAD_MAX</code>, mâu thuẫn với luồng ghi calibration mô tả trong CLAUDE.md và <code>xcptool/DESIGN.md</code>. Theo Part 2, <code>DOWNLOAD</code> là lệnh <b>bắt buộc</b> khi slave báo resource CAL/PAG. <b>Cần kiểm tra trên build thật</b> (ví dụ bắt frame <code>SET_MTA</code> + <code>DOWNLOAD</code>).
+</div>
+<div class="box warn">
+  <b>5.2 Quy ước giá trị trả về của callback <code>SetCalPage</code>.</b>
+  Handler dùng <code>check_error(...)</code> (lỗi nếu giá trị ≠ 0 và dùng chính giá trị đó làm error code), trong khi <code>XCP_CMD_OK</code> được định nghĩa là <code>1</code>. Callback cần trả <code>0</code> khi thành công hoặc mã <code>CRC_*</code> (ví dụ <code>0x26</code>) khi lỗi; trả <code>XCP_CMD_OK</code> sẽ bị hiểu là error code <code>0x01</code>. Cùng quy ước với <code>XcpAllocDaq/Odt/OdtEntry</code> (trả <code>0</code> khi OK).
+</div>
+<div class="box warn">
+  <b>5.3 <code>WRITE_DAQ</code> bỏ qua bit offset và từ chối size 0.</b> Chuẩn quy định <code>BIT_OFFSET = 0xFF</code> là phần tử thông thường, <code>0x00–0x1F</code> là truy cập theo bit (chỉ khi <code>BIT_STIM_SUPPORTED</code>). Driver không đọc <code>CRO_WRITE_DAQ_BITOFFSET</code> và không báo <code>BIT_STIM_SUPPORTED</code>: master nên gửi <code>0xFF</code> (giá trị <code>0</code> nghĩa là “bit 0” chứ không phải “không dùng bit”); nếu gửi <code>0x00–0x1F</code>, driver vẫn ghi entry như phần tử byte thông thường. Ngoài ra chuẩn cho phép <code>size = 0</code>, driver trả <code>ERR_OUT_OF_RANGE</code>.
+</div>
+<div class="box warn">
+  <b>5.4 Thiếu <code>CLEAR_DAQ_LIST</code> (lệnh bắt buộc theo chuẩn), <code>GET_DAQ_LIST_INFO</code> và <code>READ_DAQ</code> (tuỳ chọn).</b> Part 2 xếp <code>CLEAR_DAQ_LIST</code> vào nhóm DAQ static mandatory (cùng <code>SET_DAQ_PTR</code>, <code>WRITE_DAQ</code>, <code>SET_DAQ_LIST_MODE</code>, <code>GET_DAQ_LIST_MODE</code>, <code>START_STOP_DAQ_LIST</code>, <code>START_STOP_SYNCH</code>). Driver không có handler nên trả <code>0x20</code>; master theo đúng chuẩn có thể gọi lệnh này và bị lỗi. Cấu hình DAQ của driver hoàn toàn dynamic qua <code>FREE_DAQ</code> → <code>ALLOC_DAQ</code> → <code>ALLOC_ODT</code> → <code>ALLOC_ODT_ENTRY</code>, nên chỉ xoá được toàn bộ bằng <code>FREE_DAQ</code>.
+</div>
+<div class="box warn">
+  <b>5.5 CONNECT lệch chuẩn khi phiên đang chạy.</b> Part 2: “During a running XCP session (CONNECTED) this command has no influence on any configuration of the XCP slave driver”. Driver xử lý CONNECT như khởi tạo phiên mới: gọi <code>XcpFreeDaq()</code> (trừ resume mode), reset <code>SessionStatus</code>, đặt lại protection status. Nếu master gửi CONNECT lần hai giữa phiên, cấu hình DAQ đang chạy sẽ mất.
+</div>
+<div class="box warn">
+  <b>5.6 Response của <code>START_STOP_DAQ_LIST</code> mode stop.</b> Chuẩn mô tả response gồm <code>FF</code> + <code>FIRST_PID</code> cho mọi mode; driver chỉ trả 1 byte <code>FF</code> khi mode = stop (0). Master đọc trường FIRST_PID trong trường hợp này sẽ gặp response quá ngắn.
+</div>
+<div class="box warn">
+  <b>5.7 <code>GET_DAQ_EVENT_INFO</code>: layout response lệch một byte (đang tắt, nhưng sẽ sai nếu bật).</b> Chuẩn và ví dụ Part 5 (<code>FF 04 01 05 0A 60 00</code>): <code>PROPERTIES</code> byte 1, <code>MAX_DAQ_LIST</code> byte 2, <code>NAME_LENGTH</code> byte 3, <code>TIME_CYCLE</code> byte 4, <code>TIME_UNIT</code> byte 5, <code>PRIORITY</code> byte 6 (7 byte). Macro trong <code>Xcp_Handler.h</code> (dòng 648–654) lại đặt thêm <code>TYPE</code> ở byte 2 và dời các trường sau lên một byte, <code>PRIORITY</code> rơi vào byte 7 ngoài <code>CRM_GET_DAQ_EVENT_INFO_LEN = 7</code>. Phía xcptool (<code>get_daq_event_info</code>) giải mã theo layout của chuẩn.
+</div>
+<div class="box warn">
+  <b>5.8 xcptool: <code>get_daq_list_info()</code> đòi response ≥ 6 byte.</b> Ví dụ Part 5 cho <code>GET_DAQ_LIST_INFO</code> trả <code>FF 04 03 0A</code> (4 byte, không có <code>FIXED_EVENT</code> vì list không gắn event cố định). Hàm ở <code>xcptool/src/xcptool/master/core.py</code> ném <code>MalformedResponseError</code> khi <code>len(resp) &lt; 6</code>, nên với ECU static kiểu này lệnh sẽ báo lỗi. Nên chấp nhận ≥ 4 byte và chỉ đọc <code>fixed_event_channel</code> khi bit <code>EVENT_FIXED</code> bật.
+</div>
+<div class="box warn">
+  <b>5.9 <code>DAQ_LIST_NUMBER</code> bị cắt còn 1 byte.</b> Chuẩn định nghĩa là WORD (dải <code>[0…MAX_DAQ-1]</code>, và với dynamic DAQ thì <code>MAX_DAQ = MIN_DAQ + DAQ_COUNT</code>, list dynamic đầu tiên mang số <code>MIN_DAQ</code>). Driver ép kiểu <code>(vuint8)</code> ở <code>SET_DAQ_PTR</code>, <code>START_STOP_DAQ_LIST</code>, <code>SET_DAQ_LIST_MODE</code>, <code>GET_DAQ_LIST_MODE</code>, <code>ALLOC_ODT</code>, <code>ALLOC_ODT_ENTRY</code> trước khi kiểm tra phạm vi, nên giá trị như <code>0x0100</code> bị hiểu là list <code>0</code> thay vì <code>ERR_OUT_OF_RANGE</code>. Với driver này (<code>MIN_DAQ = 0</code>, tối đa 255 list) chỉ ảnh hưởng master gửi số list &gt; 255.
+</div>
+<div class="box warn">
+  <b>5.10 Comment lệch trong <code>xcp_cfg.h</code>.</b> Dòng 88 ghi “CANape receives 0xFE (ERR_WRITE_PROTECTED)”. <code>0xFE</code> là PID của gói lỗi; mã lỗi ERR_WRITE_PROTECTED là <code>0x23</code> (gói thực tế là <code>FE 23</code>).
+</div>
+
+<footer>
+Nguồn: ASAM MCD-1 XCP v1.0 Part 2 (chuẩn), <code>driver/Xcp_Handler.c</code>, <code>driver/Xcp_Handler.h</code>, <code>driver/xcp_cfg.h</code>, <code>driver/xcp_def.h</code>. Số dòng trong mục “Nguồn” là của <code>Xcp_Handler.c</code> tại thời điểm soạn tài liệu.
+</footer>
+</main>
+
+<script>
+/* status: ok | part | off | no ; rows: [byte, name, type, desc] */
+const S = {ok:"Hỗ trợ", part:"Hỗ trợ một phần", off:"Tắt bởi cấu hình", no:"Không có"};
+/* Theo bảng lệnh Part 2 v1.0, mục 1.4 (Is Optional = no → Bắt buộc) */
+const MAND = ["0xFF","0xFE","0xFD","0xFC","0xF0","0xEB","0xEA","0xE3","0xE2","0xE1","0xE0","0xDF","0xDE","0xDD"];
+function lvl(c){
+  if(c.code==="0xF2"||c.code==="0xF1") return ["a","Phụ trợ"];
+  if(MAND.includes(c.code)) return ["m","Bắt buộc"];
+  if(c.name.startsWith("PROGRAM_START")) return ["m","Bắt buộc một phần"];
+  return ["o","Tuỳ chọn"];
+}
+const CMDS = [
+/* ---------- Standard ---------- */
+{code:"0xFF",name:"CONNECT",cat:"Standard",st:"ok",src:"1801",
+ desc:"Thiết lập phiên XCP và cho master biết khả năng của slave. Là lệnh duy nhất được xử lý khi chưa kết nối.",
+ req:[["0","CMD","B","0xFF"],["1","MODE","B","0 = normal, 1 = user-defined"]],
+ res:[["0","PID","B","0xFF"],["1","RESOURCE","B","Resource mask (mục 2.4)"],["2","COMM_MODE_BASIC","B","Mục 2.5"],["3","MAX_CTO","B","Kích thước CTO tối đa"],["4–5","MAX_DTO","W","Kích thước DTO tối đa"],["6","XCP_PROTOCOL_LAYER_VERSION","B","Phần chính của version Protocol Layer"],["7","XCP_TRANSPORT_LAYER_VERSION","B","Phần chính của version Transport Layer"]],
+ drv:["<code>MODE</code> chỉ được in ra khi bật test mode, không ảnh hưởng hành vi (không có user-defined mode).","Trả <code>RESOURCE=0x05</code> (CAL_PAG|DAQ), <code>COMM_MODE_BASIC=0x80</code>, <code>MAX_CTO=MAX_DTO=8</code>, protocol version <code>1</code>, transport version <code>1</code>.","Trừ khi ở resume mode, CONNECT gọi <code>XcpFreeDaq()</code> → cấu hình DAQ cũ bị xoá.","Reset <code>SessionStatus</code> về chỉ còn bit CONNECTED.","<b>Lệch chuẩn:</b> Part 2 ghi CONNECT trong phiên đang chạy “không ảnh hưởng đến cấu hình của slave”; driver luôn xoá DAQ (trừ resume mode) và reset session status ở mỗi CONNECT (mục 5.5)."],
+ errs:[]},
+{code:"0xFE",name:"DISCONNECT",cat:"Standard",st:"ok",src:"1951",
+ desc:"Kết thúc phiên XCP. Slave quay về trạng thái không kết nối.",
+ req:[["0","CMD","B","0xFE"]],res:[["0","PID","B","0xFF"]],
+ drv:["Gọi <code>Xcp_Disconnect()</code> (dừng DAQ, xoá cờ CONNECTED).","Chuẩn cho phép trả <code>ERR_CMD_BUSY</code> nếu chưa thể ngắt kết nối; driver luôn ngắt ngay."],errs:["0x10"]},
+{code:"0xFD",name:"GET_STATUS",cat:"Standard",st:"ok",src:"1990",
+ desc:"Đọc trạng thái phiên hiện tại và trạng thái bảo vệ resource.",
+ req:[["0","CMD","B","0xFD"]],
+ res:[["0","PID","B","0xFF"],["1","CURRENT_SESSION_STATUS","B","Mục 2.6"],["2","CURRENT_RESOURCE_PROTECTION_STATUS","B","Bit = 1 nghĩa là resource đang bị khoá"],["3","reserved","B","—"],["4–5","SESSION_CONFIGURATION_ID","W","ID cấu hình phiên (dùng cho resume)"]],
+ drv:["<code>PROTECTION_STATUS = 0</code> vì Seed &amp; Key tắt (mọi resource luôn mở).","<code>SESSION_CONFIGURATION_ID = 0</code> (không có resume mode)."],errs:[]},
+{code:"0xFC",name:"SYNCH",cat:"Standard",st:"ok",src:"1906",
+ desc:"Đồng bộ lại bộ đếm lệnh/response giữa master và slave sau timeout hoặc lỗi.",
+ req:[["0","CMD","B","0xFC"]],
+ res:[["0","PID","B","0xFE (ERR)"],["1","ERR_CMD_SYNCH","B","0x00"]],
+ drv:["Luôn trả gói lỗi <code>FE 00</code> đúng theo chuẩn (đây là phản hồi bình thường, không phải lỗi)."],errs:[]},
+{code:"0xFB",name:"GET_COMM_MODE_INFO",cat:"Standard",st:"ok",src:"1925",
+ desc:"Đọc thông tin tuỳ chọn của communication mode. Chỉ khả dụng khi bit OPTIONAL trong COMM_MODE_BASIC = 1.",
+ req:[["0","CMD","B","0xFB"]],
+ res:[["0","PID","B","0xFF"],["1","reserved","B","—"],["2","COMM_MODE_OPTIONAL","B","Bit 0 = MASTER_BLOCK_MODE, bit 1 = INTERLEAVED_MODE"],["3","reserved","B","—"],["4","MAX_BS","B","Số CTO tối đa trong một block"],["5","MIN_ST","B","Khoảng cách tối thiểu giữa các CTO trong block (đơn vị 100 µs)"],["6","QUEUE_SIZE","B","Số CTO xếp hàng cho interleaved mode"],["7","XCP_DRIVER_VERSION_NUMBER","B","Nibble cao = major, nibble thấp = minor"]],
+ drv:["<code>COMM_MODE_OPTIONAL=0</code>, <code>MAX_BS=MIN_ST=QUEUE_SIZE=0</code> (block mode và interleaved mode không hỗ trợ).","Version byte tính từ <code>CP_XCP_VERSION=0x0130</code> → <code>0x10</code> (nibble thấp bị tràn khi minor &gt; 15)."],errs:[]},
+{code:"0xFA",name:"GET_ID",cat:"Standard",st:"part",src:"1967",
+ desc:"Lấy chuỗi nhận dạng slave (tên file A2L, đường dẫn, URL…).",
+ req:[["0","CMD","B","0xFA"],["1","REQUESTED_IDENTIFICATION_TYPE","B","0 = ASCII text, 1 = tên file ASAM-MC2 (không path, không đuôi), 2 = tên file ASAM-MC2 kèm path và đuôi, 3 = URL nơi có file ASAM-MC2, 4 = file ASAM-MC2 để upload, 128…255 = tự định nghĩa. Type nào được hỗ trợ tuỳ slave"]],
+ res:[["0","PID","B","0xFF"],["1","MODE","B","MODE = 1: chuỗi ID nằm ngay trong các byte còn lại của response; MODE = 0: slave đặt MTA về chuỗi ID để master đọc bằng UPLOAD"],["2–3","reserved","W","—"],["4–7","LENGTH","DW","Độ dài chuỗi ID (byte); 0 = type được hỏi không có sẵn. Chuỗi là ASCII, không kết thúc bằng 0"]],
+ drv:["Chỉ hỗ trợ type <code>1</code> (<code>IDT_ASAM_NAME</code>): đặt MTA về <code>Xcp_ConfigPtr-&gt;StationId</code> và trả <code>LENGTH=StationIdLength</code>, <code>MODE=0</code> → master đọc chuỗi bằng <code>UPLOAD</code>.","Các type khác trả <code>LENGTH=0</code> (không có ID), không báo lỗi."],errs:[]},
+{code:"0xF9",name:"SET_REQUEST",cat:"Standard",st:"no",src:"—",
+ desc:"Yêu cầu slave lưu calibration data / cấu hình DAQ hoặc xoá cấu hình DAQ (resume mode).",
+ req:[["0","CMD","B","0xF9"],["1","MODE","B","Bit 0 = STORE_CAL_REQ, bit 2 = STORE_DAQ_REQ, bit 3 = CLEAR_DAQ_REQ"],["2–3","SESSION_CONFIGURATION_ID","W","ID cấu hình"]],
+ res:[["0","PID","B","0xFF"]],drv:["Không có handler (resume mode tắt).","Chuẩn: nếu slave không hỗ trợ MODE được yêu cầu → <code>ERR_OUT_OF_RANGE</code>."],errs:["0x20","0x22"]},
+{code:"0xF8",name:"GET_SEED",cat:"Standard",st:"off",src:"2017",
+ desc:"Lấy seed để mở khoá một resource (bước 1 của Seed &amp; Key).",
+ req:[["0","CMD","B","0xF8"],["1","MODE","B","0 = phần đầu của seed, 1 = phần còn lại"],["2","RESOURCE","B","Mask của một resource"]],
+ res:[["0","PID","B","0xFF"],["1","LENGTH","B","Độ dài seed (còn lại)"],["2…","SEED","B[]","Dữ liệu seed"]],
+ drv:["Cần <code>XCP_ENABLE_SEED_KEY</code> (đang tắt).","Chuẩn: mỗi lần chỉ xin seed cho <b>một</b> resource, không thì <code>ERR_OUT_OF_RANGE</code>; <code>MODE=1</code> mà chưa có <code>MODE=0</code> trước đó → <code>ERR_SEQUENCE</code>. Nếu bật, driver chỉ hỗ trợ seed dài tối đa <code>MAX_CTO-2</code> byte."],errs:["0x20","0x22","0x29"]},
+{code:"0xF7",name:"UNLOCK",cat:"Standard",st:"off",src:"2075",
+ desc:"Gửi key để mở khoá resource (bước 2 của Seed &amp; Key).",
+ req:[["0","CMD","B","0xF7"],["1","LENGTH","B","Số byte key còn lại"],["2…","KEY","B[]","Dữ liệu key"]],
+ res:[["0","PID","B","0xFF"],["1","CURRENT_RESOURCE_PROTECTION_STATUS","B","Trạng thái bảo vệ sau khi mở khoá"]],
+ drv:["Cần <code>XCP_ENABLE_SEED_KEY</code> (đang tắt). Nếu bật: key sai → ngắt kết nối và trả <code>ERR_ACCESS_LOCKED</code>.","Chuẩn: key dài hơn <code>MAX_CTO-2</code> gửi bằng nhiều UNLOCK liên tiếp, lệnh đầu mang tổng độ dài key; UNLOCK khi chưa có GET_SEED → <code>ERR_SEQUENCE</code>."],errs:["0x20","0x25","0x29"]},
+{code:"0xF6",name:"SET_MTA",cat:"Standard",st:"ok",src:"2374",
+ desc:"Đặt Memory Transfer Address (MTA) cho các lệnh UPLOAD/DOWNLOAD/BUILD_CHECKSUM tiếp theo.",
+ req:[["0","CMD","B","0xF6"],["1–2","reserved","W","—"],["3","ADDRESS_EXTENSION","B","Phần mở rộng 8 bit của địa chỉ 40 bit (ý nghĩa do slave quy ước; xem mục 2.7)"],["4–7","ADDRESS","DW","Địa chỉ"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["<b>ADDRESS_EXTENSION bị bỏ qua:</b> <code>Xcp_GetPointer</code> chỉ dùng <code>ADDRESS</code> (<code>(void)addr_ext</code>) và macro <code>XcpSetMta(p,e)</code> loại bỏ <code>e</code>, nên mọi giá trị 0…255 cho cùng kết quả, không lỗi (mục 2.7).","Địa chỉ đi qua callback <code>GetPointer(ext, addr)</code> → remap ROM→RAM khi XCP đang ở working page (xem CLAUDE.md, mục Calibration Page Model). Việc remap chỉ phụ thuộc <code>ADDRESS</code> và page XCP hiện tại."],errs:[]},
+{code:"0xF5",name:"UPLOAD",cat:"Standard",st:"ok",src:"2495",
+ desc:"Đọc dữ liệu từ slave bắt đầu tại MTA; MTA tự tăng sau khi đọc.",
+ req:[["0","CMD","B","0xF5"],["1","NUMBER_OF_DATA_ELEMENTS","B","Số phần tử cần đọc: 1…MAX_CTO/AG-1 (standard mode), 1…255 (block mode)"]],
+ res:[["0","PID","B","0xFF"],["1…","DATA","B[]","Dữ liệu đọc được"]],
+ drv:["Tối đa <code>MAX_CTO-1 = 7</code> byte/lần; lớn hơn → <code>ERR_OUT_OF_RANGE</code> (block mode tắt).","Đọc qua callback <code>CalibrationRead</code>; callback từ chối → <code>ERR_ACCESS_DENIED</code>."],errs:["0x22","0x24"]},
+{code:"0xF4",name:"SHORT_UPLOAD",cat:"Standard",st:"ok",src:"2536",
+ desc:"Đọc dữ liệu tại địa chỉ chỉ định trong một lệnh (không cần SET_MTA).",
+ req:[["0","CMD","B","0xF4"],["1","NUMBER_OF_DATA_ELEMENTS","B","Số byte cần đọc"],["2","reserved","B","—"],["3","ADDRESS_EXTENSION","B","Phần mở rộng 8 bit của địa chỉ 40 bit (ý nghĩa do slave quy ước; xem mục 2.7)"],["4–7","ADDRESS","DW","Địa chỉ"]],
+ res:[["0","PID","B","0xFF"],["1…","DATA","B[]","Dữ liệu đọc được"]],
+ drv:["Tối đa 7 byte (kiểm tra khi <code>XCP_ENABLE_PARAMETER_CHECK</code> bật — đang bật).","Nội bộ: <code>XcpSetMta(GetPointer(...))</code> rồi đọc, MTA tăng thêm <code>size</code>."],errs:["0x22","0x24"]},
+{code:"0xF3",name:"BUILD_CHECKSUM",cat:"Standard",st:"off",src:"2581",
+ desc:"Tính checksum trên một khối nhớ bắt đầu tại MTA; sau lệnh MTA tăng thêm BLOCK_SIZE.",
+ req:[["0","CMD","B","0xF3"],["1–3","reserved","B[3]","—"],["4–7","BLOCK_SIZE","DW","Kích thước khối [AG]"]],
+ res:[["0","PID","B","0xFF"],["1","CHECKSUM_TYPE","B","0x01 ADD_11, 0x02 ADD_12, 0x03 ADD_14, 0x04 ADD_22, 0x05 ADD_24, 0x06 ADD_44, 0x07 CRC_16, 0x08 CRC_16_CITT, 0x09 CRC_32, 0xFF USER_DEFINED"],["2–3","reserved","W","—"],["4–7","CHECKSUM","DW","Giá trị checksum"]],
+ drv:["Cần <code>XCP_ENABLE_CHECKSUM</code> (đang tắt).","Chuẩn: block size vượt mức cho phép → <code>ERR_OUT_OF_RANGE</code> và gói lỗi mang block size tối đa ở byte 4–7 (driver giới hạn 0xFFFF). ADD_22/ADD_24 yêu cầu block size chia hết cho 2, ADD_44 cho 4. Kết quả luôn là DWORD."],errs:["0x20","0x22"]},
+{code:"0xF2",name:"TRANSPORT_LAYER_CMD",cat:"Standard",st:"no",src:"—",
+ desc:"Lệnh riêng của transport layer (nhóm auxiliary). Với XCP on CAN (Part 3) gồm các sub-command tuỳ chọn: GET_SLAVE_ID (0xFF), GET_DAQ_ID (0xFE), SET_DAQ_ID (0xFD).",
+ req:[["0","CMD","B","0xF2"],["1","SUB_COMMAND","B","Mã lệnh con của transport layer"],["2…","PARAMETERS","B[]","Tuỳ sub-command"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Không có handler: CAN ID cố định 0x7E0/0x7E1, không cấu hình động. Theo Part 3, GET_SLAVE_ID (broadcast) phải được trả lời kể cả khi chưa CONNECT nếu slave hỗ trợ tính năng này."],errs:["0x20"]},
+{code:"0xF1",name:"USER_CMD",cat:"Standard",st:"off",src:"3211",
+ desc:"Lệnh do nhà phát triển ECU định nghĩa.",
+ req:[["0","CMD","B","0xF1"],["1…","PARAMETERS","B[]","Do người dùng định nghĩa"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Cần <code>XCP_ENABLE_USER_COMMAND</code> (đang tắt); nếu bật sẽ gọi <code>ApplXcpUserService()</code>."],errs:["0x20"]},
+/* ---------- Calibration ---------- */
+{code:"0xF0",name:"DOWNLOAD",cat:"Calibration",st:"off",src:"2395",
+ desc:"Ghi dữ liệu vào slave tại MTA; MTA tự tăng sau khi ghi.",
+ req:[["0","CMD","B","0xF0"],["1","NUMBER_OF_DATA_ELEMENTS","B","Số byte cần ghi"],["2…","DATA","B[]","Dữ liệu (tối đa MAX_CTO-2 = 6 byte)"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["<b>Theo chuẩn, DOWNLOAD là lệnh bắt buộc</b> khi slave báo resource CAL/PAG; sau lệnh MTA tăng thêm số byte đã ghi.","<b>Xem mục 5.1:</b> thân lệnh nằm trong <code>#if defined(XCP_ENABLE_CALIBRATION)</code>, cờ này không được định nghĩa trong repo → build hiện tại trả <code>0x20</code>. Cần xác nhận trên build thật.","Nếu cờ được bật: ghi qua <code>CalibrationWrite</code> (xcp_cfg.h, <code>XCP_ENABLE_CALIBRATION_MEM_ACCESS_BY_APPL</code>); ghi vào ROM/reference page → <code>ERR_WRITE_PROTECTED (0x23)</code>.","Quy trình chuẩn của dự án: <code>SET_MTA</code> + <code>DOWNLOAD</code> (không dùng SHORT_DOWNLOAD, xem bên dưới)."],errs:["0x20","0x22","0x23","0x21"]},
+{code:"0xEF",name:"DOWNLOAD_NEXT",cat:"Calibration",st:"no",src:"—",
+ desc:"Gói tiếp theo của block download (master block mode).",
+ req:[["0","CMD","B","0xEF"],["1","NUMBER_OF_DATA_ELEMENTS","B","Số phần tử còn lại của block"],["2…","DATA","B[]","Dữ liệu"]],
+ res:[["0","PID","B","0xFF; nếu số phần tử không khớp: gói lỗi <code>FE 29 &lt;số phần tử mong đợi&gt;</code> (ERR_SEQUENCE)"]],
+ drv:["Block download tắt (<code>XCP_DISABLE_BLOCK_DOWNLOAD</code>), không có <code>case</code>."],errs:["0x20","0x29"]},
+{code:"0xEE",name:"DOWNLOAD_MAX",cat:"Calibration",st:"off",src:"2449",
+ desc:"Như DOWNLOAD nhưng luôn ghi đúng MAX_CTO-1 byte, không có trường số phần tử.",
+ req:[["0","CMD","B","0xEE"],["1…","DATA","B[]","MAX_CTO-1 = 7 byte dữ liệu"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Cùng vấn đề mục 5.1: khi <code>XCP_ENABLE_CALIBRATION</code> không định nghĩa, nhánh <code>#else</code> trả <code>ERR_ACCESS_DENIED (0x24)</code>.","Có lối thoát <code>return;</code> khi callback trả <code>XCP_CMD_PENDING</code> (không giống các lệnh khác dùng <code>goto no_response</code>)."],errs:["0x24","0x23"]},
+{code:"0xED",name:"SHORT_DOWNLOAD",cat:"Calibration",st:"no",src:"—",
+ desc:"Ghi dữ liệu tại địa chỉ chỉ định trong một lệnh. Số phần tử hợp lệ là 0…(MAX_CTO-8)/AG, vượt quá → ERR_OUT_OF_RANGE; sau lệnh MTA trỏ tới phần tử ngay sau khối vừa ghi. Chuẩn ghi rõ: lệnh này không có tác dụng khi MAX_CTO = 8 (ví dụ XCP on CAN).",
+ req:[["0","CMD","B","0xED"],["1","NUMBER_OF_DATA_ELEMENTS","B","Số byte cần ghi"],["2","reserved","B","—"],["3","ADDRESS_EXTENSION","B","Phần mở rộng 8 bit của địa chỉ 40 bit (ý nghĩa do slave quy ước; xem mục 2.7)"],["4–7","ADDRESS","DW","Địa chỉ"],["8…","DATA","B[]","Dữ liệu"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Không có <code>case</code>. Với MAX_CTO = 8, tải trọng tối đa = <code>MAX_CTO-8 = 0</code> byte nên không dùng được trên CAN (xem <code>xcptool/DESIGN.md</code>)."],errs:["0x20","0x22"]},
+{code:"0xEC",name:"MODIFY_BITS",cat:"Calibration",st:"no",src:"—",
+ desc:"Sửa các bit của vùng nhớ 32 bit tại MTA theo công thức <code>A = (A &amp; ~((~MA &amp; 0xFFFF) &lt;&lt; S)) ^ (MX &lt;&lt; S)</code>. MA (AND mask): bit = 0 ở vị trí cần xoá về 0, bit = 1 ở vị trí giữ nguyên. MX (XOR mask): bit = 1 ở vị trí cần đảo. Mask chỉ rộng 16 bit nên dùng shift S để dịch cả hai lên vị trí cao hơn. Ví dụ đặt bit 0 = 1: MA = 0xFFFE rồi MX = 0x0001 (xoá về 0 trước, sau đó đảo). MTA <b>không</b> bị thay đổi.",
+ req:[["0","CMD","B","0xEC"],["1","SHIFT_VALUE","B","Số bit dịch"],["2–3","AND_MASK","W","Mặt nạ AND"],["4–5","XOR_MASK","W","Mặt nạ XOR"]],
+ res:[["0","PID","B","0xFF"]],drv:["Không có handler."],errs:["0x20"]},
+/* ---------- Paging ---------- */
+{code:"0xEB",name:"SET_CAL_PAGE",cat:"Page switching",st:"ok",src:"2126",
+ desc:"Chọn page đang được ECU và/hoặc XCP master truy cập cho một segment.",
+ req:[["0","CMD","B","0xEB"],["1","MODE","B","Bit 0 = ECU (page do ứng dụng ECU dùng), bit 1 = XCP (page do XCP driver truy cập), bit 7 = ALL (bỏ qua số segment, áp dụng cho mọi segment). ECU và XCP có thể đặt đồng thời hoặc riêng rẽ"],["2","LOGICAL_DATA_SEGMENT_NUMBER","B","Số segment"],["3","LOGICAL_DATA_PAGE_NUMBER","B","Số page: 0 = working (RAM), 1 = reference (ROM) trong dự án này"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Uỷ quyền cho callback <code>Xcp_ConfigPtr-&gt;SetCalPage(segment, page, mode)</code> → <code>XcpCal_SetEcuPage()</code>/<code>XcpCal_SetXcpPage()</code>.","Xem mục 5.2 về quy ước giá trị trả về của callback."],errs:["0x26","0x27","0x28"]},
+{code:"0xEA",name:"GET_CAL_PAGE",cat:"Page switching",st:"ok",src:"2146",
+ desc:"Đọc page hiện đang được ECU hoặc XCP truy cập cho một segment.",
+ req:[["0","CMD","B","0xEA"],["1","ACCESS_MODE","B","1 = ECU, 2 = XCP"],["2","DATA_SEGMENT_NUMBER","B","Số segment"]],
+ res:[["0","PID","B","0xFF"],["1–2","reserved","W","—"],["3","LOGICAL_DATA_PAGE_NUMBER","B","Page hiện tại"]],
+ drv:["Uỷ quyền cho callback <code>GetCalPage(segment, mode)</code>."],errs:["0x27","0x28"]},
+{code:"0xE9",name:"GET_PAG_PROCESSOR_INFO",cat:"Page switching",st:"off",src:"2173",
+ desc:"Thông tin chung của page processor (số segment, thuộc tính freeze).",
+ req:[["0","CMD","B","0xE9"]],
+ res:[["0","PID","B","0xFF"],["1","MAX_SEGMENT","B","Số segment"],["2","PAG_PROPERTIES","B","Bit 0 = FREEZE_SUPPORTED"]],
+ drv:["Cần <code>XCP_ENABLE_PAGE_INFO</code> (đang tắt)."],errs:["0x20"]},
+{code:"0xE8",name:"GET_SEGMENT_INFO",cat:"Page switching",st:"off",src:"2202",
+ desc:"Thông tin về một segment (địa chỉ, số page, mapping).",
+ req:[["0","CMD","B","0xE8"],["1","MODE","B","0 = thông tin địa chỉ cơ bản, 1 = thông tin chuẩn, 2 = thông tin address mapping"],["2","SEGMENT_NUMBER","B","Số segment [0…MAX_SEGMENT-1]"],["3","SEGMENT_INFO","B","Mode 0: 0 = địa chỉ, 1 = độ dài. Mode 2: 0 = địa chỉ nguồn, 1 = địa chỉ đích, 2 = độ dài. Mode 1: bỏ qua"],["4","MAPPING_INDEX","B","[0…MAX_MAPPING-1], chỉ dùng ở mode 2"]],
+ res:[["0","PID","B","0xFF"],["1–3","reserved (Mode 0 và 2)","B[3]","—"],["4–7","BASIC_INFO (Mode 0) / MAPPING_INFO (Mode 2)","DW","Mode 0: địa chỉ hoặc độ dài segment (theo SEGMENT_INFO). Mode 2: địa chỉ nguồn, địa chỉ đích hoặc độ dài của vùng mapping (theo SEGMENT_INFO)"],["1","MAX_PAGES (Mode 1)","B","Số page của segment"],["2","ADDRESS_EXTENSION (Mode 1)","B","Address extension dùng với SET_MTA / SHORT_UPLOAD / SHORT_DOWNLOAD khi truy cập page của segment"],["3","MAX_MAPPING (Mode 1)","B","Số vùng địa chỉ cần mapping"],["4","COMPRESSION_METHOD (Mode 1)","B","Phương pháp nén"],["5","ENCRYPTION_METHOD (Mode 1)","B","Phương pháp mã hoá"]],
+ drv:["Cần <code>XCP_ENABLE_PAGE_INFO</code> (đang tắt). Code khi bật trả <code>MAX_PAGES=2</code>, các trường khác 0."],errs:["0x20"]},
+{code:"0xE7",name:"GET_PAGE_INFO",cat:"Page switching",st:"off",src:"2254",
+ desc:"Thông tin về một page của segment (quyền truy cập ECU/XCP).",
+ req:[["0","CMD","B","0xE7"],["1","reserved","B","—"],["2","SEGMENT_NUMBER","B","Số segment"],["3","PAGE_NUMBER","B","Số page"]],
+ res:[["0","PID","B","0xFF"],["1","PAGE_PROPERTIES","B","Bit 1–0 = ECU_ACCESS, bit 3–2 = XCP_READ_ACCESS, bit 5–4 = XCP_WRITE_ACCESS. Mỗi cặp bit: 00 = không cho phép, 01 = chỉ khi bên kia (XCP hoặc ECU) không truy cập cùng lúc, 10 = chỉ khi bên kia cũng đang truy cập, 11 = không quan tâm"],["2","INIT_SEGMENT","B","Segment dùng để khởi tạo page"]],
+ drv:["Cần <code>XCP_ENABLE_PAGE_INFO</code> (đang tắt)."],errs:["0x20"]},
+{code:"0xE6",name:"SET_SEGMENT_MODE",cat:"Page switching",st:"off",src:"2284",
+ desc:"Đặt segment mode (freeze).",
+ req:[["0","CMD","B","0xE6"],["1","MODE","B","Bit 0 = FREEZE (0 = tắt, 1 = bật; chọn segment để lưu cố định qua STORE_CAL_REQ)"],["2","SEGMENT_NUMBER","B","Số segment"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Cần <code>XCP_ENABLE_PAGE_FREEZE</code> (đang tắt)."],errs:["0x20"]},
+{code:"0xE5",name:"GET_SEGMENT_MODE",cat:"Page switching",st:"off",src:"2312",
+ desc:"Đọc segment mode hiện tại.",
+ req:[["0","CMD","B","0xE5"],["1","reserved","B","—"],["2","SEGMENT_NUMBER","B","Số segment"]],
+ res:[["0","PID","B","0xFF"],["1","reserved","B","—"],["2","MODE","B","Segment mode"]],
+ drv:["Cần <code>XCP_ENABLE_PAGE_FREEZE</code> (đang tắt)."],errs:["0x20"]},
+{code:"0xE4",name:"COPY_CAL_PAGE",cat:"Page switching",st:"ok",src:"2343",
+ desc:"Sao chép toàn bộ nội dung một page sang page khác. Chỉ khả dụng khi slave định nghĩa nhiều hơn một page.",
+ req:[["0","CMD","B","0xE4"],["1","SRC_SEGMENT","B","Segment nguồn"],["2","SRC_PAGE","B","Page nguồn"],["3","DEST_SEGMENT","B","Segment đích"],["4","DEST_PAGE","B","Page đích"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Bật bởi <code>XCP_ENABLE_PAGE_COPY</code> (ROM → RAM trong dự án này), uỷ quyền cho callback <code>CopyCalPage</code>.","Callback trả <code>XCP_CMD_PENDING</code> → không gửi response ngay (<code>goto no_response</code>), response gửi sau.","Chuẩn: đích là flash (không ghi được) → <code>ERR_WRITE_PROTECTED</code>, cần dùng quy trình lập trình flash."],errs:["0x23","0x26","0x28"]},
+/* ---------- DAQ ---------- */
+{code:"0xE3",name:"CLEAR_DAQ_LIST",cat:"DAQ",st:"no",src:"—",
+ desc:"Xoá một DAQ list: với list cấu hình được, mọi ODT entry về address = 0, extension = 0, size = 0 (bit_offset = 0xFF nếu có); với cả list predefined lẫn cấu hình được, việc truyền dữ liệu đang chạy trên list bị dừng và mọi trạng thái của list được reset. <b>Bắt buộc</b> theo chuẩn.",
+ req:[["0","CMD","B","0xE3"],["1","reserved","B","—"],["2–3","DAQ_LIST_NUMBER","W","Số DAQ list"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Không có handler → <b>lệch chuẩn</b> (đây là lệnh bắt buộc, xem mục 5.4). Cấu hình dynamic của driver chỉ xoá được toàn bộ bằng <code>FREE_DAQ</code>."],errs:["0x20","0x22"]},
+{code:"0xE2",name:"SET_DAQ_PTR",cat:"DAQ",st:"ok",src:"3019",
+ desc:"Đặt con trỏ DAQ trỏ tới một ODT entry, để <code>WRITE_DAQ</code> ghi cấu hình vào đó.",
+ req:[["0","CMD","B","0xE2"],["1","reserved","B","—"],["2–3","DAQ_LIST_NUMBER","W","Số DAQ list"],["4","ODT_NUMBER","B","Số ODT (tương đối trong list)"],["5","ODT_ENTRY_NUMBER","B","Số entry trong ODT"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Kiểm tra DAQ/ODT/entry nằm trong phạm vi đã allocate, sai → <code>ERR_OUT_OF_RANGE</code>."],errs:["0x22"]},
+{code:"0xE1",name:"WRITE_DAQ",cat:"DAQ",st:"part",src:"3051",
+ desc:"Ghi cấu hình một ODT entry (địa chỉ, kích thước) tại vị trí con trỏ DAQ, sau đó tự tăng con trỏ.",
+ req:[["0","CMD","B","0xE1"],["1","BIT_OFFSET","B","0x00–0x1F: vị trí bit trong biến 32 bit (bitwise stimulation, khi đó SIZE phải bằng granularity); 0xFF: phần tử dữ liệu thông thường"],["2","SIZE_OF_DAQ_ELEMENT","B","Kích thước phần tử: 0 ≤ size ≤ MAX_ODT_ENTRY_SIZE, chia hết cho granularity (GET_DAQ_RESOLUTION_INFO)"],["3","ADDRESS_EXTENSION","B","Phần mở rộng 8 bit của địa chỉ 40 bit (ý nghĩa do slave quy ước; xem mục 2.7)"],["4–7","ADDRESS","DW","Địa chỉ"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["<b>Bỏ qua <code>BIT_OFFSET</code></b> (mục 5.3).","<code>SIZE</code> phải trong <code>1…XCP_MAX_ODT_ENTRY_SIZE</code> (= <code>kXcpMaxDTO-1 = 7</code>), sai → <code>ERR_OUT_OF_RANGE</code>. <b>Lệch chuẩn nhỏ:</b> chuẩn cho phép size 0 (xoá entry), driver từ chối size 0.","Chưa alloc DAQ/ODT/entry → <code>ERR_DAQ_CONFIG</code>.","Chuẩn: chỉ ghi được vào list cấu hình được (số list ≥ MIN_DAQ), ngược lại <code>ERR_WRITE_PROTECTED</code>; sau entry cuối của một ODT, con trỏ DAQ là không xác định.","Địa chỉ được đi qua <code>GetPointer(ext, addr)</code> khi ghi (lưu con trỏ thật)."],errs:["0x22","0x23","0x2A"]},
+{code:"0xE0",name:"SET_DAQ_LIST_MODE",cat:"DAQ",st:"part",src:"2955",
+ desc:"Đặt chế độ, event channel, prescaler và priority của một DAQ list.",
+ req:[["0","CMD","B","0xE0"],["1","MODE","B","Bit 1 = DIRECTION (0 = DAQ, 1 = STIM), bit 4 = TIMESTAMP, bit 5 = PID_OFF (chỉ hợp lệ khi identification field là absolute ODT number); các bit còn lại reserved trong v1.0"],["2–3","DAQ_LIST_NUMBER","W","Số DAQ list"],["4–5","EVENT_CHANNEL_NUMBER","W","Event channel gắn với list"],["6","TRANSMISSION_RATE_PRESCALER","B","Prescaler ≥ 1 (1 = không giảm tốc độ); chỉ áp dụng cho DIRECTION = DAQ"],["7","DAQ_LIST_PRIORITY","B","0 = slave có thể xử lý ở background; > 0 = xử lý nhanh nhất có thể; 0xFF = cao nhất. Slave không hỗ trợ ưu tiên mà nhận giá trị > 0 → ERR_OUT_OF_RANGE"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Prescaler tắt: yêu cầu <code>PRESCALER == 1</code> và <code>PRIORITY == 0</code>, sai → <code>ERR_OUT_OF_RANGE</code>.","Byte <code>MODE</code> được lưu nguyên vào <code>DaqListFlags</code>, không lọc bit; bit DIRECTION (STIM) không bị từ chối dù STIM tắt.","Event channel lưu vào DAQ list; <code>Xcp_Event(n)</code> dùng để kích hoạt.","Chuẩn: nếu <code>TIMESTAMP_FIXED = 1</code> mà master cố tắt timestamp → <code>ERR_CMD_SYNTAX</code> (driver không định nghĩa <code>DAQ_TIMESTAMP_FIXED</code> nên không có kiểm tra này). Bit <code>PID_OFF</code> không bị từ chối dù driver không báo <code>PID_OFF_SUPPORTED</code>."],errs:["0x21","0x22"]},
+{code:"0xDF",name:"GET_DAQ_LIST_MODE",cat:"DAQ",st:"ok",src:"2894",
+ desc:"Đọc chế độ hiện tại của một DAQ list.",
+ req:[["0","CMD","B","0xDF"],["1","reserved","B","—"],["2–3","DAQ_LIST_NUMBER","W","Số DAQ list"]],
+ res:[["0","PID","B","0xFF"],["1","CURRENT_MODE","B","Bit 0 = SELECTED, bit 1 = DIRECTION, bit 4 = TIMESTAMP, bit 5 = PID_OFF, bit 6 = RUNNING, bit 7 = RESUME"],["2–3","reserved","W","—"],["4–5","CURRENT_EVENT_CHANNEL_NUMBER","W","Event channel"],["6","CURRENT_PRESCALER","B","Prescaler"],["7","CURRENT_DAQ_LIST_PRIORITY","B","Priority"]],
+ drv:["<code>PRESCALER = 1</code>, <code>PRIORITY = 0</code> cố định.","Byte mode trả về là <code>DaqListFlags(daq)</code>. Các cờ <code>DAQ_FLAG_SELECTED 0x01</code>, <code>DIRECTION 0x02</code>, <code>TIMESTAMP 0x10</code>, <code>NO_PID 0x20</code>, <code>RUNNING 0x40</code>, <code>RESUME 0x80</code> trùng đúng vị trí bit của chuẩn. Bit 3 (<code>DAQ_FLAG_OVERRUN 0x08</code>) là bit reserved trong chuẩn, driver dùng làm cờ nội bộ."],errs:["0x22"]},
+{code:"0xDE",name:"START_STOP_DAQ_LIST",cat:"DAQ",st:"ok",src:"3090",
+ desc:"Start, stop hoặc select một DAQ list.",
+ req:[["0","CMD","B","0xDE"],["1","MODE","B","0 = stop, 1 = start, 2 = select (chuẩn bị list cho START_STOP_SYNCH hoặc SET_REQUEST, chưa truyền dữ liệu; cờ SELECTED được slave xoá sau khi START_STOP_SYNCH/SET_REQUEST được xác nhận)"],["2–3","DAQ_LIST_NUMBER","W","Số DAQ list"]],
+ res:[["0","PID","B","0xFF"],["1","FIRST_PID","B","Số ODT tuyệt đối của ODT đầu tiên trong list; ODT thứ i có PID = FIRST_PID + số ODT tương đối. Chuẩn mô tả response luôn có trường này"]],
+ drv:["Mode <code>1</code> và <code>2</code> đánh dấu SELECTED; mode <code>1</code> chạy list ngay. Mọi giá trị khác (kể cả &gt; 2) được coi là stop.","<b>Lệch chuẩn nhẹ:</b> response ở mode stop chỉ dài 1 byte (không có FIRST_PID), trong khi chuẩn mô tả response luôn có FIRST_PID (mục 5.6).","Cần <code>RM_DAQ</code> không bị khoá (Seed &amp; Key tắt nên luôn mở)."],errs:["0x22"]},
+{code:"0xDD",name:"START_STOP_SYNCH",cat:"DAQ",st:"ok",src:"3140",
+ desc:"Start/stop đồng bộ nhiều DAQ list cùng lúc.",
+ req:[["0","CMD","B","0xDD"],["1","MODE","B","0 = stop all, 1 = start selected, 2 = stop selected"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Chưa alloc DAQ → <code>ERR_DAQ_CONFIG</code>.","Sau start/stop selected, cờ SELECTED được xoá."],errs:["0x2A"]},
+{code:"0xDC",name:"GET_DAQ_CLOCK",cat:"DAQ",st:"ok",src:"3182",
+ desc:"Đọc giá trị đồng hồ DAQ của slave tại thời điểm slave nhận gói lệnh, dùng để đồng bộ đồng hồ master–slave (định dạng theo GET_DAQ_RESOLUTION_INFO). Tuỳ chọn nếu slave không hỗ trợ DAQ có timestamp.",
+ req:[["0","CMD","B","0xDC"]],
+ res:[["0","PID","B","0xFF"],["1–3","reserved","B[3]","—"],["4–7","TIME","DW","Bộ đếm timestamp"]],
+ drv:["Bật bởi <code>XCP_ENABLE_DAQ_TIMESTAMP</code>. Lấy từ <code>TransportLayer-&gt;GetTimestamp()</code> (STM0 32-bit, 10 ns/tick)."],errs:[]},
+{code:"0xDB",name:"READ_DAQ",cat:"DAQ",st:"no",src:"—",
+ desc:"Đọc lại cấu hình ODT entry tại con trỏ DAQ (con trỏ tự tăng như WRITE_DAQ; dùng được cả với list predefined).",
+ req:[["0","CMD","B","0xDB"]],
+ res:[["0","PID","B","0xFF"],["1","BIT_OFFSET","B","—"],["2","SIZE_OF_DAQ_ELEMENT","B","—"],["3","ADDRESS_EXTENSION","B","Address extension của ODT entry (xem mục 2.7)"],["4–7","ADDRESS","DW","—"]],
+ drv:["Không có handler."],errs:["0x20"]},
+{code:"0xDA",name:"GET_DAQ_PROCESSOR_INFO",cat:"DAQ",st:"ok",src:"2660",
+ desc:"Thông tin chung về DAQ processor.",
+ req:[["0","CMD","B","0xDA"]],
+ res:[["0","PID","B","0xFF"],["1","DAQ_PROPERTIES","B","Bit 0 = DAQ_CONFIG_TYPE (0 static, 1 dynamic), bit 1 = PRESCALER_SUPPORTED, bit 2 = RESUME_SUPPORTED, bit 3 = BIT_STIM_SUPPORTED, bit 4 = TIMESTAMP_SUPPORTED, bit 5 = PID_OFF_SUPPORTED, bit 6 = OVERLOAD_MSB, bit 7 = OVERLOAD_EVENT (01 = báo overrun bằng MSB của PID, 10 = bằng gói EV_DAQ_OVERLOAD, 00 = không báo, 11 = không hợp lệ)"],["2–3","MAX_DAQ","W","Tổng số DAQ list (gồm cả predefined). Với dynamic: MAX_DAQ = MIN_DAQ + DAQ_COUNT"],["4–5","MAX_EVENT_CHANNEL","W","Số event channel (0 = không biết)"],["6","MIN_DAQ","B","Số DAQ list predefined"],["7","DAQ_KEY_BYTE","B","Bit 7–6 = Identification_Field_Type (00 = absolute ODT number, 01 = relative ODT + absolute DAQ list (BYTE), 10 = (WORD), 11 = (WORD, aligned)); bit 5 = Address_Extension_DAQ, bit 4 = Address_Extension_ODT (00 = có thể khác nhau trong một ODT, 01 = giống nhau trong một ODT, 11 = giống nhau trong một DAQ list); bit 3–0 = Optimisation_Type (0 = default, 1 = ODT_TYPE_16, 2 = ODT_TYPE_32, 3 = ODT_TYPE_64, 4 = ODT_TYPE_ALIGNMENT, 5 = MAX_ENTRY_SIZE)"]],
+ drv:["<code>DAQ_PROPERTIES = 0x51</code>: CONFIG_TYPE (dynamic) + TIMESTAMP + OVERLOAD_INDICATION_PID (bit 6).","<code>MAX_DAQ</code> trả <code>xcp.Daq.DaqCount</code> (số list đang allocate; 0 trước khi <code>ALLOC_DAQ</code>), khớp chuẩn cho dynamic DAQ (MAX_DAQ = MIN_DAQ + DAQ_COUNT, ở đây MIN_DAQ = 0).","<code>MAX_EVENT = 0</code> vì <code>kXcpMaxEvent</code> không định nghĩa.","<code>MIN_DAQ = 0</code>; <code>DAQ_KEY_BYTE = DAQ_HDR_PID</code> (absolute ODT number)."],errs:[]},
+{code:"0xD9",name:"GET_DAQ_RESOLUTION_INFO",cat:"DAQ",st:"ok",src:"2710",
+ desc:"Độ phân giải DAQ/STIM và thông tin timestamp.",
+ req:[["0","CMD","B","0xD9"]],
+ res:[["0","PID","B","0xFF"],["1","GRANULARITY_ODT_ENTRY_SIZE_DAQ","B","Granularity kích thước ODT entry cho DAQ (giá trị hợp lệ 1, 2, 4, 8; địa chỉ và size của entry phải chia hết cho granularity)"],["2","MAX_ODT_ENTRY_SIZE_DAQ","B","Kích thước entry tối đa cho DAQ"],["3","GRANULARITY_ODT_ENTRY_SIZE_STIM","B","Granularity cho STIM"],["4","MAX_ODT_ENTRY_SIZE_STIM","B","Kích thước entry tối đa cho STIM"],["5","TIMESTAMP_MODE","B","Bit 2–0 = size (0 = không có, 1 = 1 byte, 2 = 2 byte, 4 = 4 byte), bit 3 = TIMESTAMP_FIXED (slave luôn gửi DTO có timestamp), bit 7–4 = unit (0 = 1 ns, 1 = 10 ns, 2 = 100 ns, 3 = 1 µs, 4 = 10 µs, 5 = 100 µs, 6 = 1 ms, 7 = 10 ms, 8 = 100 ms, 9 = 1 s)"],["6–7","TIMESTAMP_TICKS","W","Số tick trên 1 unit"]],
+ drv:["Granularity = 1, <code>MAX_SIZE = XCP_MAX_ODT_ENTRY_SIZE = 7</code> (STIM báo giống DAQ dù STIM tắt).","<code>TIMESTAMP_MODE = 0x14</code> (DWORD, 10 ns); <code>TICKS = 1</code>."],errs:[]},
+{code:"0xD8",name:"GET_DAQ_LIST_INFO",cat:"DAQ",st:"no",src:"—",
+ desc:"Thông tin về một DAQ list cụ thể. Dùng được cho cả list predefined lẫn list cấu hình được: DAQ_LIST_NUMBER ∈ [0 … MAX_DAQ-1], list không tồn tại → ERR_OUT_OF_RANGE. Thường dùng với static DAQ để biết list nào còn chỗ.",
+ req:[["0","CMD","B","0xD8"],["1","reserved","B","—"],["2–3","DAQ_LIST_NUMBER","W","Số DAQ list"]],
+ res:[["0","PID","B","0xFF"],["1","DAQ_LIST_PROPERTIES","B","Bit 0 = PREDEFINED (cấu hình cố định), bit 1 = EVENT_FIXED (event channel cố định), bit 2 = DAQ, bit 3 = STIM. Bit 3–2: 00 không hợp lệ, 01 chỉ hướng DAQ, 10 chỉ hướng STIM, 11 cả hai (không đồng thời)"],["2","MAX_ODT","B","Số ODT của list (list cấu hình tĩnh: số ODT cố định)"],["3","MAX_ODT_ENTRIES","B","Số ODT entry của mỗi ODT (cấu hình tĩnh: cố định)"],["4–5","FIXED_EVENT","W","Số event channel cố định, chỉ có nghĩa khi EVENT_FIXED = 1. Ví dụ Part 5 có response chỉ 4 byte <code>FF 04 03 0A</code> (không có event cố định)"]],
+ drv:["Không có handler (driver dùng dynamic DAQ, không có list predefined: MIN_DAQ = 0).","xcptool: <code>get_daq_list_info()</code> ở <code>master/core.py</code> yêu cầu response ≥ 6 byte, trong khi ví dụ Part 5 có response 4 byte (mục 5.8)."],errs:["0x20","0x22"]},
+{code:"0xD7",name:"GET_DAQ_EVENT_INFO",cat:"DAQ",st:"off",src:"2747",
+ desc:"Thông tin về một event channel. Lệnh tự đặt MTA tới tên event channel (ASCII, không kết thúc bằng 0) để master đọc bằng UPLOAD.",
+ req:[["0","CMD","B","0xD7"],["1","reserved","B","—"],["2–3","EVENT_CHANNEL_NUMBER","W","Số event channel"]],
+ res:[["0","PID","B","0xFF"],["1","DAQ_EVENT_PROPERTIES","B","Bit 2 = DAQ, bit 3 = STIM (loại DAQ list gán được cho event; 00 không hợp lệ). v1.1 thêm bit 7–6 = consistency (ODT / DAQ list / event channel)"],["2","MAX_DAQ_LIST","B","Số DAQ list tối đa gắn vào event (0 = event có nhưng chưa dùng được, 0xFF = không giới hạn)"],["3","EVENT_CHANNEL_NAME_LENGTH","B","Độ dài tên (đọc bằng UPLOAD)"],["4","EVENT_CHANNEL_TIME_CYCLE","B","Chu kỳ lấy mẫu (0 = không tuần hoàn)"],["5","EVENT_CHANNEL_TIME_UNIT","B","Đơn vị theo bảng timestamp unit (ví dụ Part 5: 0x60 = 1 ms)"],["6","EVENT_CHANNEL_PRIORITY","B","Ưu tiên (0xFF cao nhất)"]],
+ drv:["Cần <code>XCP_ENABLE_DAQ_EVENT_INFO</code> và <code>kXcpMaxEvent</code> (đều chưa có). Event được A2L mô tả thay vì lấy từ ECU.","<b>Lệch chuẩn tiềm ẩn (lệnh đang tắt):</b> các macro <code>CRM_GET_DAQ_EVENT_INFO_*</code> trong <code>Xcp_Handler.h</code> đặt <code>TYPE</code> ở byte 2 rồi dời các trường sau lên một byte (<code>MAX_DAQ_LIST</code> ở byte 3 … <code>PRIORITY</code> ở byte 7), trong khi chuẩn và ví dụ Part 5 (<code>FF 04 01 05 0A 60 00</code>) đặt <code>MAX_DAQ_LIST</code> ở byte 2 … <code>PRIORITY</code> ở byte 6 (response 7 byte). Cần sửa trước khi bật lệnh này (mục 5.7)."],errs:["0x20","0x22"]},
+{code:"0xD6",name:"FREE_DAQ",cat:"DAQ",st:"ok",src:"2789",
+ desc:"Giải phóng toàn bộ DAQ list đã allocate (dynamic DAQ).",
+ req:[["0","CMD","B","0xD6"]],res:[["0","PID","B","0xFF"]],
+ drv:["Gọi <code>XcpFreeDaq()</code>: dừng DAQ, reset DaqCount/OdtCount/OdtEntryCount, xoá send queue."],errs:[]},
+{code:"0xD5",name:"ALLOC_DAQ",cat:"DAQ",st:"ok",src:"2811",
+ desc:"Cấp phát số DAQ list (bước 1 của dynamic DAQ). Phải gọi ngay sau <code>FREE_DAQ</code>.",
+ req:[["0","CMD","B","0xD5"],["1","reserved","B","—"],["2–3","DAQ_COUNT","W","Số DAQ list"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Đã có ODT/entry → <code>ERR_SEQUENCE</code>. <code>DAQ_COUNT = 0</code> → <code>ERR_OUT_OF_RANGE</code>. Hết pool <code>kXcpDaqMemSize</code> → <code>ERR_MEMORY_OVERFLOW</code>.","Số DAQ list đọc bằng byte thấp của <code>DAQ_COUNT</code> (tối đa 255)."],errs:["0x29","0x22","0x30"]},
+{code:"0xD4",name:"ALLOC_ODT",cat:"DAQ",st:"ok",src:"2833",
+ desc:"Cấp phát số ODT cho một DAQ list (bước 2).",
+ req:[["0","CMD","B","0xD4"],["1","reserved","B","—"],["2–3","DAQ_LIST_NUMBER","W","List cấu hình được: MIN_DAQ … MIN_DAQ+DAQ_COUNT-1"],["4","ODT_COUNT","B","Số ODT gán cho list"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["Chưa <code>ALLOC_DAQ</code>, hoặc đã có ODT entry → <code>ERR_SEQUENCE</code>. <code>ODT_COUNT = 0</code> → <code>ERR_OUT_OF_RANGE</code>.","Tổng số ODT tuyệt đối bị giới hạn <code>0x7B</code> khi bật overrun indication (chuẩn: số ODT ≤ <code>0x7C</code>, vì MSB của PID dùng để báo overrun), ngược lại <code>0xFB</code> → <code>ERR_MEMORY_OVERFLOW</code>; giới hạn của driver chặt hơn chuẩn một chút."],errs:["0x29","0x22","0x30"]},
+{code:"0xD3",name:"ALLOC_ODT_ENTRY",cat:"DAQ",st:"ok",src:"2863",
+ desc:"Cấp phát số ODT entry cho một ODT (bước 3).",
+ req:[["0","CMD","B","0xD3"],["1","reserved","B","—"],["2–3","DAQ_LIST_NUMBER","W","List cấu hình được: MIN_DAQ … MIN_DAQ+DAQ_COUNT-1"],["4","ODT_NUMBER","B","Số ODT tương đối [0…ODT_COUNT-1]"],["5","ODT_ENTRIES_COUNT","B","Số entry"]],
+ res:[["0","PID","B","0xFF"]],
+ drv:["DAQ/ODT ngoài phạm vi → <code>ERR_OUT_OF_RANGE</code>; sai thứ tự → <code>ERR_SEQUENCE</code>; hết pool → <code>ERR_MEMORY_OVERFLOW</code>."],errs:["0x29","0x22","0x30"]},
+/* ---------- PGM ---------- */
+{code:"0xD2…0xC8",name:"PROGRAM_START … PROGRAM_VERIFY",cat:"Flash programming",st:"no",src:"—",
+ desc:"Nhóm lệnh lập trình flash: PROGRAM_START (0xD2), PROGRAM_CLEAR (0xD1), PROGRAM (0xD0), PROGRAM_RESET (0xCF), GET_PGM_PROCESSOR_INFO (0xCE), GET_SECTOR_INFO (0xCD), PROGRAM_PREPARE (0xCC), PROGRAM_FORMAT (0xCB), PROGRAM_NEXT (0xCA), PROGRAM_MAX (0xC9), PROGRAM_VERIFY (0xC8).",
+ req:[],res:[],
+ drv:["Không có handler (resource PGM không báo trong CONNECT). Mã lệnh được định nghĩa trong <code>Xcp_Handler.h</code> nhưng chưa dùng.","Theo chuẩn, <code>PROGRAM_START</code>, <code>PROGRAM_CLEAR</code>, <code>PROGRAM</code>, <code>PROGRAM_RESET</code> là bắt buộc nếu slave báo resource PGM; các lệnh còn lại tuỳ chọn."],errs:["0x20"]},
+{code:"0x81",name:"WRITE_DAQ_MULTIPLE",cat:"DAQ (v1.1+)",st:"no",src:"—",
+ desc:"Ghi nhiều ODT entry trong một lệnh. Không thuộc Part 2 v1.0; được thêm ở v1.1 nhưng macro đã có sẵn trong <code>Xcp_Handler.h</code>.",
+ req:[["0","CMD","B","0xC7"],["1","NODAQ","B","Số phần tử"]],res:[["0","PID","B","0xFF"]],
+ drv:["Không có handler. Đã đối chiếu Part 2 v1.1: mã lệnh chuẩn là <code>0xC7</code> (optional); hằng <code>CC_WRITE_DAQ_MULTIPLE = 0x81</code> trong <code>Xcp_Handler.h</code> không khớp. Lệnh này có cùng giới hạn với WRITE_DAQ và mọi entry phải nằm trong cùng một ODT."],errs:["0x20"]}
+];
+
+const $ = s => document.querySelector(s);
+const esc = s => s;
+function tbl(rows, head){
+  if(!rows||!rows.length) return "<p class='cat'>—</p>";
+  return "<div class='tw'><table><thead><tr>"+head.map(h=>"<th>"+h+"</th>").join("")+"</tr></thead><tbody>"+
+    rows.map(r=>"<tr>"+r.map((c,i)=>"<td"+(i===0?" class='mono'":"")+">"+c+"</td>").join("")+"</tr>").join("")+"</tbody></table></div>";
+}
+function id(c){return "c"+c.code.replace(/[^0-9A-Fa-fx]/g,"_");}
+function render(){
+  $("#idx").innerHTML = CMDS.map(c=>
+    `<tr data-st="${c.st}" data-k="${(c.code+" "+c.name+" "+c.cat).toLowerCase()}"><td class="mono">${c.code}</td>`+
+    `<td><a href="#${id(c)}">${c.name}</a></td><td class="cat">${c.cat}</td><td><span class="lv ${lvl(c)[0]}">${lvl(c)[1]}</span></td>`+
+    `<td><span class="badge b-${c.st}">${S[c.st]}</span></td></tr>`).join("");
+  $("#cmds").innerHTML = CMDS.map(c=>
+    `<details class="cmd" id="${id(c)}" data-st="${c.st}" data-k="${(c.code+" "+c.name+" "+c.cat).toLowerCase()}">`+
+    `<summary><span class="code">${c.code}</span><h3>${c.name}</h3><span class="badge b-${c.st}">${S[c.st]}</span><span class="lv ${lvl(c)[0]}">${lvl(c)[1]}</span><span class="cat">${c.cat}</span></summary>`+
+    `<div class="body"><p>${c.desc}</p>`+
+    `<h4>Chuẩn – Request (CMD)</h4>${tbl(c.req,["Byte","Tham số","Kiểu","Mô tả"])}`+
+    `<h4>Chuẩn – Response (RES)</h4>${tbl(c.res,["Byte","Tham số","Kiểu","Mô tả"])}`+
+    `<h4>Driver (Xcp_Handler.c)</h4><ul>${c.drv.map(d=>"<li>"+d+"</li>").join("")}</ul>`+
+    `<p class="src">Nguồn: <code>Xcp_Handler.c${c.src==="—"?"":":"+c.src}</code>`+
+    (c.errs.length?` · Error liên quan: ${c.errs.map(e=>"<code>"+e+"</code>").join(" ")}`:"")+`</p></div></details>`).join("");
+}
+let filter="all", query="";
+function apply(){
+  document.querySelectorAll("#idx tr, #cmds details").forEach(el=>{
+    const ok=(filter==="all"||el.dataset.st===filter)&&(!query||el.dataset.k.includes(query));
+    el.style.display=ok?"":"none";
+  });
+}
+render();
+$("#q").addEventListener("input",e=>{query=e.target.value.trim().toLowerCase();apply();});
+document.querySelectorAll(".chip[data-f]").forEach(b=>b.addEventListener("click",()=>{
+  filter=b.dataset.f;
+  document.querySelectorAll(".chip[data-f]").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  apply();
+}));
+$("#toggleAll").addEventListener("click",e=>{
+  const open=e.target.getAttribute("aria-pressed")!=="true";
+  e.target.setAttribute("aria-pressed",open);
+  e.target.textContent=open?"Thu gọn tất cả":"Mở tất cả";
+  document.querySelectorAll("#cmds details").forEach(d=>d.open=open);
+});
+addEventListener("hashchange",()=>{const d=document.getElementById(location.hash.slice(1));if(d&&d.tagName==="DETAILS")d.open=true;});
+if(location.hash){const d=document.getElementById(location.hash.slice(1));if(d&&d.tagName==="DETAILS")d.open=true;}
+</script>
+</body>
+</html>
